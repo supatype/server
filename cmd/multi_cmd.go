@@ -11,15 +11,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var serveCmd = cobra.Command{
-	Use:  "serve",
-	Long: "Start API server",
-	Run: func(cmd *cobra.Command, args []string) {
-		execWithConfig(cmd, serve)
-	},
+var multiCmd = cobra.Command{
+	Use:  "multi",
+	Long: "Start multi-tenant API server",
+	Run:  multi,
 }
 
-func serve(globalConfig *conf.GlobalConfiguration, config *conf.Configuration) {
+func multi(cmd *cobra.Command, args []string) {
+	globalConfig, err := conf.LoadGlobal(cmd)
+	if err != nil {
+		logrus.Fatalf("Failed to load configration: %+v", err)
+	}
+	if globalConfig.NetlifySecret == "" {
+		logrus.Fatal("Netlify microservice secret is required")
+	}
+
 	db, err := dial.Dial(globalConfig)
 	if err != nil {
 		logrus.Fatalf("Error opening database: %+v", err)
@@ -32,11 +38,8 @@ func serve(globalConfig *conf.GlobalConfiguration, config *conf.Configuration) {
 		}
 	}
 
-	ctx, err := api.WithInstanceConfig(context.Background(), config, "")
-	if err != nil {
-		logrus.Fatalf("Error loading instance config: %+v", err)
-	}
-	api := api.NewAPIWithVersion(ctx, globalConfig, db, Version)
+	globalConfig.MultiInstanceMode = true
+	api := api.NewAPIWithVersion(context.Background(), globalConfig, db, Version)
 
 	l := fmt.Sprintf("%v:%v", globalConfig.API.Host, globalConfig.API.Port)
 	logrus.Infof("GoTrue API started on: %s", l)

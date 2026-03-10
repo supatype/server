@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - master
+      - main
       - release/*
 
 permissions:
@@ -26,24 +26,18 @@ jobs:
       RELEASE_NAME: ${{ steps.versions.outputs.RELEASE_NAME }}
     steps:
 
-      - name: Generate token
-        id: app-token
-        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf
-        with:
-          app-id: ${{ secrets.GH_AUTOFIX_APP_ID }}
-          private-key: ${{ secrets.GH_AUTOFIX_PRIVATE_KEY }}
-
       - uses: googleapis/release-please-action@v4
         id: release
         with:
           release-type: go
           target-branch: ${{ github.ref_name }}
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/checkout@v6
         if: ${{ steps.release.outputs.release_created == 'true' || steps.release.outputs.prs_created == 'true' }}
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - if: ${{ steps.release.outputs.release_created == 'true' || steps.release.outputs.prs_created == 'true' }}
         id: versions
@@ -136,24 +130,6 @@ jobs:
           generate_checksums "SHA1" "sha1sum"
           generate_checksums "SHA256" "sha256sum"
 
-      - name: GitHub OIDC Auth
-        if: ${{ steps.release.outputs.release_created == 'true' || steps.release.outputs.prs_created == 'true' }}
-        uses: aws-actions/configure-aws-credentials@v5.1.1
-        with:
-          aws-region: ap-southeast-1
-          role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_AWS_ACCOUNT_ID }}:role/supabase-github-oidc-role
-          role-session-name: shared-services-jump
-
-      - name: Assume destination role
-        uses: aws-actions/configure-aws-credentials@v5.1.1
-        if: ${{ steps.release.outputs.release_created == 'true' || steps.release.outputs.prs_created == 'true' }}
-        with:
-          aws-region: ap-southeast-1
-          role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_AWS_ACCOUNT_ID }}:role/supabase-auth-artifacts-role-7656c95
-          role-skip-session-tagging: true
-          role-session-name: upload-assets
-          role-chaining: true
-
       - name: Upload release artifacts
         if: ${{ steps.release.outputs.release_created == 'true' || steps.release.outputs.prs_created == 'true' }}
         run: |
@@ -173,7 +149,7 @@ jobs:
               -n "$RELEASE_NOTES"
 
             GH_TOKEN='${{ github.token }}' gh pr comment "$PR_NUMBER" \
-              -b "Release candidate [v$RELEASE_VERSION](https://github.com/supabase/gotrue/releases/tag/$RELEASE_NAME) published."
+              -b "Release candidate [v$RELEASE_VERSION](https://github.com/supatype/auth/releases/tag/$RELEASE_NAME) published."
           else
             if [ "$GITHUB_REF" == "refs/heads/main" ] || [ "$GITHUB_REF" == "refs/heads/master" ]
             then
@@ -188,7 +164,7 @@ jobs:
                   --method POST \
                   -H "Accept: application/vnd.github+json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
-                  /repos/supabase/gotrue/git/refs \
+                  /repos/supatype/auth/git/refs \
                   -f "ref=refs/heads/release/${RELEASE_VERSION}" \
                   -f "sha=$GITHUB_SHA"
                 fi
@@ -203,8 +179,6 @@ jobs:
 
           GH_TOKEN='${{ github.token }}' gh release upload $RELEASE_NAME ./auth-v$RELEASE_VERSION-x86.tar.gz ./auth-v$RELEASE_VERSION-arm64.tar.gz ./auth-v$RELEASE_VERSION-arm64.tar.xz ./auth-v$RELEASE_VERSION-darwin-arm64.tar.gz
 
-          # Upload to Supabase internal bucket
-          aws s3 cp ./auth-v$RELEASE_VERSION-arm64.tar.xz s3://supabase-internal-artifacts/auth/$RELEASE_VERSION/
 
   publish:
     needs:

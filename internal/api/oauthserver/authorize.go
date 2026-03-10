@@ -10,12 +10,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gofrs/uuid"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/api/shared"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/observability"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/utilities"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/shared"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/utilities"
 )
 
 // AuthorizeParams represents the parameters for an OAuth authorization request

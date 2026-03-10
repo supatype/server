@@ -5,8 +5,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/observability"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/observability"
 )
 
 var (

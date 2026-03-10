@@ -13,11 +13,11 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/crypto"
-	"github.com/supabase/auth/internal/mailer"
-	"github.com/supabase/auth/internal/mailer/mockclient"
-	"github.com/supabase/auth/internal/models"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/crypto"
+	"github.com/supatype/auth/internal/mailer"
+	"github.com/supatype/auth/internal/mailer/mockclient"
+	"github.com/supatype/auth/internal/models"
 )
 
 type UserTestSuite struct {

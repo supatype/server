@@ -5,11 +5,11 @@ import (
 	"strings"
 
 	"github.com/fatih/structs"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/api/provider"
-	"github.com/supabase/auth/internal/hooks/v0hooks"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/auth/internal/hooks/v0hooks"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
 )
 
 func (a *API) triggerAfterUserCreated(

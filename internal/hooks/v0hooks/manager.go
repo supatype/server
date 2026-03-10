@@ -10,12 +10,12 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/hooks/hookshttp"
-	"github.com/supabase/auth/internal/hooks/hookspgfunc"
-	"github.com/supabase/auth/internal/observability"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/hooks/hookshttp"
+	"github.com/supatype/auth/internal/hooks/hookspgfunc"
+	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/auth/internal/storage"
 )
 
 type Manager struct {

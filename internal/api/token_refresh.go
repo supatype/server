@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/crypto"
-	"github.com/supabase/auth/internal/tokens"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/crypto"
+	"github.com/supatype/auth/internal/tokens"
 )
 
 // RefreshTokenGrantParams are the parameters the RefreshTokenGrant method accepts

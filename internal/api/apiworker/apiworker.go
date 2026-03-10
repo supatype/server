@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/indexworker"
-	"github.com/supabase/auth/internal/mailer/templatemailer"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/indexworker"
+	"github.com/supatype/auth/internal/mailer/templatemailer"
+	"github.com/supatype/auth/internal/storage"
 	"golang.org/x/sync/errgroup"
 )
 

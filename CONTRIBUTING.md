@@ -89,10 +89,10 @@ If you are on macOS Catalina you may [run into issues installing Soda with Brew]
 
 `go build -o /bin/soda github.com/gobuffalo/pop/soda` to resolve.
 
-- Clone the Auth [repository](https://github.com/supabase/auth)
+- Clone the Auth [repository](https://github.com/supatype/auth)
 
 ```zsh
-git clone https://github.com/supabase/auth
+git clone https://github.com/supatype/auth
 ```
 
 ### Install Auth
@@ -180,7 +180,7 @@ That lists each migration that was applied. Note: there may be more migrations t
 5. In order to have Auth connect to your PostgreSQL database running in Docker, it is important to set a connection string like:
 
 ```
-DATABASE_URL="postgres://supabase_auth_admin:root@localhost:5432/postgres"
+DATABASE_URL="postgres://supatype_auth_admin:root@localhost:5432/postgres"
 ```
 
 > Important: Auth requires a set of SMTP credentials to run, you can generate your own SMTP credentials via an SMTP provider such as AWS SES, SendGrid, MailChimp, SendInBlue or any other SMTP providers.
@@ -253,13 +253,13 @@ To test the admin endpoints (or other api endpoints), you can invoke via HTTP re
 
 You will need to know the `GOTRUE_JWT_SECRET` configured in the `.env` settings.
 
-Also, you must generate a JWT with the signature which has the `supabase_admin` role (or one that is specified in `GOTRUE_JWT_ADMIN_ROLES`).
+Also, you must generate a JWT with the signature which has the `supatype_admin` role (or one that is specified in `GOTRUE_JWT_ADMIN_ROLES`).
 
 For example:
 
 ```json
 {
-  "role": "supabase_admin"
+  "role": "supatype_admin"
 }
 ```
 
@@ -451,12 +451,12 @@ port: {{ envOr "POSTGRES_PORT" "7432" }} 👈 set to your port
 
 ```
 // file: test.env
-DATABASE_URL="postgres://supabase_auth_admin:root@localhost:7432/postgres" 👈 set to your port
+DATABASE_URL="postgres://supatype_auth_admin:root@localhost:7432/postgres" 👈 set to your port
 ```
 
 ```
 // file: migrate.sh
-export GOTRUE_DB_DATABASE_URL="postgres://supabase_auth_admin:root@localhost:7432/$DB_ENV"
+export GOTRUE_DB_DATABASE_URL="postgres://supatype_auth_admin:root@localhost:7432/$DB_ENV"
 ```
 
 ## Helpful Docker Commands

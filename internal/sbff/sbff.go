@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/supabase/auth/internal/conf"
+	"github.com/supatype/auth/internal/conf"
 )
 
 // HeaderName is the Sb-Forwarded-For header name. It is all lowercase here as HTTP header names

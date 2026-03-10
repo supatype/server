@@ -11,7 +11,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/storage"
 )
 
 // WebAuthnTransports is a JSON-serializable slice of authenticator transports.

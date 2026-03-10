@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/e2e"
+	"github.com/supatype/auth/internal/e2e"
 	"golang.org/x/sync/errgroup"
 )
 

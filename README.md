@@ -1,9 +1,9 @@
-# Auth - Authentication and User Management by Supabase
+# Auth - Authentication and User Management by Supatype
 
-[![Coverage Status](https://coveralls.io/repos/github/supabase/auth/badge.svg?branch=master)](https://coveralls.io/github/supabase/auth?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/supatype/auth/badge.svg?branch=master)](https://coveralls.io/github/supatype/auth?branch=master)
 
 Auth is a user management and authentication server written in Go that powers
-[Supabase](https://supabase.com)'s features such as:
+[Supatype](https://supatype.dev)'s features such as:
 
 - Issuing JWTs
 - Row Level Security with PostgREST
@@ -31,8 +31,8 @@ Create a `.env` file to store your own custom environment variables. See [`examp
 2. Build the auth binary: `make build` . You should see an output like this:
 
 ```bash
-go build -ldflags "-X github.com/supabase/auth/cmd.Version=`git rev-parse HEAD`"
-GOOS=linux GOARCH=arm64 go build -ldflags "-X github.com/supabase/auth/cmd.Version=`git rev-parse HEAD`" -o gotrue-arm64
+go build -ldflags "-X github.com/supatype/auth/cmd.Version=`git rev-parse HEAD`"
+GOOS=linux GOARCH=arm64 go build -ldflags "-X github.com/supatype/auth/cmd.Version=`git rev-parse HEAD`" -o gotrue-arm64
 ```
 
 3. Execute the auth binary: `./auth`
@@ -49,13 +49,13 @@ Create a `.env.docker` file to store your own custom env vars. See [`example.doc
 ## Running in production
 
 Running an authentication server in production is not an easy feat. We
-recommend using [Supabase Auth](https://supabase.com/auth) which gets regular
+recommend using [Supatype Auth](https://supatype.dev/auth) which gets regular
 security updates.
 
 Otherwise, please make sure you set up a process to promptly update to the
 latest version. You can do that by following this repository, specifically the
-[Releases](https://github.com/supabase/auth/releases) and [Security
-Advisories](https://github.com/supabase/auth/security/advisories) sections.
+[Releases](https://github.com/supatype/auth/releases) and [Security
+Advisories](https://github.com/supatype/auth/security/advisories) sections.
 
 ### Backward compatibility
 
@@ -136,7 +136,7 @@ previous versions.
 ### Inherited features
 
 Certain inherited features from the Netlify codebase are not supported by
-Supabase and they may be removed without prior notice in the future. This is a
+Supatype and they may be removed without prior notice in the future. This is a
 comprehensive list of those features:
 
 1. Multi-tenancy via the `instances` table i.e. `GOTRUE_MULTI_INSTANCE_MODE`
@@ -145,12 +145,12 @@ comprehensive list of those features:
 3. Super admin via the `is_super_admin` column.
 4. Group information in JWTs via `GOTRUE_JWT_ADMIN_GROUP_NAME` and other
    configuration fields.
-5. JWT signing. Supabase Auth supports asymmetric keys (RS256 by default;
+5. JWT signing. Supatype Auth supports asymmetric keys (RS256 by default;
    ECC/Ed25519 optional). HS256 is still supported for compatibility, but
    migrating to asymmetric keys is recommended for easier validation and
    rotation. Future deprecations will be announced in the changelog. See the
-   [JWT Signing Keys](https://supabase.com/docs/guides/auth/signing-keys) and
-   [JWTs guide](https://supabase.com/docs/guides/auth/jwts) for details.
+   [JWT Signing Keys](https://supatype.dev/docs/auth/signing-keys) and
+   [JWTs guide](https://supatype.dev/docs/auth/jwts) for details.
 
 Note that this is not an exhaustive list and it may change.
 
@@ -1075,7 +1075,7 @@ returns:
 ### **POST /invite**
 
 Invites a new user with an email.
-This endpoint requires the `service_role` or `supabase_admin` JWT set as an Auth Bearer header:
+This endpoint requires the `service_role` or `supatype_admin` JWT set as an Auth Bearer header:
 
 e.g.
 
@@ -1173,7 +1173,7 @@ User will be logged in and redirected to:
 SITE_URL/#access_token=jwt-token-representing-the-user&token_type=bearer&expires_in=3600&refresh_token=a-refresh-token&type=invite
 ```
 
-Your app should detect the query params in the fragment and use them to set the session (supabase-js does this automatically)
+Your app should detect the query params in the fragment and use them to set the session (supatype-js does this automatically)
 
 You can use the `type` param to redirect the user to a password set form in the case of `invite` or `recovery`,
 or show an account confirmed/welcome message in the case of `signup`, or direct them to some additional onboarding flow
@@ -1392,7 +1392,7 @@ scopes=<optional additional scopes depending on the provider (email and name are
 
 Redirects to provider and then to `/callback`
 
-For Apple-specific setup see: <https://github.com/supabase/auth#apple-oauth>
+For Apple-specific setup see: <https://github.com/supatype/auth#apple-oauth>
 
 ### **GET /callback**
 

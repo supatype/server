@@ -10,8 +10,8 @@ import (
 	"sync"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/observability"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/observability"
 )
 
 // ErrTask is the base of all errors originating from apitasks.

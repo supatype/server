@@ -7,7 +7,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/models"
+	"github.com/supatype/auth/internal/models"
 )
 
 // TestRegisterPasskeyHappyPath tests the full happy path: get registration options, simulate

@@ -7,9 +7,9 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/e2e"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/e2e"
+	"github.com/supatype/auth/internal/storage"
 )
 
 type M = map[string]any

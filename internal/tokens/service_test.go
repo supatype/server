@@ -17,11 +17,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/crypto"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/storage/test"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/crypto"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/storage/test"
 )
 
 type panicHookManager struct {
@@ -1157,7 +1157,7 @@ func (ts *RefreshTokenV2Suite) TestRefreshTokenVersionUpgrade() {
 	require.Equal(ts.T(), "0", responseHeaders.Get("sb-auth-refresh-token-counter"))
 }
 
-// TestAsRedirectURL tests that AsRedirectURL includes the Supabase Auth identifier
+// TestAsRedirectURL tests that AsRedirectURL includes the Supatype Auth identifier
 func TestAsRedirectURL(t *testing.T) {
 	response := &AccessTokenResponse{
 		Token:        "test_access_token",
@@ -1188,7 +1188,7 @@ func TestAsRedirectURL(t *testing.T) {
 	require.Equal(t, "test_refresh_token", fragment.Get("refresh_token"))
 	require.Equal(t, "provider_access_token", fragment.Get("provider_token"))
 
-	// Verify Supabase Auth identifier is present
-	require.Contains(t, fragment, "sb", "Fragment should contain Supabase Auth identifier 'sb'")
-	require.Equal(t, "", fragment.Get("sb"), "Supabase Auth identifier should have empty value")
+	// Verify Supatype Auth identifier is present
+	require.Contains(t, fragment, "sb", "Fragment should contain Supatype Auth identifier 'sb'")
+	require.Equal(t, "", fragment.Get("sb"), "Supatype Auth identifier should have empty value")
 }

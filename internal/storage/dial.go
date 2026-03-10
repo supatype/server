@@ -14,7 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/conf"
+	"github.com/supatype/auth/internal/conf"
 )
 
 // Connection is the interface a storage provider must implement. Do not copy
@@ -109,7 +109,7 @@ func applyDBDriver(
 
 	driver := ""
 	if config.DB.Driver != "postgres" {
-		logrus.Warn("DEPRECATION NOTICE: only PostgreSQL is supported by Supabase's GoTrue, will be removed soon")
+		logrus.Warn("DEPRECATION NOTICE: only PostgreSQL is supported by Supatype's GoTrue, will be removed soon")
 	} else {
 		// pop v5 uses pgx as the default PostgreSQL driver
 		driver = "pgx"

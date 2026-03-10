@@ -6,9 +6,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/supabase/auth/internal/api/apitask"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/mailer"
+	"github.com/supatype/auth/internal/api/apitask"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/mailer"
 )
 
 // New will return a Client that runs a task in the background that will later

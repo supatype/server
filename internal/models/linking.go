@@ -4,9 +4,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/supabase/auth/internal/api/provider"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/storage"
 )
 
 // GetAccountLinkingDomain returns a string that describes the account linking

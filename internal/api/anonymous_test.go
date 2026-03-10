@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/auth/internal/conf"
-	mail "github.com/supabase/auth/internal/mailer"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/conf"
+	mail "github.com/supatype/auth/internal/mailer"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
 )
 
 type AnonymousTestSuite struct {
@@ -254,7 +254,7 @@ func (ts *AnonymousTestSuite) TestRateLimitAnonymousSignups() {
 
 func (ts *AnonymousTestSuite) TestAdminUpdateAnonymousUser() {
 	claims := &AccessTokenClaims{
-		Role: "supabase_admin",
+		Role: "supatype_admin",
 	}
 	adminJwt, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(ts.Config.JWT.Secret))
 	require.NoError(ts.T(), err)

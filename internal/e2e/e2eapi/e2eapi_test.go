@@ -15,9 +15,9 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/api"
-	"github.com/supabase/auth/internal/e2e"
-	"github.com/supabase/auth/internal/models"
+	"github.com/supatype/auth/internal/api"
+	"github.com/supatype/auth/internal/e2e"
+	"github.com/supatype/auth/internal/models"
 )
 
 func TestInstance(t *testing.T) {

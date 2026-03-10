@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/apierrors"
 )
 
 func TestValidateOAuthURL(t *testing.T) {

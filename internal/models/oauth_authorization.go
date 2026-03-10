@@ -8,9 +8,9 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
-	"github.com/supabase/auth/internal/crypto"
-	"github.com/supabase/auth/internal/security"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/crypto"
+	"github.com/supatype/auth/internal/security"
+	"github.com/supatype/auth/internal/storage"
 )
 
 // OAuthServerAuthorizationStatus represents the status of an OAuth server authorization request

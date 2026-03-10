@@ -12,16 +12,16 @@ import (
 	"github.com/fatih/structs"
 	"github.com/sethvargo/go-password/password"
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/api/provider"
-	"github.com/supabase/auth/internal/api/sms_provider"
-	"github.com/supabase/auth/internal/crypto"
-	mail "github.com/supabase/auth/internal/mailer"
-	"github.com/supabase/auth/internal/metering"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/observability"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/utilities"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/auth/internal/api/sms_provider"
+	"github.com/supatype/auth/internal/crypto"
+	mail "github.com/supatype/auth/internal/mailer"
+	"github.com/supatype/auth/internal/metering"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/utilities"
 )
 
 const (
@@ -507,7 +507,7 @@ func (a *API) prepErrorRedirectURL(err *HTTPError, r *http.Request, rurl string,
 		u.RawQuery = q.Encode()
 	}
 	// Left as hash fragment to comply with spec.
-	// Add Supabase Auth identifier to help clients distinguish Supabase Auth redirects
+	// Add Supatype Auth identifier to help clients distinguish Supatype Auth redirects
 	hq.Set("sb", "")
 	u.Fragment = hq.Encode()
 	return u.String(), nil
@@ -525,7 +525,7 @@ func (a *API) prepRedirectURL(message string, rurl string, flowType models.FlowT
 		q.Set("message", message)
 	}
 	u.RawQuery = q.Encode()
-	// Add Supabase Auth identifier to help clients distinguish Supabase Auth redirects
+	// Add Supatype Auth identifier to help clients distinguish Supatype Auth redirects
 	hq.Set("sb", "")
 	u.Fragment = hq.Encode()
 	return u.String(), nil

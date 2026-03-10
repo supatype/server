@@ -2,7 +2,7 @@
   "name": "Gotrue",
   "description": "",
   "website": "https://www.gotrueapi.org",
-  "repository": "https://github.com/supabase/gotrue",
+  "repository": "https://github.com/supatype/auth",
   "env": {
     "DATABASE_URL": {},
     "GOTRUE_DB_DRIVER": {

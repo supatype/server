@@ -8,22 +8,22 @@ import (
 	"github.com/rs/cors"
 	"github.com/sebest/xff"
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/api/apitask"
-	"github.com/supabase/auth/internal/api/oauthserver"
-	"github.com/supabase/auth/internal/api/provider"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/hooks/hookshttp"
-	"github.com/supabase/auth/internal/hooks/hookspgfunc"
-	"github.com/supabase/auth/internal/hooks/v0hooks"
-	"github.com/supabase/auth/internal/mailer"
-	"github.com/supabase/auth/internal/mailer/templatemailer"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/observability"
-	"github.com/supabase/auth/internal/sbff"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/tokens"
-	"github.com/supabase/auth/internal/utilities"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/apitask"
+	"github.com/supatype/auth/internal/api/oauthserver"
+	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/hooks/hookshttp"
+	"github.com/supatype/auth/internal/hooks/hookspgfunc"
+	"github.com/supatype/auth/internal/hooks/v0hooks"
+	"github.com/supatype/auth/internal/mailer"
+	"github.com/supatype/auth/internal/mailer/templatemailer"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/auth/internal/sbff"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/tokens"
+	"github.com/supatype/auth/internal/utilities"
 	"github.com/supabase/hibp"
 )
 
@@ -82,11 +82,11 @@ func (a *API) deprecationNotices() {
 	log := logrus.WithField("component", "api")
 
 	if config.JWT.AdminGroupName != "" {
-		log.Warn("DEPRECATION NOTICE: GOTRUE_JWT_ADMIN_GROUP_NAME not supported by Supabase's GoTrue, will be removed soon")
+		log.Warn("DEPRECATION NOTICE: GOTRUE_JWT_ADMIN_GROUP_NAME not supported by Supatype's GoTrue, will be removed soon")
 	}
 
 	if config.JWT.DefaultGroupName != "" {
-		log.Warn("DEPRECATION NOTICE: GOTRUE_JWT_DEFAULT_GROUP_NAME not supported by Supabase's GoTrue, will be removed soon")
+		log.Warn("DEPRECATION NOTICE: GOTRUE_JWT_DEFAULT_GROUP_NAME not supported by Supatype's GoTrue, will be removed soon")
 	}
 }
 
@@ -213,7 +213,7 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 		r.Get("/settings", api.Settings)
 
 		// `/authorize` to initiate OAuth2 authorization flow with the external providers
-		// where Supabase Auth is an OAuth2 Client
+		// where Supatype Auth is an OAuth2 Client
 		r.Get("/authorize", api.ExternalProviderRedirect)
 
 		r.With(api.requireAdminCredentials).Post("/invite", api.Invite)
@@ -419,7 +419,7 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 				r.With(api.requireAuthentication).Get("/userinfo", api.oauthServer.OAuthUserInfo)
 
 				// OAuth 2.1 Authorization endpoints
-				// `/authorize` to initiate OAuth2 authorization code flow where Supabase Auth is the OAuth2 provider
+				// `/authorize` to initiate OAuth2 authorization code flow where Supatype Auth is the OAuth2 provider
 				r.Get("/authorize", api.oauthServer.OAuthServerAuthorize)
 				r.With(api.requireAuthentication).Get("/authorizations/{authorization_id}", api.oauthServer.OAuthServerGetAuthorization)
 				r.With(api.requireAuthentication).Post("/authorizations/{authorization_id}/consent", api.oauthServer.OAuthServerConsent)

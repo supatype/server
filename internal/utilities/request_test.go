@@ -6,8 +6,8 @@ import (
 	tst "testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/sbff"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/sbff"
 )
 
 func TestGetIPAddressWithSBFF(t *tst.T) {

@@ -17,10 +17,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/crypto"
-	"github.com/supabase/auth/internal/models"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/crypto"
+	"github.com/supatype/auth/internal/models"
 )
 
 type TokenTestSuite struct {

@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/utilities"
-	"github.com/supabase/auth/internal/utilities/version"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/auth/internal/utilities/version"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"

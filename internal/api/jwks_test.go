@@ -10,7 +10,7 @@ import (
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/conf"
+	"github.com/supatype/auth/internal/conf"
 )
 
 func TestJwks(t *testing.T) {

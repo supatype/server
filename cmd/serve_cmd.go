@@ -13,13 +13,13 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/supabase/auth/internal/api"
-	"github.com/supabase/auth/internal/api/apiworker"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/mailer/templatemailer"
-	"github.com/supabase/auth/internal/reloader"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/utilities"
+	"github.com/supatype/auth/internal/api"
+	"github.com/supatype/auth/internal/api/apiworker"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/mailer/templatemailer"
+	"github.com/supatype/auth/internal/reloader"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/utilities"
 )
 
 var serveCmd = cobra.Command{

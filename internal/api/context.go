@@ -6,8 +6,8 @@ import (
 
 	"github.com/gofrs/uuid"
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/supabase/auth/internal/api/shared"
-	"github.com/supabase/auth/internal/models"
+	"github.com/supatype/auth/internal/api/shared"
+	"github.com/supatype/auth/internal/models"
 )
 
 type contextKey string

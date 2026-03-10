@@ -26,7 +26,7 @@
 ### Features
 
 * Add email send operation metrics ([#2311](https://github.com/supabase/auth/issues/2311)) ([0096575](https://github.com/supabase/auth/commit/00965758762301875df2d7e4e552b2346bc09236))
-* add Supabase Auth identifier to OAuth redirect URLs ([#2299](https://github.com/supabase/auth/issues/2299)) ([2d3dbc6](https://github.com/supabase/auth/commit/2d3dbc652c1beb47c2eade28b45e94f6e2c56982))
+* add Supatype Auth identifier to OAuth redirect URLs ([#2299](https://github.com/supabase/auth/issues/2299)) ([2d3dbc6](https://github.com/supabase/auth/commit/2d3dbc652c1beb47c2eade28b45e94f6e2c56982))
 * log sb-auth-user-id, sb-auth-session-id, ... on sign in not just refresh token ([#2342](https://github.com/supabase/auth/issues/2342)) ([a486ada](https://github.com/supabase/auth/commit/a486ada3683bb078b8f396a5ba2e606826f0044b))
 * **oauth-server:** store and enforce token_endpoint_auth_method ([#2300](https://github.com/supabase/auth/issues/2300)) ([bcd6cd5](https://github.com/supabase/auth/commit/bcd6cd590a47e963b7afe615c889f62d28cb94a2))
 * replace JWT OAuth state with `flow_state.id` UUID ([#2331](https://github.com/supabase/auth/issues/2331)) ([645654d](https://github.com/supabase/auth/commit/645654df63a3da7929840659c065f6a9cdd4ba96))

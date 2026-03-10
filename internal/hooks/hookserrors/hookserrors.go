@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/supabase/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/apierrors"
 )
 
 // Error is the type propagated by hook endpoints to communicate failure.

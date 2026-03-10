@@ -9,12 +9,12 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/mrjones/oauth"
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/api/provider"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/observability"
-	"github.com/supabase/auth/internal/utilities"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/auth/internal/utilities"
 	"golang.org/x/oauth2"
 )
 

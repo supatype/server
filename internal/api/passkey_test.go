@@ -14,8 +14,8 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/models"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/models"
 )
 
 // PasskeyTestSuite is the shared test suite for all passkey flow tests.

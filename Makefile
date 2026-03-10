@@ -8,7 +8,7 @@ else
 	VERSION=$(shell git describe --tags)
 endif
 
-FLAGS=-ldflags "-X github.com/supabase/auth/internal/utilities.Version=$(VERSION)" -buildvcs=false
+FLAGS=-ldflags "-X github.com/supatype/auth/internal/utilities.Version=$(VERSION)" -buildvcs=false
 
 ifneq ($(shell docker compose version 2>/dev/null),)
   DOCKER_COMPOSE=docker compose

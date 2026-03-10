@@ -9,7 +9,7 @@ import (
 	"gopkg.in/gomail.v2"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/conf"
+	"github.com/supatype/auth/internal/conf"
 )
 
 // Client lets MailMe send templated mails

@@ -8,7 +8,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/storage"
 )
 
 // OAuthServerConsent represents user consent for an OAuth server client's access to specific scopes

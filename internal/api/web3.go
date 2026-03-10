@@ -6,14 +6,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/api/provider"
-	"github.com/supabase/auth/internal/metering"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/utilities"
-	"github.com/supabase/auth/internal/utilities/siwe"
-	"github.com/supabase/auth/internal/utilities/siws"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/auth/internal/metering"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/auth/internal/utilities/siwe"
+	"github.com/supatype/auth/internal/utilities/siws"
 )
 
 type Web3GrantParams struct {

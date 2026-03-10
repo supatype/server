@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/models"
+	"github.com/supatype/auth/internal/models"
 )
 
 func (ts *ExternalTestSuite) TestSignupExternalFigma() {

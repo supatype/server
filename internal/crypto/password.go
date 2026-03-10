@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/supabase/auth/internal/observability"
+	"github.com/supatype/auth/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 

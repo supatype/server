@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/mailer"
-	"github.com/supabase/auth/internal/mailer/mailmeclient"
-	"github.com/supabase/auth/internal/mailer/noopclient"
-	"github.com/supabase/auth/internal/mailer/taskclient"
-	"github.com/supabase/auth/internal/mailer/validateclient"
-	"github.com/supabase/auth/internal/observability"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/mailer"
+	"github.com/supatype/auth/internal/mailer/mailmeclient"
+	"github.com/supatype/auth/internal/mailer/noopclient"
+	"github.com/supatype/auth/internal/mailer/taskclient"
+	"github.com/supatype/auth/internal/mailer/validateclient"
+	"github.com/supatype/auth/internal/observability"
 	"golang.org/x/sync/singleflight"
 )
 

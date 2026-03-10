@@ -9,8 +9,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/conf"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/conf"
 )
 
 func TestIsValidCodeChallenge(t *testing.T) {

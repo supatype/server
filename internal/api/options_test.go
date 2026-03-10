@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/auth/internal/conf"
+	"github.com/supatype/auth/internal/conf"
 )
 
 func TestNewLimiterOptions(t *testing.T) {

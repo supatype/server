@@ -16,14 +16,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/xeipuuv/gojsonschema"
 
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/crypto"
-	"github.com/supabase/auth/internal/hooks/v0hooks"
-	"github.com/supabase/auth/internal/metering"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/utilities"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/crypto"
+	"github.com/supatype/auth/internal/hooks/v0hooks"
+	"github.com/supatype/auth/internal/metering"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/utilities"
 )
 
 const retryLoopDuration = 5.0
@@ -146,7 +146,7 @@ func (r *AccessTokenResponse) AsRedirectURL(redirectURL string, extraParams url.
 	extraParams.Set("expires_in", strconv.Itoa(r.ExpiresIn))
 	extraParams.Set("expires_at", strconv.FormatInt(r.ExpiresAt, 10))
 	extraParams.Set("refresh_token", r.RefreshToken)
-	// Add Supabase Auth identifier to help clients distinguish Supabase Auth redirects
+	// Add Supatype Auth identifier to help clients distinguish Supatype Auth redirects
 	extraParams.Set("sb", "")
 
 	return redirectURL + "#" + extraParams.Encode()

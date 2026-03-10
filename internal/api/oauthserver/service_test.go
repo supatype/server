@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/hooks/v0hooks"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/storage/test"
-	"github.com/supabase/auth/internal/tokens"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/hooks/v0hooks"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/storage/test"
+	"github.com/supatype/auth/internal/tokens"
 )
 
 const serviceTestConfig = "../../../hack/test.env"

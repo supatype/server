@@ -9,9 +9,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/conf"
-	"github.com/supabase/auth/internal/observability"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/observability"
 )
 
 func TestHandleResponseErrorWithHTTPError(t *testing.T) {

@@ -5,9 +5,9 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/gofrs/uuid"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
 )
 
 type SingleSignOnParams struct {

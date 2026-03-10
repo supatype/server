@@ -8,10 +8,10 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gofrs/uuid"
-	"github.com/supabase/auth/internal/api/apierrors"
-	"github.com/supabase/auth/internal/models"
-	"github.com/supabase/auth/internal/storage"
-	"github.com/supabase/auth/internal/utilities"
+	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/auth/internal/utilities"
 )
 
 // PasskeyRegistrationOptionsParams is the request body for POST /passkeys/registration/options.

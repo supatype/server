@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/supabase/auth/internal/conf"
+	"github.com/supatype/auth/internal/conf"
 )
 
 // IntervalLimiter will limit the number of calls to Allow per interval.

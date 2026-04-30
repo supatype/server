@@ -24,16 +24,16 @@ help: ## Show this help.
 all: vet sec static build ## Run the tests and build the binary.
 
 build: deps ## Build the binary.
-	CGO_ENABLED=0 go build $(FLAGS)
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(FLAGS) -o auth-arm64
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(FLAGS) -o auth-darwin-arm64
+	CGO_ENABLED=0 go build $(FLAGS) -o supatype-server
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(FLAGS) -o supatype-server-linux-arm64
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(FLAGS) -o supatype-server-darwin-arm64
 
 build-strip: deps ## Build a stripped binary, for which the version file needs to be rewritten.
 	echo "package utilities" > internal/utilities/version.go
 	echo "const Version = \"$(VERSION)\"" >> internal/utilities/version.go
 
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
-		$(FLAGS) -ldflags "-s -w" -o auth-arm64-strip
+		$(FLAGS) -ldflags "-s -w" -o supatype-server-linux-arm64-strip
 
 deps: ## Install dependencies.
 	@go mod download

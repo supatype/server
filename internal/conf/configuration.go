@@ -586,6 +586,12 @@ type MailerConfiguration struct {
 	// Max size in bytes we will read from a template endpoint
 	TemplateMaxSize int `json:"template_max_size" split_words:"true" default:"1000000"`
 
+	// MailerProvider selects the email delivery backend.
+	// Accepted values: "" or "smtp" (default, uses SMTP settings), "resend", "ses".
+	// When "resend": RESEND_API_KEY and RESEND_FROM env vars must be set.
+	// When "ses": AWS credential chain is used; SES_FROM env var must be set.
+	MailerProvider string `json:"mailer_provider" split_words:"true"`
+
 	// The maximum age of a template before we consider it stale.
 	TemplateMaxAge time.Duration `json:"template_max_age" split_words:"true" default:"10m"`
 
@@ -1137,12 +1143,11 @@ func populateGlobal(config *GlobalConfiguration) error {
 
 // ApplyDefaults sets defaults for a GlobalConfiguration
 func (config *GlobalConfiguration) ApplyDefaults() error {
-	if config.JWT.AdminGroupName == "" {
-		config.JWT.AdminGroupName = "admin"
-	}
-
 	if len(config.JWT.AdminRoles) == 0 {
 		config.JWT.AdminRoles = []string{"service_role", "supatype_admin"}
+	}
+	if config.JWT.DefaultGroupName == "" {
+		config.JWT.DefaultGroupName = "authenticated"
 	}
 
 	if config.JWT.Exp == 0 {

@@ -71,9 +71,13 @@ func (c *Connection) Copy() *Connection {
 func newConnectionDetails(
 	config *conf.GlobalConfiguration,
 ) (*pop.ConnectionDetails, error) {
+	dbURL := config.DB.URL
+	if u, err := EnsurePostgresSearchPathInURL(dbURL, config.DB.Namespace); err == nil {
+		dbURL = u
+	}
 	cd := &pop.ConnectionDetails{
 		Dialect:         config.DB.Driver,
-		URL:             config.DB.URL,
+		URL:             dbURL,
 		Pool:            config.DB.MaxPoolSize,
 		IdlePool:        config.DB.MaxIdlePoolSize,
 		ConnMaxLifetime: config.DB.ConnMaxLifetime,

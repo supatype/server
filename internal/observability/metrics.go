@@ -198,8 +198,10 @@ func ConfigureMetrics(ctx context.Context, mc *conf.MetricsConfig) error {
 			logrus.WithError(err).Error("unable to get gotrue.gotrue_running gague metric")
 			return
 		}
-		if err = version.InitVersionMetrics(ctx, utilities.Version); err != nil {
-			logrus.WithError(err).Error("unable to configure version metrics")
+		if utilities.Version != "" {
+			if err = version.InitVersionMetrics(ctx, utilities.Version); err != nil {
+				logrus.WithError(err).Error("unable to configure version metrics")
+			}
 		}
 	})
 

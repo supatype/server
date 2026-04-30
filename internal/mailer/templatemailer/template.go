@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"github.com/supatype/auth/internal/mailer"
 	"github.com/supatype/auth/internal/mailer/mailmeclient"
 	"github.com/supatype/auth/internal/mailer/noopclient"
+	"github.com/supatype/auth/internal/mailer/resendclient"
+	"github.com/supatype/auth/internal/mailer/sesclient"
 	"github.com/supatype/auth/internal/mailer/taskclient"
 	"github.com/supatype/auth/internal/mailer/validateclient"
 	"github.com/supatype/auth/internal/observability"
@@ -37,13 +40,48 @@ type Mailer struct {
 }
 
 // FromConfig returns a new mailer configured using the global configuration.
+// The provider is selected by globalConfig.Mailer.MailerProvider:
+//   - "" or "smtp": SMTP via mailmeclient (falls back to noop if SMTP host is unset)
+//   - "resend": Resend API (requires RESEND_API_KEY and RESEND_FROM env vars)
+//   - "ses": AWS SES v2 (ambient AWS credentials; SES_FROM env var required)
 func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
 	var mc mailer.Client
-	if globalConfig.SMTP.Host == "" {
-		logrus.Infof("Noop mail client being used for %v", globalConfig.SiteURL)
-		mc = noopclient.New()
-	} else {
-		mc = mailmeclient.New(globalConfig)
+
+	switch globalConfig.Mailer.MailerProvider {
+	case "resend":
+		apiKey := os.Getenv("RESEND_API_KEY")
+		from := os.Getenv("RESEND_FROM")
+		if apiKey == "" || from == "" {
+			logrus.Warn("templatemailer: MAILER_PROVIDER=resend but RESEND_API_KEY or RESEND_FROM is unset; falling back to noop")
+			mc = noopclient.New()
+		} else {
+			logrus.Infof("templatemailer: using Resend for %v", globalConfig.SiteURL)
+			mc = resendclient.New(apiKey, from)
+		}
+
+	case "ses":
+		from := os.Getenv("SES_FROM")
+		if from == "" {
+			logrus.Warn("templatemailer: MAILER_PROVIDER=ses but SES_FROM is unset; falling back to noop")
+			mc = noopclient.New()
+		} else {
+			sesClient, err := sesclient.New(context.Background(), from)
+			if err != nil {
+				logrus.WithError(err).Warn("templatemailer: failed to init SES client; falling back to noop")
+				mc = noopclient.New()
+			} else {
+				logrus.Infof("templatemailer: using AWS SES for %v", globalConfig.SiteURL)
+				mc = sesClient
+			}
+		}
+
+	default: // "" or "smtp"
+		if globalConfig.SMTP.Host == "" {
+			logrus.Infof("Noop mail client being used for %v", globalConfig.SiteURL)
+			mc = noopclient.New()
+		} else {
+			mc = mailmeclient.New(globalConfig)
+		}
 	}
 
 	// Wrap client with validation first

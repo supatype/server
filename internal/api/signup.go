@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fatih/structs"
@@ -385,7 +386,11 @@ func (a *API) signupNewUser(conn *storage.Connection, user *models.User) (*model
 		if terr = tx.Create(user); terr != nil {
 			return apierrors.NewInternalServerError("Database error saving new user").WithInternalError(terr)
 		}
-		if terr = user.SetRole(tx, config.JWT.DefaultGroupName); terr != nil {
+		role := strings.TrimSpace(config.JWT.DefaultGroupName)
+		if role == "" {
+			role = "authenticated"
+		}
+		if terr = user.SetRole(tx, role); terr != nil {
 			return apierrors.NewInternalServerError("Database error updating user").WithInternalError(terr)
 		}
 		return nil

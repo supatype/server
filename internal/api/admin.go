@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fatih/structs"
@@ -466,9 +467,12 @@ func (a *API) adminUserCreate(w http.ResponseWriter, r *http.Request) error {
 			return terr
 		}
 
-		role := config.JWT.DefaultGroupName
-		if params.Role != "" {
-			role = params.Role
+		role := strings.TrimSpace(config.JWT.DefaultGroupName)
+		if role == "" {
+			role = "authenticated"
+		}
+		if strings.TrimSpace(params.Role) != "" {
+			role = strings.TrimSpace(params.Role)
 		}
 		if terr := user.SetRole(tx, role); terr != nil {
 			return terr

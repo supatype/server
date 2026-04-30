@@ -15,7 +15,7 @@ var (
 )
 
 var rootCmd = cobra.Command{
-	Use: "gotrue",
+	Use: "supatype-server",
 	Run: func(cmd *cobra.Command, args []string) {
 		migrate(cmd, args)
 		serve(cmd.Context())

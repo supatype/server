@@ -4,12 +4,15 @@ import (
 	"embed"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/gobuffalo/pop/v6"
 	"github.com/gobuffalo/pop/v6/logging"
+	"github.com/lib/pq"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/supatype/auth/internal/storage"
 )
 
 var EmbeddedMigrations embed.FS
@@ -22,7 +25,13 @@ var migrateCmd = cobra.Command{
 
 func migrate(cmd *cobra.Command, args []string) {
 	globalConfig := loadGlobalConfig(cmd.Context())
-	u, err := url.Parse(globalConfig.DB.URL)
+	dbURL := globalConfig.DB.URL
+	if nu, err := storage.EnsurePostgresSearchPathInURL(dbURL, globalConfig.DB.Namespace); err == nil {
+		dbURL = nu
+	} else {
+		logrus.WithError(err).Warn("could not normalize database URL (using config URL as-is)")
+	}
+	u, err := url.Parse(dbURL)
 	if err != nil {
 		logrus.Fatalf("%+v", errors.Wrap(err, "parsing db connection url"))
 	}
@@ -53,7 +62,7 @@ func migrate(cmd *cobra.Command, args []string) {
 	}
 
 	q := u.Query()
-	q.Add("application_name", "auth_migrations")
+	q.Set("application_name", "auth_migrations")
 	u.RawQuery = q.Encode()
 	deets := &pop.ConnectionDetails{
 		Dialect: globalConfig.DB.Driver,
@@ -72,6 +81,21 @@ func migrate(cmd *cobra.Command, args []string) {
 
 	if err := db.Open(); err != nil {
 		log.Fatalf("%+v", errors.Wrap(err, "checking database connection"))
+	}
+
+	storage.TightenPoolForMigration(db)
+
+	// Persist default search_path for this database so every pooled connection
+	// (including Pop migrator) sees a valid path on PostgreSQL 15+.
+	if err := storage.TryAlterDatabaseSearchPathDefault(db, globalConfig.DB.Namespace); err != nil {
+		logrus.WithError(err).Warn("could not ALTER DATABASE SET search_path (continuing; ensure DB role or URL sets search_path)")
+	}
+
+	if ns := strings.TrimSpace(globalConfig.DB.Namespace); ns != "" {
+		setPath := "SET search_path TO " + pq.QuoteIdentifier(ns)
+		if err := db.RawQuery(setPath).Exec(); err != nil {
+			log.Fatalf("%+v", errors.Wrap(err, "setting search_path for migrations"))
+		}
 	}
 
 	log.Debugf("Reading migrations from executable")

@@ -12,6 +12,7 @@ import (
 	"github.com/gobuffalo/pop/v6"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/storage"
 )
 
 // ErrAdvisoryLockAlreadyAcquired is returned when another process already holds the advisory lock
@@ -33,7 +34,11 @@ const (
 // Returns an error either from index creation failure (partial or complete) or if the advisory lock
 // could not be acquired.
 func CreateIndexes(ctx context.Context, config *conf.GlobalConfiguration, le *logrus.Entry) error {
-	u, err := url.Parse(config.DB.URL)
+	rawURL := config.DB.URL
+	if nu, err := storage.EnsurePostgresSearchPathInURL(rawURL, config.DB.Namespace); err == nil {
+		rawURL = nu
+	}
+	u, err := url.Parse(rawURL)
 	if err != nil {
 		le.WithError(err).Fatal("Error parsing db connection url")
 	}
@@ -43,7 +48,7 @@ func CreateIndexes(ctx context.Context, config *conf.GlobalConfiguration, le *lo
 	}
 
 	q := u.Query()
-	q.Add("application_name", "auth_indexworker")
+	q.Set("application_name", "auth_indexworker")
 	u.RawQuery = q.Encode()
 	deets := &pop.ConnectionDetails{
 		Dialect: config.DB.Driver,

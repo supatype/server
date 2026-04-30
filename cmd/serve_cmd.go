@@ -2,13 +2,14 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
-	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -16,8 +17,12 @@ import (
 	"github.com/supatype/auth/internal/api"
 	"github.com/supatype/auth/internal/api/apiworker"
 	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/auth/internal/deno"
 	"github.com/supatype/auth/internal/mailer/templatemailer"
+	"github.com/supatype/auth/internal/modes"
+	"github.com/supatype/auth/internal/proxy"
 	"github.com/supatype/auth/internal/reloader"
+	"github.com/supatype/auth/internal/serverconf"
 	"github.com/supatype/auth/internal/storage"
 	"github.com/supatype/auth/internal/utilities"
 )
@@ -74,9 +79,74 @@ func serve(ctx context.Context) {
 	logrus.WithField("version", initialAPI.Version()).Infof("GoTrue API started on: %s", addr)
 
 	ah := reloader.NewAtomicHandler(initialAPI)
+
+	// ── supatype-server outer layer ───────────────────────────────────────────
+	// Load .env from the current working directory (dev/standalone convenience).
+	if cwd, err := os.Getwd(); err == nil {
+		if err := serverconf.LoadDotEnv(cwd); err != nil {
+			logrus.WithError(err).Debug("serve: no .env file loaded")
+		}
+	}
+
+	srvCfg, err := serverconf.Load()
+	if err != nil {
+		logrus.WithError(err).Fatal("serve: failed to load server config")
+	}
+
+	manifest, err := proxy.Load(srvCfg.ManifestPath)
+	if err != nil {
+		logrus.WithError(err).Fatal("serve: failed to load route manifest")
+	}
+
+	// Watch manifest for live reloads (best-effort — log and continue if it fails).
+	if watchErr := proxy.Watch(srvCfg.ManifestPath, func(m *proxy.RouteManifest) {
+		manifest = m
+		logrus.Info("serve: route manifest reloaded")
+	}); watchErr != nil {
+		logrus.WithError(watchErr).Debug("serve: manifest watch not started")
+	}
+
+	// Start Deno edge functions subprocess if configured.
+	var dm *deno.Manager
+	if srvCfg.DenoFunctionsDir != "" && srvCfg.DenoPath != "" {
+		denoPortInt := 8001 // default
+		if srvCfg.DenoPort != "" {
+			if p, parseErr := strconv.Atoi(srvCfg.DenoPort); parseErr == nil {
+				denoPortInt = p
+			}
+		}
+		dm = deno.New(srvCfg.DenoPath, srvCfg.DenoFunctionsDir, denoPortInt, nil)
+		dm.Start(ctx)
+		defer dm.Stop()
+	}
+
+	outerMux := buildOuterMux(srvCfg, manifest, ah, dm)
+
+	// Determine TLS config for standalone mode.
+	var tlsCfg *tls.Config
+	if srvCfg.Mode == "standalone" && srvCfg.TLSDomain != "" {
+		acm, err := modes.NewACMEManager(srvCfg.TLSDomain, srvCfg.TLSACMECacheDir)
+		if err != nil {
+			logrus.WithError(err).Fatal("serve: ACME setup failed")
+		}
+		tlsCfg = modes.StandaloneTLSConfig(acm)
+
+		// HTTP-01 challenge handler on :80.
+		go func() {
+			challengeSrv := &http.Server{
+				Addr:    ":80",
+				Handler: acm.HTTPHandler(nil),
+			}
+			if err := challengeSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logrus.WithError(err).Warn("serve: ACME HTTP challenge server error")
+			}
+		}()
+	}
+
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           ah,
+		Handler:           outerMux,
+		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: 2 * time.Second, // to mitigate a Slowloris attack
 		BaseContext: func(net.Listener) context.Context {
 			return baseCtx
@@ -181,21 +251,12 @@ func serve(ctx context.Context) {
 		}
 	}()
 
-	lc := net.ListenConfig{
-		Control: func(network, address string, c syscall.RawConn) error {
-			var serr error
-			if err := c.Control(func(fd uintptr) {
-				serr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1) // #nosec G115
-			}); err != nil {
-				return err
-			}
-			return serr
-		},
-	}
+	lc := reusePortListenConfig()
 	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		log.WithError(err).Fatal("http server listen failed")
 	}
+	fmt.Fprintf(os.Stderr, "[supatype-server] listening on %s (mode=%s)\n", addr, os.Getenv("SUPATYPE_MODE"))
 	err = httpSrv.Serve(listener)
 	if err == http.ErrServerClosed {
 		log.Info("http server closed")

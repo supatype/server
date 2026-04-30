@@ -671,6 +671,13 @@ func (s *Service) GenerateAccessToken(r *http.Request, tx *storage.Connection, p
 
 	issuedAt := s.now().UTC()
 	expiresAt := issuedAt.Add(time.Second * time.Duration(config.JWT.Exp))
+	role := strings.TrimSpace(params.User.Role)
+	if role == "" {
+		role = strings.TrimSpace(config.JWT.DefaultGroupName)
+	}
+	if role == "" {
+		role = "authenticated"
+	}
 	var clientID string
 	if params.ClientID != nil && *params.ClientID != uuid.Nil {
 		clientID = params.ClientID.String()
@@ -694,7 +701,7 @@ func (s *Service) GenerateAccessToken(r *http.Request, tx *storage.Connection, p
 		Phone:                         params.User.GetPhone(),
 		AppMetaData:                   params.User.AppMetaData,
 		UserMetaData:                  params.User.UserMetaData,
-		Role:                          params.User.Role,
+		Role:                          role,
 		SessionId:                     sid,
 		AuthenticatorAssuranceLevel:   aal.String(),
 		AuthenticationMethodReference: amr,

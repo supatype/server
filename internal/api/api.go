@@ -355,6 +355,19 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 
 			r.Post("/generate_link", api.adminGenerateLink)
 
+			// Mail templates — Studio Authentication → Email templates.
+			// Use Get("/{id}") here (not Route + Get("/")) so `/admin/template/confirmation`
+			// matches without a trailing slash (same pattern as /admin/users/{user_id}).
+			r.Route("/template", func(r *router) {
+				r.Get("/{template_type}", api.adminMailTemplateGet)
+				r.Put("/{template_type}", api.adminMailTemplatePut)
+			})
+			// Supabase/GoTrue also expose the plural segment in some tooling.
+			r.Route("/templates", func(r *router) {
+				r.Get("/{template_type}", api.adminMailTemplateGet)
+				r.Put("/{template_type}", api.adminMailTemplatePut)
+			})
+
 			r.Route("/sso", func(r *router) {
 				r.Route("/providers", func(r *router) {
 					r.Get("/", api.adminSSOProvidersList)

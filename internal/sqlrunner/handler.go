@@ -1,6 +1,6 @@
 // Package sqlrunner provides the studio SQL-runner HTTP handler.
 //
-// Route (requires service-role Bearer token):
+// Route (requires service-role Bearer token unless explicitly insecure):
 //
 //	POST /sql   — execute a SQL query and return rows as JSON
 //
@@ -28,6 +28,7 @@ import (
 const (
 	queryTimeout = 30 * time.Second
 	maxRows      = 10_000
+	insecureEnv  = "SUPATYPE_SQLRUNNER_INSECURE"
 )
 
 // Handler returns an http.Handler that serves the SQL runner endpoint.
@@ -156,8 +157,8 @@ func resolveSchema(authHeader, requestedSchema string) string {
 		defaultSchema = "public"
 	}
 
-	// Dev mode: trust the requested schema if valid, else use default.
-	if os.Getenv("SUPATYPE_MODE") == "dev" {
+	// Explicit insecure mode: trust the requested schema if valid, else use default.
+	if sqlRunnerInsecure() {
 		if requestedSchema != "" && validIdentifier.MatchString(requestedSchema) {
 			return requestedSchema
 		}
@@ -204,16 +205,29 @@ func jwtRole(authHeader string) string {
 // ─── Service role auth ────────────────────────────────────────────────────────
 
 func checkServiceRole(r *http.Request) bool {
-	if os.Getenv("SUPATYPE_MODE") == "dev" {
-		return true // dev mode — auth bypassed
+	if sqlRunnerInsecure() {
+		return true // explicit bypass for debugging only
 	}
-	key := os.Getenv("SUPATYPE_SERVICE_ROLE_KEY")
+
+	key := strings.TrimSpace(os.Getenv("SUPATYPE_SERVICE_ROLE_KEY"))
 	if key == "" {
-		return true // no key configured
+		return false // fail closed when key is missing
 	}
-	auth := r.Header.Get("Authorization")
-	token, _ := strings.CutPrefix(auth, "Bearer ")
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	token, ok := strings.CutPrefix(auth, "Bearer ")
+	if !ok {
+		return false
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
 	return token == key
+}
+
+func sqlRunnerInsecure() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(insecureEnv)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 // ─── Connection pool ──────────────────────────────────────────────────────────

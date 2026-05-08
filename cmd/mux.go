@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -59,7 +60,10 @@ func buildOuterMux(cfg *serverconf.ServerConfig, manifest *proxy.RouteManifest, 
 	}
 
 	// ── Admin API ─────────────────────────────────────────────────────────────
-	r.Mount("/admin/v1", admin.Handler(apiStore, cfg, valkeyClient))
+	// Admin uses stdlib http.ServeMux, which matches r.URL.Path. Chi Mount does
+	// not rewrite Path for non-chi handlers (unlike sub-routers), so strip the
+	// mount prefix the same way as /auth/v1 below.
+	r.Mount("/admin/v1", http.StripPrefix("/admin/v1", admin.Handler(apiStore, cfg, valkeyClient)))
 	logrus.Info("mux: admin API mounted at /admin/v1")
 
 	// ── Studio config ─────────────────────────────────────────────────────────
@@ -111,11 +115,34 @@ func buildOuterMux(cfg *serverconf.ServerConfig, manifest *proxy.RouteManifest, 
 	}
 
 	// ── pg_graphql ────────────────────────────────────────────────────────────
-	graphQLURL := firstNonEmpty(manifest.GraphQLURL, cfg.GraphQLURL)
-	if graphQLURL != "" {
-		if u, err := url.Parse(graphQLURL); err == nil {
-			r.Mount("/graphql/v1", http.StripPrefix("/graphql/v1", proxy.New(u, proxy.ProxyOpts{})))
-			logrus.WithField("url", graphQLURL).Info("mux: GraphQL proxy mounted at /graphql/v1")
+	// PostgREST serves pg_graphql at /graphql/v1 on the same host as REST.
+	// Default upstream is the PostgREST base URL (manifest / env / local).
+	graphQLUpstream := firstNonEmpty(manifest.GraphQLURL, cfg.GraphQLURL, postgreSTURL)
+	if graphQLUpstream != "" {
+		if u, err := url.Parse(graphQLUpstream); err == nil {
+			// chi.Mount strips the /graphql/v1 prefix before calling this handler.
+			// A plain StripPrefix + proxy previously forwarded POST /graphql/v1 as GET / on
+			// PostgREST, which responds with 405 Unsupported method.
+			r.Mount("/graphql/v1", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				req2 := req.Clone(req.Context())
+				if req2.URL == nil {
+					req2.URL = &url.URL{}
+				}
+				p := req2.URL.Path
+				switch {
+				case p == "" || p == "/":
+					req2.URL.Path = "/graphql/v1"
+				case strings.HasPrefix(p, "/graphql/v1"):
+					req2.URL.Path = p
+				default:
+					req2.URL.Path = "/graphql/v1" + p
+				}
+				req2.URL.RawPath = ""
+				proxy.New(u, proxy.ProxyOpts{}).ServeHTTP(w, req2)
+			}))
+			logrus.WithField("url", graphQLUpstream).Info("mux: GraphQL proxy mounted at /graphql/v1")
+		} else {
+			logrus.WithError(err).Warn("mux: invalid GraphQL upstream URL, /graphql/v1 not mounted")
 		}
 	}
 
@@ -151,7 +178,9 @@ func buildOuterMux(cfg *serverconf.ServerConfig, manifest *proxy.RouteManifest, 
 	// ── Deno Edge Functions Proxy ─────────────────────────────────────────────
 	// The admin mount above takes priority for /functions/v1/admin/* because
 	// chi's radix tree matches the longer (more specific) prefix first.
-	if manifest.FunctionsEnabled && cfg.DenoFunctionsDir != "" {
+	// In local/self-host dev we mount the proxy whenever a functions directory
+	// is configured. This keeps invocation behavior aligned with admin listing.
+	if cfg.DenoFunctionsDir != "" {
 		denoURL := &url.URL{
 			Scheme: "http",
 			Host:   "127.0.0.1:" + cfg.DenoPort,

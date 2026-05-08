@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,13 +28,15 @@ type LogLine struct {
 }
 
 // Manager supervises a Deno process that serves edge functions.
-// It spawns `deno serve --port {port} {functionsDir}` and restarts it
-// on crash with exponential backoff (1s → 2s → 4s → … → 30s cap).
+// It spawns `deno run --allow-net --allow-env --allow-read {serveEntry}` (router script)
+// and restarts it on crash with exponential backoff (1s → 2s → 4s → … → 30s cap).
+// PORT must be communicated via environment; the child's PORT is overridden so it cannot
+// inherit the main server's listen port by mistake.
 type Manager struct {
-	denoPath     string
-	functionsDir string
-	port         int
-	env          []string // extra env vars in "KEY=VALUE" form
+	denoPath   string
+	serveEntry string // absolute path to generated router .ts (or legacy path)
+	port       int
+	env        []string // extra env vars in "KEY=VALUE" form
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -43,17 +47,17 @@ type Manager struct {
 	logBuf []LogLine
 }
 
-// New creates a Manager. denoPath is the path to the deno binary.
-// functionsDir is the directory containing the edge functions entry point.
-// port is the port Deno will listen on. env is a slice of "KEY=VALUE" env vars
-// to inject into the Deno process environment (merged with current process env).
-func New(denoPath, functionsDir string, port int, env []string) *Manager {
+// New creates a Manager. serveEntry is the script path passed to `deno run`
+// (router generated under .supatype/functions-router.ts during `supatype dev`).
+// port is the port Deno will listen on. env is appended after inheriting OS env minus PORT=
+// plus the explicit PORT=value for Deno children.
+func New(denoPath, serveEntry string, port int, env []string) *Manager {
 	return &Manager{
-		denoPath:     denoPath,
-		functionsDir: functionsDir,
-		port:         port,
-		env:          env,
-		logBuf:       make([]LogLine, 0, logRingSize),
+		denoPath:   denoPath,
+		serveEntry: serveEntry,
+		port:       port,
+		env:        env,
+		logBuf:     make([]LogLine, 0, logRingSize),
 	}
 }
 
@@ -133,9 +137,9 @@ func (m *Manager) runLoop(ctx context.Context) {
 		m.mu.Unlock()
 
 		logrus.WithFields(logrus.Fields{
-			"deno": m.denoPath,
-			"dir":  m.functionsDir,
-			"port": m.port,
+			"deno":  m.denoPath,
+			"entry": m.serveEntry,
+			"port":  m.port,
 		}).Info("deno: starting edge functions server")
 
 		if err := m.run(ctx); err != nil {
@@ -163,13 +167,15 @@ func (m *Manager) runLoop(ctx context.Context) {
 // run spawns a single Deno process and blocks until it exits.
 func (m *Manager) run(ctx context.Context) error {
 	args := []string{
-		"serve",
-		"--port", fmt.Sprintf("%d", m.port),
-		m.functionsDir,
+		"run",
+		"--allow-net",
+		"--allow-env",
+		"--allow-read",
+		m.serveEntry,
 	}
 
 	cmd := exec.CommandContext(ctx, m.denoPath, args...)
-	cmd.Env = append(cmd.Environ(), m.env...)
+	cmd.Env = envForDenoProcess(m.port, m.env)
 
 	// Capture stdout and stderr into the ring buffer.
 	stdout, err := cmd.StdoutPipe()
@@ -201,6 +207,19 @@ func (m *Manager) run(ctx context.Context) error {
 	wg.Wait()
 
 	return cmd.Wait()
+}
+
+func envForDenoProcess(port int, extra []string) []string {
+	var out []string
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "PORT=") {
+			continue
+		}
+		out = append(out, e)
+	}
+	out = append(out, extra...)
+	out = append(out, fmt.Sprintf("PORT=%d", port))
+	return out
 }
 
 func min(a, b time.Duration) time.Duration {

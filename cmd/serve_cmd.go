@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +94,12 @@ func serve(ctx context.Context) {
 	if err != nil {
 		logrus.WithError(err).Fatal("serve: failed to load server config")
 	}
+	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
+		logrus.Fatal("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode")
+	}
+	if strings.TrimSpace(srvCfg.Mode) != "dev" && strings.TrimSpace(srvCfg.ServiceRoleKey) == "" {
+		logrus.Fatal("serve: SUPATYPE_SERVICE_ROLE_KEY must be set when SUPATYPE_MODE is not dev")
+	}
 
 	manifest, err := proxy.Load(srvCfg.ManifestPath)
 	if err != nil {
@@ -106,18 +114,29 @@ func serve(ctx context.Context) {
 		logrus.WithError(watchErr).Debug("serve: manifest watch not started")
 	}
 
-	// Start Deno edge functions subprocess if configured.
+	// Start Deno edge functions subprocess only when the binary is available.
+	// The functions admin API still mounts when DenoFunctionsDir is set (Studio list).
 	var dm *deno.Manager
 	if srvCfg.DenoFunctionsDir != "" && srvCfg.DenoPath != "" {
-		denoPortInt := 8001 // default
-		if srvCfg.DenoPort != "" {
-			if p, parseErr := strconv.Atoi(srvCfg.DenoPort); parseErr == nil {
-				denoPortInt = p
+		if _, lookErr := exec.LookPath(srvCfg.DenoPath); lookErr != nil {
+			logrus.WithError(lookErr).Warn("serve: Deno not found on PATH — edge function invocations disabled; install Deno or set SUPATYPE_DENO_PATH")
+		} else {
+			serveEntry := strings.TrimSpace(srvCfg.DenoServeScript)
+			if serveEntry == "" {
+				serveEntry = srvCfg.DenoFunctionsDir
+			}
+			if serveEntry != "" {
+				denoPortInt := 8001 // default
+				if srvCfg.DenoPort != "" {
+					if p, parseErr := strconv.Atoi(srvCfg.DenoPort); parseErr == nil {
+						denoPortInt = p
+					}
+				}
+				dm = deno.New(srvCfg.DenoPath, serveEntry, denoPortInt, nil)
+				dm.Start(ctx)
+				defer dm.Stop()
 			}
 		}
-		dm = deno.New(srvCfg.DenoPath, srvCfg.DenoFunctionsDir, denoPortInt, nil)
-		dm.Start(ctx)
-		defer dm.Stop()
 	}
 
 	outerMux := buildOuterMux(srvCfg, manifest, ah, dm)

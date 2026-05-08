@@ -477,6 +477,12 @@ func (o *Cache) loadEntrySubject(
 	return temp, nil
 }
 
+// looksLikeInlineHTML reports values written from Studio (HTML body) vs URL/path config.
+func looksLikeInlineHTML(s string) bool {
+	t := strings.TrimSpace(s)
+	return len(t) > 0 && t[0] == '<'
+}
+
 func (o *Cache) loadEntryBody(
 	ctx context.Context,
 	cfg *conf.GlobalConfiguration,
@@ -488,6 +494,14 @@ func (o *Cache) loadEntryBody(
 		// We preserve the previous behavior of returning the default.
 		tempStr := getEmailContentConfig(defaultTemplateBodies, typ, "")
 		temp := template.Must(template.New("").Parse(tempStr))
+		return temp, nil
+	}
+	if looksLikeInlineHTML(url) {
+		temp, err := template.New("inline").Parse(url)
+		if err != nil {
+			err = wrapError(ctx, typ, "template_body_parse_error", err)
+			return nil, err
+		}
 		return temp, nil
 	}
 	if !strings.HasPrefix(url, "http") {

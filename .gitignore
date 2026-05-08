@@ -8,7 +8,8 @@ auth-arm64
 auth-arm64-strip
 auth-darwin-arm64
 auth.exe
-
+supatype-server
+supatype-server.exe
 coverage.out
 
 .DS_Store

@@ -154,17 +154,22 @@ func Handler(store apiconfig.Store, cfg *serverconf.ServerConfig, vc *valkey.Cli
 // In SUPATYPE_MODE=dev, all requests pass through without a token.
 func RequireServiceRole(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if os.Getenv("SUPATYPE_MODE") == "dev" {
+		if strings.TrimSpace(os.Getenv("SUPATYPE_MODE")) == "dev" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		key := os.Getenv("SUPATYPE_SERVICE_ROLE_KEY")
+		key := strings.TrimSpace(os.Getenv("SUPATYPE_SERVICE_ROLE_KEY"))
 		if key == "" {
-			next.ServeHTTP(w, r)
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key not configured"})
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		token, _ := strings.CutPrefix(auth, "Bearer ")
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		token, ok := strings.CutPrefix(auth, "Bearer ")
+		if !ok {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key required"})
+			return
+		}
+		token = strings.TrimSpace(token)
 		if token != key {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key required"})
 			return

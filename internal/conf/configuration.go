@@ -587,7 +587,8 @@ type MailerConfiguration struct {
 	TemplateMaxSize int `json:"template_max_size" split_words:"true" default:"1000000"`
 
 	// MailerProvider selects the email delivery backend.
-	// Accepted values: "" or "smtp" (default, uses SMTP settings), "resend", "ses".
+	// Accepted values: "" or "smtp" (default, uses SMTP settings), "console", "resend", "ses".
+	// When "console": emails are logged only (development).
 	// When "resend": RESEND_API_KEY and RESEND_FROM env vars must be set.
 	// When "ses": AWS credential chain is used; SES_FROM env var must be set.
 	MailerProvider string `json:"mailer_provider" split_words:"true"`

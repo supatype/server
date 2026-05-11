@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -25,6 +26,10 @@ import (
 	"github.com/supatype/auth/internal/static"
 	"github.com/supatype/auth/internal/valkey"
 )
+
+// defaultUpstreamHTTPTimeout caps reverse-proxy round-trips so a wedged upstream
+// cannot hang requests indefinitely (including under go test).
+const defaultUpstreamHTTPTimeout = 2 * time.Minute
 
 // buildOuterMux constructs the top-level chi.Mux that wraps all services.
 //
@@ -57,6 +62,7 @@ func buildOuterMux(
 	denoManager *deno.Manager,
 	version string,
 	sharedValkey *valkey.Client,
+	sendEmailHook http.Handler,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -64,6 +70,11 @@ func buildOuterMux(
 	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
 
 	outerhealth.Attach(r, cfg, version, healthProbes)
+
+	if sendEmailHook != nil {
+		r.Post("/internal/v0hooks/send-email", sendEmailHook.ServeHTTP)
+		logrus.Info("mux: send-email hook receiver mounted at POST /internal/v0hooks/send-email")
+	}
 
 	// ── API config store ──────────────────────────────────────────────────────
 	apiStore := apiconfig.NewFileStore(cfg.ApiConfigPath)
@@ -113,6 +124,7 @@ func buildOuterMux(
 			defaultSchema = "public"
 		}
 		proxy.New(u, proxy.ProxyOpts{
+			RequestTimeout: defaultUpstreamHTTPTimeout,
 			HeaderFunc: func(req *http.Request) map[string]string {
 				restCfg, _ := apiStore.Get(req.Context())
 				schema := restCfg.Rest.Schema
@@ -155,6 +167,7 @@ func buildOuterMux(
 		req2.URL.RawPath = ""
 		endUserAuth := strings.TrimSpace(req.Header.Get("Authorization"))
 		px := proxy.New(u, proxy.ProxyOpts{
+			RequestTimeout: defaultUpstreamHTTPTimeout,
 			HeaderFunc: func(_ *http.Request) map[string]string {
 				h := map[string]string{}
 				sr := strings.TrimSpace(cfg.ServiceRoleKey)
@@ -194,7 +207,7 @@ func buildOuterMux(
 				http.Error(w, "bad gateway", http.StatusBadGateway)
 				return
 			}
-			proxy.New(u, proxy.ProxyOpts{}).ServeHTTP(w, req)
+			proxy.New(u, proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}).ServeHTTP(w, req)
 		})))
 		logrus.Info("mux: Storage proxy mounted at /storage/v1")
 	}
@@ -210,7 +223,7 @@ func buildOuterMux(
 			Host:   "127.0.0.1:" + cfg.DenoPort,
 		}
 		r.Mount("/functions/v1", http.StripPrefix("/functions/v1",
-			proxy.WebSocketProxy(denoURL, proxy.New(denoURL, proxy.ProxyOpts{})),
+			proxy.WebSocketProxy(denoURL, proxy.New(denoURL, proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout})),
 		))
 		logrus.WithField("port", cfg.DenoPort).Info("mux: Deno functions proxy mounted at /functions/v1")
 	}
@@ -238,7 +251,7 @@ func buildOuterMux(
 		upstream := firstNonEmpty(baseM.AppUpstream, cfg.AppUpstream)
 		if upstream != "" {
 			if u, err := url.Parse(upstream); err == nil {
-				r.Mount("/", proxy.WebSocketProxy(u, proxy.New(u, proxy.ProxyOpts{})))
+				r.Mount("/", proxy.WebSocketProxy(u, proxy.New(u, proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout})))
 				logrus.WithField("upstream", upstream).Info("mux: app proxy mounted")
 			}
 		}

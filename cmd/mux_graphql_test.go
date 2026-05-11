@@ -46,7 +46,7 @@ func TestBuildOuterMux_GraphQLProxyInjectsServiceRoleAndForwardsEndUserAuth(t *t
 	hp := func() outerhealth.ProbeConfig {
 		return outerhealth.ProbeConfigFrom(cfg, manifest, "")
 	}
-	h := buildOuterMux(cfg, mf, hp, http.NotFoundHandler(), nil, "test", nil)
+	h := buildOuterMux(cfg, mf, hp, http.NotFoundHandler(), nil, "test", nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/graphql/v1", nil)
 	req.Header.Set("Authorization", "Bearer end-user-jwt")
 	rr := httptest.NewRecorder()

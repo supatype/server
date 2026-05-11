@@ -15,6 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/auth/internal/conf"
 	"github.com/supatype/auth/internal/mailer"
+	"github.com/supatype/auth/internal/mailer/consoleclient"
 	"github.com/supatype/auth/internal/mailer/mailmeclient"
 	"github.com/supatype/auth/internal/mailer/noopclient"
 	"github.com/supatype/auth/internal/mailer/resendclient"
@@ -42,12 +43,17 @@ type Mailer struct {
 // FromConfig returns a new mailer configured using the global configuration.
 // The provider is selected by globalConfig.Mailer.MailerProvider:
 //   - "" or "smtp": SMTP via mailmeclient (falls back to noop if SMTP host is unset)
+//   - "console": log structured metadata to stdout (no network delivery)
 //   - "resend": Resend API (requires RESEND_API_KEY and RESEND_FROM env vars)
 //   - "ses": AWS SES v2 (ambient AWS credentials; SES_FROM env var required)
 func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
 	var mc mailer.Client
 
 	switch globalConfig.Mailer.MailerProvider {
+	case "console":
+		logrus.Infof("templatemailer: using console (log-only) mailer for %v", globalConfig.SiteURL)
+		mc = consoleclient.New()
+
 	case "resend":
 		apiKey := os.Getenv("RESEND_API_KEY")
 		from := os.Getenv("RESEND_FROM")

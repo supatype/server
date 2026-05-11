@@ -217,6 +217,7 @@ func buildOuterMux(
 
 	baseM := manifestFor(nil)
 	if baseM.RealtimeEnabled {
+		r.Get("/realtime/v1/health", realtime.LivenessHandler())
 		hub := realtime.NewHub()
 		presenceTrackers := make(map[string]*realtime.PresenceTracker)
 		var presenceMu sync.Mutex

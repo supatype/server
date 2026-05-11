@@ -14,6 +14,18 @@ type ServerConfig struct {
 	// "managed" = HMAC tenant header verification, Valkey config cache
 	Mode string `envconfig:"SUPATYPE_MODE" default:"dev"`
 
+	// SupatypeURL is the public base URL of this deployment (injected into the Deno edge subprocess as SUPATYPE_URL).
+	// When empty, serve passes API_EXTERNAL_URL from GoTrue config as a fallback for the Deno child only.
+	SupatypeURL string `envconfig:"SUPATYPE_URL"`
+
+	// AnonKey is the publishable anon JWT (SUPATYPE_ANON_KEY for edge functions).
+	AnonKey string `envconfig:"SUPATYPE_ANON_KEY"`
+
+	// CorsAllowOrigins is a comma-separated allowlist of browser Origins for CORS
+	// (standalone: applied to all requests; managed: union with manifest cors_allowed_origins,
+	// applied outside tenant HMAC so OPTIONS preflight is not blocked).
+	CorsAllowOrigins string `envconfig:"SUPATYPE_CORS_ALLOW_ORIGINS"`
+
 	// AppMode controls how the root path "/" is handled.
 	// "none" = 404
 	// "static" = serve files from AppStaticDir
@@ -50,6 +62,13 @@ type ServerConfig struct {
 
 	// ValkeyAddr is the Valkey/Redis address for tenant config cache (Mode=managed).
 	ValkeyAddr string `envconfig:"SUPATYPE_VALKEY_ADDR"`
+
+	// ManagedProjectRef is the cloud project ref (slug) for a single-tenant managed pod.
+	// When set with Mode=managed and ValkeyAddr, the route manifest is merged from
+	// Valkey keys tenant:{ref}:config and tenant:{ref}:manifest.
+	// When empty (with managed + Valkey), manifests are resolved per request from
+	// X-Supatype-Tenant (after HMAC verification) with a short TTL cache.
+	ManagedProjectRef string `envconfig:"SUPATYPE_MANAGED_PROJECT_REF"`
 
 	// DenoPath is the path to the deno binary.
 	DenoPath string `envconfig:"SUPATYPE_DENO_PATH" default:"deno"`

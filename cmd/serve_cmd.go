@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -22,11 +23,13 @@ import (
 	"github.com/supatype/auth/internal/deno"
 	"github.com/supatype/auth/internal/mailer/templatemailer"
 	"github.com/supatype/auth/internal/modes"
+	"github.com/supatype/auth/internal/outerhealth"
 	"github.com/supatype/auth/internal/proxy"
 	"github.com/supatype/auth/internal/reloader"
 	"github.com/supatype/auth/internal/serverconf"
 	"github.com/supatype/auth/internal/storage"
 	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/auth/internal/valkey"
 )
 
 var serveCmd = cobra.Command{
@@ -106,9 +109,65 @@ func serve(ctx context.Context) {
 		logrus.WithError(err).Fatal("serve: failed to load route manifest")
 	}
 
-	// Watch manifest for live reloads (best-effort — log and continue if it fails).
+	ref := strings.TrimSpace(srvCfg.ManagedProjectRef)
+	vkAddr := strings.TrimSpace(srvCfg.ValkeyAddr)
+	managed := strings.TrimSpace(srvCfg.Mode) == "managed"
+
+	var vkShared *valkey.Client
+	if managed && vkAddr != "" {
+		vc, vkErr := valkey.New(vkAddr)
+		if vkErr != nil {
+			logrus.WithError(vkErr).Fatal("serve: Valkey connect failed (managed mode)")
+		}
+		vkShared = vc
+		defer vkShared.Close()
+	}
+
+	mergeFromValkey := managed && vkShared != nil && ref != ""
+	perTenantManifest := managed && vkShared != nil && ref == ""
+
+	var fileManifestAt atomic.Value
+	fileManifestAt.Store(manifest)
+
+	var manifestLive atomic.Value
+	manifestLive.Store(manifest)
+
+	var tenantCache *valkey.TenantManifestCache
+	if perTenantManifest {
+		tenantCache = valkey.NewTenantManifestCache(vkShared, 0, func() *proxy.RouteManifest {
+			v := fileManifestAt.Load()
+			if v == nil {
+				return &proxy.RouteManifest{Schema: "public"}
+			}
+			return proxy.CloneRouteManifest(v.(*proxy.RouteManifest))
+		})
+		logrus.Info("serve: per-tenant route manifests from Valkey (SUPATYPE_MANAGED_PROJECT_REF unset)")
+	}
+
+	reapplyFileManifest := func(fileM *proxy.RouteManifest) {
+		fileManifestAt.Store(fileM)
+		if tenantCache != nil {
+			tenantCache.Flush()
+		}
+		if mergeFromValkey {
+			merged, mergeErr := valkey.LoadMergedManagedManifest(context.Background(), vkShared, ref, fileM)
+			if mergeErr != nil {
+				logrus.WithError(mergeErr).Warn("serve: Valkey manifest merge failed — keeping previous live manifest")
+				return
+			}
+			manifestLive.Store(merged)
+			return
+		}
+		manifestLive.Store(fileM)
+	}
+
+	if mergeFromValkey {
+		reapplyFileManifest(manifest)
+		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from Valkey")
+	}
+
 	if watchErr := proxy.Watch(srvCfg.ManifestPath, func(m *proxy.RouteManifest) {
-		manifest = m
+		reapplyFileManifest(m)
 		logrus.Info("serve: route manifest reloaded")
 	}); watchErr != nil {
 		logrus.WithError(watchErr).Debug("serve: manifest watch not started")
@@ -132,14 +191,52 @@ func serve(ctx context.Context) {
 						denoPortInt = p
 					}
 				}
-				dm = deno.New(srvCfg.DenoPath, serveEntry, denoPortInt, nil)
+				dm = deno.New(
+					srvCfg.DenoPath,
+					serveEntry,
+					denoPortInt,
+					deno.EdgeSubprocessEnv(srvCfg, strings.TrimSpace(config.API.ExternalURL)),
+					strings.TrimSpace(srvCfg.Mode) == "dev",
+				)
 				dm.Start(ctx)
 				defer dm.Stop()
 			}
 		}
 	}
 
-	outerMux := buildOuterMux(srvCfg, manifest, ah, dm)
+	denoBaseStr := ""
+	if srvCfg.DenoFunctionsDir != "" && dm != nil {
+		denoBaseStr = "http://127.0.0.1:" + firstNonEmpty(srvCfg.DenoPort, "8001")
+	}
+
+	healthProbes := func() outerhealth.ProbeConfig {
+		fm := fileManifestAt.Load()
+		if fm == nil {
+			return outerhealth.ProbeConfigFrom(srvCfg, &proxy.RouteManifest{Schema: "public"}, denoBaseStr)
+		}
+		return outerhealth.ProbeConfigFrom(srvCfg, fm.(*proxy.RouteManifest), denoBaseStr)
+	}
+
+	manifestFor := func(req *http.Request) *proxy.RouteManifest {
+		if tenantCache != nil && req != nil {
+			if t := strings.TrimSpace(req.Header.Get("X-Supatype-Tenant")); t != "" {
+				m, terr := tenantCache.Get(req.Context(), t)
+				if terr == nil && m != nil {
+					return m
+				}
+				if terr != nil {
+					logrus.WithError(terr).WithField("tenant", t).Debug("serve: tenant manifest from Valkey failed")
+				}
+			}
+		}
+		v := manifestLive.Load()
+		if v == nil {
+			return &proxy.RouteManifest{Schema: "public"}
+		}
+		return v.(*proxy.RouteManifest)
+	}
+
+	outerMux := buildOuterMux(srvCfg, manifestFor, healthProbes, ah, dm, utilities.Version, vkShared)
 
 	// Determine TLS config for standalone mode.
 	var tlsCfg *tls.Config

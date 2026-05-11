@@ -113,6 +113,9 @@ type ServerConfig struct {
 
 	// AllowSecretReadback controls whether non-managed modes can return DB passwords via admin endpoints.
 	AllowSecretReadback bool `envconfig:"SUPATYPE_ALLOW_SECRET_READBACK" default:"false"`
+
+	// OuterLogLevel is the logrus level for supatype-server outer mux JSON access logs only (trace|debug|info|warn|error|fatal|panic).
+	OuterLogLevel string `envconfig:"SUPATYPE_OUTER_LOG_LEVEL" default:"info"`
 }
 
 // Load parses ServerConfig from environment variables (SUPATYPE_* prefix).

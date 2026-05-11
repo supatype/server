@@ -97,6 +97,7 @@ func serve(ctx context.Context) {
 	if err != nil {
 		logrus.WithError(err).Fatal("serve: failed to load server config")
 	}
+	configureOuterAccessLogging(srvCfg.OuterLogLevel)
 	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
 		logrus.Fatal("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode")
 	}

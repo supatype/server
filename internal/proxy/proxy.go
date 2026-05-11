@@ -30,12 +30,14 @@ type ProxyOpts struct {
 // and X-Forwarded-Host. clientFacingHost is the Host the edge received before rewriting
 // req.Host to the upstream.
 func augmentForwardedHeaders(req *http.Request, clientFacingHost string) {
-	if ip := clientIPFromRemoteAddr(req.RemoteAddr); ip != "" {
-		clientIP := ip
+	clientIP := clientIPFromRemoteAddr(req.RemoteAddr)
+
+	if clientIP != "" {
+		xff := clientIP
 		if prior, ok := req.Header["X-Forwarded-For"]; ok {
-			clientIP = strings.Join(prior, ", ") + ", " + clientIP
+			xff = strings.Join(prior, ", ") + ", " + xff
 		}
-		req.Header.Set("X-Forwarded-For", clientIP)
+		req.Header.Set("X-Forwarded-For", xff)
 	}
 
 	if req.Header.Get("X-Forwarded-Proto") == "" {
@@ -45,6 +47,10 @@ func augmentForwardedHeaders(req *http.Request, clientFacingHost string) {
 	if req.Header.Get("X-Forwarded-Host") == "" && clientFacingHost != "" {
 		req.Header.Set("X-Forwarded-Host", clientFacingHost)
 	}
+
+	// RFC 7239: append one forwarded-element for this hop (separate field-value;
+	// parsers combine multiple Forwarded header lines).
+	addRFC7239ForwardedHop(req, clientIP, clientFacingHost)
 }
 
 func clientIPFromRemoteAddr(remoteAddr string) string {
@@ -65,8 +71,58 @@ func forwardedProto(req *http.Request) string {
 	return "http"
 }
 
+// addRFC7239ForwardedHop appends a Forwarded header value describing this proxy hop.
+func addRFC7239ForwardedHop(req *http.Request, clientIP, clientFacingHost string) {
+	proto := req.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		proto = forwardedProto(req)
+	}
+
+	var parts []string
+	if clientIP != "" {
+		parts = append(parts, "for="+rfc7239ForParam(clientIP))
+	}
+	parts = append(parts, "proto="+proto)
+	if clientFacingHost != "" {
+		parts = append(parts, "host="+rfc7239QuotedString(clientFacingHost))
+	}
+	if len(parts) == 0 {
+		return
+	}
+	req.Header.Add("Forwarded", strings.Join(parts, ";"))
+}
+
+func rfc7239ForParam(ip string) string {
+	if ip == "" {
+		return ""
+	}
+	if parsed := net.ParseIP(ip); parsed != nil {
+		if v4 := parsed.To4(); v4 != nil {
+			return v4.String()
+		}
+		return rfc7239QuotedString("[" + parsed.String() + "]")
+	}
+	// Non-IP (e.g. unix socket path): use quoted opaque node-name.
+	return rfc7239QuotedString(ip)
+}
+
+func rfc7239QuotedString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\\' || c == '"' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 // New returns an http.Handler that reverse-proxies requests to target.
-// The handler forwards X-Forwarded-For, X-Forwarded-Proto, and X-Forwarded-Host,
+// The handler forwards X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, and RFC 7239
+// Forwarded (one appended hop),
 // strips CORS headers from the upstream response (supatype-server is the sole
 // source of CORS truth), and adds any HeaderOverrides before forwarding.
 func New(target *url.URL, opts ProxyOpts) http.Handler {

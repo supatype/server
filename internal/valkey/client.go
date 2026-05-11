@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/valkey-io/valkey-go"
+	vkgo "github.com/valkey-io/valkey-go"
 )
 
 // ErrCircuitOpen is returned when the circuit breaker is open and requests
@@ -19,13 +19,24 @@ var ErrCircuitOpen = errors.New("valkey: circuit breaker open")
 // TenantConfig holds routing and configuration for a single tenant,
 // as written by the cloud provisioner and read by supatype-server in managed mode.
 type TenantConfig struct {
-	PostgRESTURL string `json:"postgrest_url"`
+	PostgRESTURL string `json:"postgrest_url,omitempty"`
 	GraphQLURL   string `json:"graphql_url,omitempty"`
 	StorageURL   string `json:"storage_url,omitempty"`
 	AppMode      string `json:"app_mode,omitempty"`
 	AppUpstream  string `json:"app_upstream,omitempty"`
 	AppStaticDir string `json:"app_static_dir,omitempty"`
-	Schema       string `json:"schema"`
+	Schema       string `json:"schema,omitempty"`
+
+	DatabaseURL    string `json:"databaseUrl,omitempty"`
+	JWTSecret      string `json:"jwtSecret,omitempty"`
+	AnonKey        string `json:"anonKey,omitempty"`
+	ServiceRoleKey string `json:"serviceRoleKey,omitempty"`
+
+	RealtimeEnabled  *bool `json:"realtime_enabled,omitempty"`
+	FunctionsEnabled *bool `json:"functions_enabled,omitempty"`
+
+	// CorsAllowedOrigins is merged into the route manifest when present.
+	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 }
 
 const (
@@ -39,7 +50,7 @@ const (
 // requests return ErrCircuitOpen immediately. After cbOpenDuration the
 // circuit enters half-open state: one probe request is allowed through.
 type Client struct {
-	vc valkey.Client
+	vc vkgo.Client
 
 	mu          sync.Mutex
 	failures    int
@@ -52,7 +63,7 @@ type Client struct {
 
 // New creates a Client connected to addr (e.g. "127.0.0.1:6379").
 func New(addr string) (*Client, error) {
-	vc, err := valkey.NewClient(valkey.ClientOption{
+	vc, err := vkgo.NewClient(vkgo.ClientOption{
 		InitAddress: []string{addr},
 	})
 	if err != nil {
@@ -65,8 +76,8 @@ func New(addr string) (*Client, error) {
 // Key pattern: tenant:{ref}:config
 //
 // Returns ErrCircuitOpen if the circuit breaker is open.
-// Returns a nil pointer and an error if the key is not found or the
-// value cannot be unmarshalled.
+// Returns (nil, nil) when the key is absent (cache miss).
+// Returns (nil, err) if the value cannot be decoded.
 func (c *Client) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, error) {
 	if err := c.checkCircuit(); err != nil {
 		return nil, err
@@ -80,6 +91,10 @@ func (c *Client) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig
 	result := c.vc.Do(rctx, cmd)
 
 	if err := result.Error(); err != nil {
+		if vkgo.IsValkeyNil(err) {
+			c.recordSuccess()
+			return nil, nil
+		}
 		c.recordFailure()
 		return nil, fmt.Errorf("valkey: GET %s: %w", key, err)
 	}
@@ -108,6 +123,10 @@ func (c *Client) GetBytes(ctx context.Context, key string) ([]byte, error) {
 	defer cancel()
 	result := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build())
 	if err := result.Error(); err != nil {
+		if vkgo.IsValkeyNil(err) {
+			c.recordSuccess()
+			return nil, nil
+		}
 		c.recordFailure()
 		return nil, fmt.Errorf("valkey: GET %s: %w", key, err)
 	}
@@ -127,7 +146,7 @@ func (c *Client) SetBytes(ctx context.Context, key string, value []byte, ttlSeco
 	}
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
-	var result valkey.ValkeyResult
+	var result vkgo.ValkeyResult
 	if ttlSeconds > 0 {
 		result = c.vc.Do(rctx, c.vc.B().Set().Key(key).Value(string(value)).Ex(time.Duration(ttlSeconds)*time.Second).Build())
 	} else {

@@ -28,7 +28,7 @@ type LogLine struct {
 }
 
 // Manager supervises a Deno process that serves edge functions.
-// It spawns `deno run --allow-net --allow-env --allow-read {serveEntry}` (router script)
+// It spawns `deno run [--watch] --allow-net --allow-env --allow-read {serveEntry}` (router script)
 // and restarts it on crash with exponential backoff (1s → 2s → 4s → … → 30s cap).
 // PORT must be communicated via environment; the child's PORT is overridden so it cannot
 // inherit the main server's listen port by mistake.
@@ -37,6 +37,7 @@ type Manager struct {
 	serveEntry string // absolute path to generated router .ts (or legacy path)
 	port       int
 	env        []string // extra env vars in "KEY=VALUE" form
+	watch      bool     // when true, Deno is started with --watch (dev hot reload)
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -51,12 +52,14 @@ type Manager struct {
 // (router generated under .supatype/functions-router.ts during `supatype dev`).
 // port is the port Deno will listen on. env is appended after inheriting OS env minus PORT=
 // plus the explicit PORT=value for Deno children.
-func New(denoPath, serveEntry string, port int, env []string) *Manager {
+// When watch is true, `deno run --watch` reloads the worker when source files change.
+func New(denoPath, serveEntry string, port int, env []string, watch bool) *Manager {
 	return &Manager{
 		denoPath:   denoPath,
 		serveEntry: serveEntry,
 		port:       port,
 		env:        env,
+		watch:      watch,
 		logBuf:     make([]LogLine, 0, logRingSize),
 	}
 }
@@ -166,13 +169,16 @@ func (m *Manager) runLoop(ctx context.Context) {
 
 // run spawns a single Deno process and blocks until it exits.
 func (m *Manager) run(ctx context.Context) error {
-	args := []string{
-		"run",
+	args := []string{"run"}
+	if m.watch {
+		args = append(args, "--watch")
+	}
+	args = append(args,
 		"--allow-net",
 		"--allow-env",
 		"--allow-read",
 		m.serveEntry,
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, m.denoPath, args...)
 	cmd.Env = envForDenoProcess(m.port, m.env)

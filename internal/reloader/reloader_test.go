@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -51,10 +52,14 @@ func TestWatchSignals(t *testing.T) {
 	}
 
 	{
+		if runtime.GOOS == "windows" {
+			t.Skip("SIGUSR1 is not available on windows")
+		}
 		proc, err := os.FindProcess(os.Getpid())
 		require.NoError(t, err)
 
-		const sig = syscall.SIGUSR1
+		// SIGUSR1 is not defined on windows; unix signal number 10 maps to SIGUSR1.
+		sig := syscall.Signal(10)
 		cfg := e2e.Must(e2e.Config()).Reloading
 		cfg.GracePeriodInterval = time.Second / 100
 		cfg.PollerInterval = time.Second / 100

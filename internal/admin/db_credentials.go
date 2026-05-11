@@ -173,7 +173,7 @@ func loadMeta(ctx context.Context, vc *valkey.Client, ref string) (dbCredMeta, e
 		return dbCredMeta{}, errors.New("valkey client not configured")
 	}
 	data, err := vc.GetBytes(ctx, metaKey(ref))
-	if err != nil {
+	if err != nil || len(data) == 0 {
 		return dbCredMeta{Status: "pending", Generation: 1}, nil
 	}
 	var meta dbCredMeta
@@ -211,7 +211,7 @@ func saveManagedSecret(ctx context.Context, vc *valkey.Client, kekBase64, ref st
 
 func loadManagedSecret(ctx context.Context, vc *valkey.Client, kekBase64, ref string, generation int) (string, error) {
 	data, err := vc.GetBytes(ctx, secretKey(ref, generation))
-	if err != nil {
+	if err != nil || len(data) == 0 {
 		return "", fmt.Errorf("managed password not found for generation %d", generation)
 	}
 	var secret encryptedSecret

@@ -38,6 +38,11 @@ type RouteManifest struct {
 
 	// FunctionsEnabled indicates the Deno functions subsystem should start.
 	FunctionsEnabled bool `json:"functions_enabled"`
+
+	// CorsAllowedOrigins lists allowed browser Origin values (exact match).
+	// Merged from Valkey tenant config / manifest in managed mode; may be
+	// combined with SUPATYPE_CORS_ALLOW_ORIGINS on the server.
+	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 }
 
 // Load reads and parses the manifest at path.
@@ -59,6 +64,64 @@ func Load(path string) (*RouteManifest, error) {
 		m.Schema = "public"
 	}
 	return &m, nil
+}
+
+// ParseRouteManifestJSON unmarshals JSON bytes into RouteManifest (same shape as manifest.json).
+func ParseRouteManifestJSON(data []byte) (*RouteManifest, error) {
+	var m RouteManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	if m.Schema == "" {
+		m.Schema = "public"
+	}
+	return &m, nil
+}
+
+// CloneRouteManifest returns a copy with schema default applied.
+func CloneRouteManifest(m *RouteManifest) *RouteManifest {
+	if m == nil {
+		return &RouteManifest{Schema: "public"}
+	}
+	cm := *m
+	if cm.Schema == "" {
+		cm.Schema = "public"
+	}
+	return &cm
+}
+
+// MergeRouteManifest copies non-empty string fields and bool fields from overlay onto base (mutates base).
+// Used when applying tenant:{ref}:manifest over lower-priority layers.
+func MergeRouteManifest(base, overlay *RouteManifest) {
+	if base == nil || overlay == nil {
+		return
+	}
+	if overlay.Schema != "" {
+		base.Schema = overlay.Schema
+	}
+	if overlay.PostgRESTURL != "" {
+		base.PostgRESTURL = overlay.PostgRESTURL
+	}
+	if overlay.GraphQLURL != "" {
+		base.GraphQLURL = overlay.GraphQLURL
+	}
+	if overlay.StorageURL != "" {
+		base.StorageURL = overlay.StorageURL
+	}
+	if overlay.AppMode != "" {
+		base.AppMode = overlay.AppMode
+	}
+	if overlay.AppStaticDir != "" {
+		base.AppStaticDir = overlay.AppStaticDir
+	}
+	if overlay.AppUpstream != "" {
+		base.AppUpstream = overlay.AppUpstream
+	}
+	base.RealtimeEnabled = overlay.RealtimeEnabled
+	base.FunctionsEnabled = overlay.FunctionsEnabled
+	if len(overlay.CorsAllowedOrigins) > 0 {
+		base.CorsAllowedOrigins = append([]string(nil), overlay.CorsAllowedOrigins...)
+	}
 }
 
 // Watch starts a goroutine that calls fn whenever the manifest file at path

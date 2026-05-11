@@ -1,0 +1,74 @@
+package proxy
+
+import (
+	"crypto/tls"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestAugmentForwardedHeaders_IPProtoHost(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.RemoteAddr = "203.0.113.7:44444"
+	req.Host = "app.example"
+
+	augmentForwardedHeaders(req, "app.example")
+
+	if got := req.Header.Get("X-Forwarded-For"); got != "203.0.113.7" {
+		t.Fatalf("X-Forwarded-For = %q want %q", got, "203.0.113.7")
+	}
+	if got := req.Header.Get("X-Forwarded-Proto"); got != "http" {
+		t.Fatalf("X-Forwarded-Proto = %q want http", got)
+	}
+	if got := req.Header.Get("X-Forwarded-Host"); got != "app.example" {
+		t.Fatalf("X-Forwarded-Host = %q", got)
+	}
+}
+
+func TestAugmentForwardedHeaders_TLSProto(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.RemoteAddr = "[2001:db8::1]:8080"
+	req.Host = "secure.example"
+	req.TLS = &tls.ConnectionState{}
+
+	augmentForwardedHeaders(req, "secure.example")
+
+	if got := req.Header.Get("X-Forwarded-Proto"); got != "https" {
+		t.Fatalf("X-Forwarded-Proto = %q want https", got)
+	}
+	if got := req.Header.Get("X-Forwarded-For"); got != "2001:db8::1" {
+		t.Fatalf("X-Forwarded-For = %q", got)
+	}
+}
+
+func TestAugmentForwardedHeaders_preservesExistingForwardedProto(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.RemoteAddr = "198.51.100.2:1"
+	req.Host = "edge.example"
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	augmentForwardedHeaders(req, "edge.example")
+
+	if got := req.Header.Get("X-Forwarded-Proto"); got != "https" {
+		t.Fatalf("X-Forwarded-Proto = %q", got)
+	}
+}
+
+func TestAugmentForwardedHeaders_appendsXForwardedForChain(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.RemoteAddr = "198.51.100.9:2"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+
+	augmentForwardedHeaders(req, "hop.example")
+
+	if got := req.Header.Get("X-Forwarded-For"); got != "203.0.113.1, 198.51.100.9" {
+		t.Fatalf("X-Forwarded-For = %q", got)
+	}
+}

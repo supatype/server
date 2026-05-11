@@ -50,6 +50,8 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 		}
 		defer clientConn.Close() //nolint:errcheck
 
+		augmentForwardedHeaders(r, r.Host)
+
 		// Forward the original HTTP Upgrade request to the backend.
 		if err := r.Write(backendConn); err != nil {
 			logrus.WithError(err).Error("websocket proxy: write upgrade request failed")

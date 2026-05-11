@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -25,6 +26,45 @@ type ProxyOpts struct {
 	RequestTimeout time.Duration
 }
 
+// augmentForwardedHeaders sets X-Forwarded-For (client IP only), X-Forwarded-Proto,
+// and X-Forwarded-Host. clientFacingHost is the Host the edge received before rewriting
+// req.Host to the upstream.
+func augmentForwardedHeaders(req *http.Request, clientFacingHost string) {
+	if ip := clientIPFromRemoteAddr(req.RemoteAddr); ip != "" {
+		clientIP := ip
+		if prior, ok := req.Header["X-Forwarded-For"]; ok {
+			clientIP = strings.Join(prior, ", ") + ", " + clientIP
+		}
+		req.Header.Set("X-Forwarded-For", clientIP)
+	}
+
+	if req.Header.Get("X-Forwarded-Proto") == "" {
+		req.Header.Set("X-Forwarded-Proto", forwardedProto(req))
+	}
+
+	if req.Header.Get("X-Forwarded-Host") == "" && clientFacingHost != "" {
+		req.Header.Set("X-Forwarded-Host", clientFacingHost)
+	}
+}
+
+func clientIPFromRemoteAddr(remoteAddr string) string {
+	if remoteAddr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
+}
+
+func forwardedProto(req *http.Request) string {
+	if req.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
 // New returns an http.Handler that reverse-proxies requests to target.
 // The handler forwards X-Forwarded-For, X-Forwarded-Proto, and X-Forwarded-Host,
 // strips CORS headers from the upstream response (supatype-server is the sole
@@ -34,6 +74,8 @@ func New(target *url.URL, opts ProxyOpts) http.Handler {
 
 	// Replace the default director to get full control over header handling.
 	rp.Director = func(req *http.Request) {
+		clientFacingHost := req.Host
+
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 		req.Host = target.Host
@@ -46,13 +88,7 @@ func New(target *url.URL, opts ProxyOpts) http.Handler {
 			req.URL.RawPath = strings.TrimPrefix(req.URL.RawPath, opts.StripPrefix)
 		}
 
-		// Propagate the original client address.
-		if clientIP := req.RemoteAddr; clientIP != "" {
-			if prior, ok := req.Header["X-Forwarded-For"]; ok {
-				clientIP = strings.Join(prior, ", ") + ", " + clientIP
-			}
-			req.Header.Set("X-Forwarded-For", clientIP)
-		}
+		augmentForwardedHeaders(req, clientFacingHost)
 
 		// Apply static header overrides first.
 		for k, v := range opts.HeaderOverrides {

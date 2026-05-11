@@ -6,26 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/sirupsen/logrus"
 )
 
 func TestOuterAccessLogFormatter_JSONFields(t *testing.T) {
-	log := logrus.StandardLogger()
-	prevOut, prevFmt, prevLevel := log.Out, log.Formatter, log.Level
-	t.Cleanup(func() {
-		log.SetOutput(prevOut)
-		log.SetFormatter(prevFmt)
-		log.SetLevel(prevLevel)
-	})
-
 	var buf bytes.Buffer
-	logrus.SetOutput(&buf)
-	logrus.SetFormatter(&logrus.JSONFormatter{TimestampFormat: time.RFC3339})
-	logrus.SetLevel(logrus.InfoLevel)
+	configureOuterAccessLoggingWriter(&buf, "info")
+	t.Cleanup(func() { configureOuterAccessLogging("info") })
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -73,18 +62,9 @@ func TestOuterAccessLogFormatter_JSONFields(t *testing.T) {
 }
 
 func TestOuterAccessLogFormatter_SkipsHealthPaths(t *testing.T) {
-	log := logrus.StandardLogger()
-	prevOut, prevFmt, prevLevel := log.Out, log.Formatter, log.Level
-	t.Cleanup(func() {
-		log.SetOutput(prevOut)
-		log.SetFormatter(prevFmt)
-		log.SetLevel(prevLevel)
-	})
-
 	var buf bytes.Buffer
-	logrus.SetOutput(&buf)
-	logrus.SetFormatter(&logrus.JSONFormatter{})
-	logrus.SetLevel(logrus.InfoLevel)
+	configureOuterAccessLoggingWriter(&buf, "info")
+	t.Cleanup(func() { configureOuterAccessLogging("info") })
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -98,5 +78,23 @@ func TestOuterAccessLogFormatter_SkipsHealthPaths(t *testing.T) {
 
 	if buf.Len() != 0 {
 		t.Fatalf("expected no log for /health, got: %s", buf.String())
+	}
+}
+
+func TestOuterAccessLogFormatter_levelFiltersInfo(t *testing.T) {
+	var buf bytes.Buffer
+	configureOuterAccessLoggingWriter(&buf, "error")
+	t.Cleanup(func() { configureOuterAccessLogging("info") })
+
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
+	r.Get("/api/y", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/y", nil))
+	if buf.Len() != 0 {
+		t.Fatalf("expected no log at error level for Info access line, got: %s", buf.String())
 	}
 }

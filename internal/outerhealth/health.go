@@ -22,8 +22,10 @@ type ProbeConfig struct {
 	StorageLocalPath string
 	StorageRemoteURL string
 	DenoBaseURL      string
-	// RealtimeEnabled is informational only (WebSocket hub is in-process; no separate HTTP probe here).
 	RealtimeEnabled bool
+	// SelfBaseURL is this server's outer HTTP base (e.g. http://127.0.0.1:9999) used to GET /realtime/v1/health
+	// when RealtimeEnabled. Leave empty when probing loopback is unsafe (e.g. HTTPS-only standalone).
+	SelfBaseURL string
 }
 
 // Attach mounts GET /health and GET /health/ready on r (supatype-server outer mux).
@@ -96,16 +98,25 @@ func collectComponents(probes ProbeConfig, timeout time.Duration) map[string]any
 		out["deno"] = map[string]any{"skipped": true, "ready": true}
 	}
 
-	out["realtime"] = map[string]any{
-		"enabled": probes.RealtimeEnabled,
-		"note":    "in-process WebSocket hub; not HTTP-probed from /health/ready",
+	selfBase := strings.TrimSpace(probes.SelfBaseURL)
+	if probes.RealtimeEnabled && selfBase != "" {
+		u := joinURL(selfBase, "/realtime/v1/health")
+		rtReady := probeHTTPGet(u, timeout)
+		out["realtime"] = map[string]any{"enabled": true, "url": u, "ready": rtReady}
+	} else if probes.RealtimeEnabled {
+		out["realtime"] = map[string]any{
+			"enabled": true, "skipped": true, "ready": true,
+			"note": "SelfBaseURL unset (e.g. HTTPS standalone); realtime hub not HTTP-probed",
+		}
+	} else {
+		out["realtime"] = map[string]any{"enabled": false, "skipped": true, "ready": true}
 	}
 
 	return out
 }
 
 func aggregateReady(components map[string]any) bool {
-	for _, key := range []string{"postgrest", "graphql", "storage", "deno"} {
+	for _, key := range []string{"postgrest", "graphql", "storage", "deno", "realtime"} {
 		v, ok := components[key]
 		if !ok {
 			continue

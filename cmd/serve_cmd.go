@@ -211,10 +211,21 @@ func serve(ctx context.Context) {
 
 	healthProbes := func() outerhealth.ProbeConfig {
 		fm := fileManifestAt.Load()
+		var pc outerhealth.ProbeConfig
 		if fm == nil {
-			return outerhealth.ProbeConfigFrom(srvCfg, &proxy.RouteManifest{Schema: "public"}, denoBaseStr)
+			pc = outerhealth.ProbeConfigFrom(srvCfg, &proxy.RouteManifest{Schema: "public"}, denoBaseStr)
+		} else {
+			pc = outerhealth.ProbeConfigFrom(srvCfg, fm.(*proxy.RouteManifest), denoBaseStr)
 		}
-		return outerhealth.ProbeConfigFrom(srvCfg, fm.(*proxy.RouteManifest), denoBaseStr)
+		// Loopback self-probe for realtime HTTP liveness (skip when ACME TLS terminates on this listener).
+		if !(strings.TrimSpace(srvCfg.Mode) == "standalone" && strings.TrimSpace(srvCfg.TLSDomain) != "") {
+			h := strings.TrimSpace(config.API.Host)
+			if h == "" || h == "0.0.0.0" {
+				h = "127.0.0.1"
+			}
+			pc.SelfBaseURL = "http://" + net.JoinHostPort(h, strings.TrimSpace(config.API.Port))
+		}
+		return pc
 	}
 
 	manifestFor := func(req *http.Request) *proxy.RouteManifest {

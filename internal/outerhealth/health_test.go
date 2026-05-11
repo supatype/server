@@ -84,6 +84,32 @@ func TestAttachHealth_allProbesGreen(t *testing.T) {
 	}
 }
 
+func TestCollectComponents_realtimeHTTPProbe(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/", "/graphql/v1", "/realtime/v1/health":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := collectComponents(ProbeConfig{
+		PostgRESTURL:     ts.URL,
+		GraphQLURL:       ts.URL,
+		RealtimeEnabled:  true,
+		SelfBaseURL:      ts.URL,
+	}, time.Second)
+	rt, ok := c["realtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("realtime component missing: %#v", c)
+	}
+	if rt["ready"] != true {
+		t.Fatalf("expected realtime ready, got %#v", rt)
+	}
+}
+
 func TestProbePostgREST(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

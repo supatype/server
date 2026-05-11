@@ -7,13 +7,23 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// LoadDotEnv loads environment variables from the .env file in dir (if it exists).
-// Existing environment variables are NOT overwritten — .env only fills gaps.
-// Call this before Load() so that SUPATYPE_* vars from .env are visible.
+// LoadDotEnv loads `.env.local` then `.env` in dir when present (each via godotenv.Load: never overwrites
+// already-set process environment). Loading `.env.local` first lets keys there win over `.env` for
+// values not already exported in the shell.
+// Call this before Load() so that SUPATYPE_* vars from files are visible.
 func LoadDotEnv(dir string) error {
-	path := filepath.Join(dir, ".env")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil // no .env file is fine
+	localPath := filepath.Join(dir, ".env.local")
+	basePath := filepath.Join(dir, ".env")
+	var err error
+	if _, statErr := os.Stat(localPath); statErr == nil {
+		if err = godotenv.Load(localPath); err != nil {
+			return err
+		}
 	}
-	return godotenv.Load(path)
+	if _, statErr := os.Stat(basePath); statErr == nil {
+		if err = godotenv.Load(basePath); err != nil {
+			return err
+		}
+	}
+	return nil
 }

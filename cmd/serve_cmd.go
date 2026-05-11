@@ -248,7 +248,12 @@ func serve(ctx context.Context) {
 		return v.(*proxy.RouteManifest)
 	}
 
-	outerMux := buildOuterMux(srvCfg, manifestFor, healthProbes, ah, dm, utilities.Version, vkShared)
+	var sendEmailHook http.Handler
+	if config.Hook.SendEmail.Enabled && len(config.Hook.SendEmail.HTTPHookSecrets) > 0 {
+		sendEmailHook = newSendEmailHookReceiver(ah, config.Hook.SendEmail.HTTPHookSecrets)
+	}
+
+	outerMux := buildOuterMux(srvCfg, manifestFor, healthProbes, ah, dm, utilities.Version, vkShared, sendEmailHook)
 
 	// Determine TLS config for standalone mode.
 	var tlsCfg *tls.Config

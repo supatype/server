@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -869,6 +871,23 @@ func (a *API) sendEmail(r *http.Request, tx *storage.Connection, u *models.User,
 		return a.hooksMgr.InvokeHook(tx, r, input, &output)
 	}
 
+	return a.deliverTemplatedEmailSwitch(ctx, r, u, referrerURL, externalURL, otp, params)
+}
+
+// deliverTemplatedEmailSwitch renders and sends a templated email (no send-email HTTP hook).
+func (a *API) deliverTemplatedEmailSwitch(
+	ctx context.Context,
+	r *http.Request,
+	u *models.User,
+	referrerURL string,
+	externalURL *url.URL,
+	otp string,
+	params sendEmailParams,
+) error {
+	if externalURL == nil {
+		return apierrors.NewInternalServerError("missing external URL for email delivery")
+	}
+
 	// Increment email send operations here, since this metric is meant to count number of mail
 	// send operations rather than simply number of attempts to send mail
 	emailSendCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("type", params.emailActionType)))
@@ -922,4 +941,47 @@ func (a *API) sendEmail(r *http.Request, tx *storage.Connection, u *models.User,
 	default:
 		return err
 	}
+}
+
+// DeliverInboundSendEmailHook performs templated delivery for a verified send-email hook payload
+// (same templates as the non-hook path). Caller must validate the Standard Webhooks signature first.
+func (a *API) DeliverInboundSendEmailHook(r *http.Request, in *v0hooks.SendEmailInput) error {
+	if in == nil || in.User == nil {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "%s", "missing user in hook payload")
+	}
+	ed := in.EmailData
+	if strings.TrimSpace(ed.SiteURL) == "" {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "%s", "missing email_data.site_url")
+	}
+	ext, err := url.Parse(ed.SiteURL)
+	if err != nil || ext.Scheme == "" || ext.Host == "" {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "%s", "invalid email_data.site_url")
+	}
+
+	ctx := withExternalHost(r.Context(), ext)
+	r2 := r.WithContext(ctx)
+	externalURL := getExternalHost(ctx)
+	if externalURL == nil {
+		return apierrors.NewInternalServerError("missing external URL for email delivery")
+	}
+
+	otpNew := ed.TokenNew
+	otpCur := ed.Token
+	if ed.EmailActionType == mail.EmailChangeVerification && ed.TokenNew == "" {
+		// Insecure email-change path only carries a single OTP on the wire (see sendEmail hook branch).
+		otpNew = ed.Token
+		otpCur = ed.Token
+	}
+
+	params := sendEmailParams{
+		emailActionType: ed.EmailActionType,
+		otp:             otpCur,
+		otpNew:          otpNew,
+		oldEmail:        ed.OldEmail,
+		oldPhone:        ed.OldPhone,
+		provider:        ed.Provider,
+		factorType:      ed.FactorType,
+	}
+
+	return a.deliverTemplatedEmailSwitch(ctx, r2, in.User, ed.RedirectTo, externalURL, otpCur, params)
 }

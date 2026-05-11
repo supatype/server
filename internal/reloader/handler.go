@@ -35,6 +35,11 @@ func (ah *AtomicHandler) load() http.Handler {
 	return ah.val.Load().(*atomicHandlerValue).Handler
 }
 
+// LoadHandler returns the handler last passed to Store (e.g. live API under serve).
+func (ah *AtomicHandler) LoadHandler() http.Handler {
+	return ah.load()
+}
+
 // ServeHTTP implements the standard libraries http.Handler interface by
 // atomically passing the request along to the most recently stored handler.
 func (ah *AtomicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -5,10 +5,10 @@ import "testing"
 func TestMergeRouteManifest(t *testing.T) {
 	base := &RouteManifest{Schema: "public", PostgRESTURL: "http://old:3000", RealtimeEnabled: false}
 	overlay := &RouteManifest{
-		Schema:             "app",
-		PostgRESTURL:       "http://new:3000",
-		RealtimeEnabled:    true,
-		FunctionsEnabled:   true,
+		Schema:           "app",
+		PostgRESTURL:     "http://new:3000",
+		RealtimeEnabled:  true,
+		FunctionsEnabled: true,
 	}
 	MergeRouteManifest(base, overlay)
 	if base.Schema != "app" || base.PostgRESTURL != "http://new:3000" || !base.RealtimeEnabled || !base.FunctionsEnabled {
@@ -39,6 +39,15 @@ func TestMergeRouteManifest_staticCache(t *testing.T) {
 	}
 	if base.StaticCachePrefixes["/blog/"] != "public, max-age=120" {
 		t.Fatalf("StaticCachePrefixes: %#v", base.StaticCachePrefixes)
+	}
+}
+
+func TestMergeRouteManifest_viteDevURL(t *testing.T) {
+	base := &RouteManifest{Schema: "public", ViteDevURL: "http://old:5173"}
+	overlay := &RouteManifest{ViteDevURL: "http://new:5173"}
+	MergeRouteManifest(base, overlay)
+	if base.ViteDevURL != "http://new:5173" {
+		t.Fatalf("ViteDevURL = %q", base.ViteDevURL)
 	}
 }
 

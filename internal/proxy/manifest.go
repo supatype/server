@@ -33,6 +33,9 @@ type RouteManifest struct {
 	// AppUpstream overrides SUPATYPE_APP_UPSTREAM when set.
 	AppUpstream string `json:"app_upstream,omitempty"`
 
+	// ViteDevURL overrides SUPATYPE_VITE_DEV_URL when set (dev HMR at /_vite/*).
+	ViteDevURL string `json:"vite_dev_url,omitempty"`
+
 	// RealtimeEnabled indicates the realtime LISTEN/NOTIFY subsystem should start.
 	RealtimeEnabled bool `json:"realtime_enabled"`
 
@@ -131,6 +134,9 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	}
 	if overlay.AppUpstream != "" {
 		base.AppUpstream = overlay.AppUpstream
+	}
+	if overlay.ViteDevURL != "" {
+		base.ViteDevURL = overlay.ViteDevURL
 	}
 	base.RealtimeEnabled = overlay.RealtimeEnabled
 	base.FunctionsEnabled = overlay.FunctionsEnabled

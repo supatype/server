@@ -28,8 +28,10 @@ type LogLine struct {
 }
 
 // Manager supervises a Deno process that serves edge functions.
-// It spawns `deno run [--watch] --allow-net --allow-env --allow-read {serveEntry}` (router script)
-// and restarts it on crash with exponential backoff (1s → 2s → 4s → … → 30s cap).
+// It spawns `deno run [--watch] --allow-net --allow-env --allow-read {serveEntry}` where
+// serveEntry is the generated router (uses `Deno.serve` internally — equivalent role to a
+// dedicated `deno serve` file server, but `deno run` is required for our multi-route TS entry).
+// Restarts on crash with exponential backoff (1s → 2s → 4s → … → 30s cap).
 // PORT must be communicated via environment; the child's PORT is overridden so it cannot
 // inherit the main server's listen port by mistake.
 type Manager struct {

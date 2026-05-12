@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -243,7 +244,7 @@ func buildOuterMux(
 	case "static":
 		dir := firstNonEmpty(baseM.AppStaticDir, cfg.AppStaticDir)
 		if dir != "" {
-			r.Mount("/", static.Handler(dir, true))
+			r.Mount("/", static.Handler(dir, cfg.AppSPAFallback, staticCacheOpts(cfg, baseM)))
 			logrus.WithField("dir", dir).Info("mux: static app handler mounted")
 		}
 
@@ -279,6 +280,46 @@ func buildOuterMux(
 	}
 
 	return handler
+}
+
+func staticCacheOpts(cfg *serverconf.ServerConfig, m *proxy.RouteManifest) static.CacheOpts {
+	html := cfg.StaticCacheHTML
+	hashed := cfg.StaticCacheHashedAssets
+	prefixes := parseStaticPrefixesJSON(cfg.StaticCachePrefixesJSON)
+	if m != nil {
+		if m.StaticCacheHTML != "" {
+			html = m.StaticCacheHTML
+		}
+		if m.StaticCacheHashedAssets != "" {
+			hashed = m.StaticCacheHashedAssets
+		}
+		if len(m.StaticCachePrefixes) > 0 {
+			if prefixes == nil {
+				prefixes = make(map[string]string)
+			}
+			for k, v := range m.StaticCachePrefixes {
+				prefixes[k] = v
+			}
+		}
+	}
+	return static.CacheOpts{
+		HTML:         html,
+		HashedAssets: hashed,
+		Prefixes:     prefixes,
+	}
+}
+
+func parseStaticPrefixesJSON(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		logrus.WithError(err).Warn("SUPATYPE_STATIC_CACHE_PREFIXES_JSON: invalid JSON — ignoring")
+		return nil
+	}
+	return out
 }
 
 // firstNonEmpty returns the first non-empty string from vals.

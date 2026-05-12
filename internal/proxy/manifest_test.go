@@ -25,6 +25,23 @@ func TestMergeRouteManifest_corsOrigins(t *testing.T) {
 	}
 }
 
+func TestMergeRouteManifest_staticCache(t *testing.T) {
+	base := &RouteManifest{Schema: "public", StaticCacheHTML: "no-cache"}
+	overlay := &RouteManifest{
+		StaticCacheHTML: "max-age=60",
+		StaticCachePrefixes: map[string]string{
+			"/blog/": "public, max-age=120",
+		},
+	}
+	MergeRouteManifest(base, overlay)
+	if base.StaticCacheHTML != "max-age=60" {
+		t.Fatalf("StaticCacheHTML: %q", base.StaticCacheHTML)
+	}
+	if base.StaticCachePrefixes["/blog/"] != "public, max-age=120" {
+		t.Fatalf("StaticCachePrefixes: %#v", base.StaticCachePrefixes)
+	}
+}
+
 func TestParseRouteManifestJSON(t *testing.T) {
 	raw := []byte(`{"schema":"x","postgrest_url":"http://pg:3000","realtime_enabled":true}`)
 	m, err := ParseRouteManifestJSON(raw)

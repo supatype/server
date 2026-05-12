@@ -41,7 +41,8 @@ type Mailer struct {
 }
 
 // FromConfig returns a new mailer configured using the global configuration.
-// The provider is selected by globalConfig.Mailer.MailerProvider:
+// The provider is selected by globalConfig.Mailer.MailerProvider (set from
+// GOTRUE_MAILER_MAILER_PROVIDER, e.g. via supatype.config.ts `email.provider` in dev):
 //   - "" or "smtp": SMTP via mailmeclient (falls back to noop if SMTP host is unset)
 //   - "console": log structured metadata to stdout (no network delivery)
 //   - "resend": Resend API (requires RESEND_API_KEY and RESEND_FROM env vars)

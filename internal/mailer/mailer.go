@@ -1,3 +1,7 @@
+// Package mailer defines the GoTrue mail abstraction. Delivery is wired through
+// internal/mailer/templatemailer.FromConfig, which selects a mailer.Client by
+// GOTRUE_MAILER_MAILER_PROVIDER—implementing the Phase 10.6 email provider surface
+// (console, SMTP, Resend, SES) as Go packages, driven from supatype.config.ts `email`.
 package mailer
 
 import (

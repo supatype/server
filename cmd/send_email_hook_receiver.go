@@ -2,8 +2,8 @@
 //
 // GoTrue is configured with GOTRUE_HOOK_SEND_EMAIL_ENABLED=true, GOTRUE_HOOK_SEND_EMAIL_URI
 // pointing at this path (or any HTTPS URL for an Edge Function), and GOTRUE_HOOK_SEND_EMAIL_SECRETS
-// matching Standard Webhooks v1 symmetric secrets (same format as outbound hooks). The API then
-// POSTs the payload here instead of calling the mailer directly; this handler verifies the
+// matching Standard Webhooks v1 symmetric secrets (same format as outbound hooks). GoTrue then
+// POSTs the payload to that URI instead of calling the mailer directly; this handler verifies the
 // signature and runs DeliverInboundSendEmailHook (same templated path as direct sends).
 //
 // In local dev, supatype.config.ts `email.send_email_hook` wires these env vars; optional

@@ -22,9 +22,10 @@ type ProbeConfig struct {
 	StorageLocalPath string
 	StorageRemoteURL string
 	DenoBaseURL      string
-	RealtimeEnabled bool
-	// SelfBaseURL is this server's outer HTTP base (e.g. http://127.0.0.1:9999) used to GET /realtime/v1/health
-	// when RealtimeEnabled. Leave empty when probing loopback is unsafe (e.g. HTTPS-only standalone).
+	RealtimeEnabled  bool
+	// SelfBaseURL is this server's outer base (e.g. http://127.0.0.1:9999 or https://api.example.com)
+	// used to GET /realtime/v1/health when RealtimeEnabled. Normally set by serve via SelfBaseURLForRealtimeProbe;
+	// override with SUPATYPE_HEALTH_SELF_BASE_URL for exotic layouts.
 	SelfBaseURL string
 }
 
@@ -105,8 +106,8 @@ func collectComponents(probes ProbeConfig, timeout time.Duration) map[string]any
 		out["realtime"] = map[string]any{"enabled": true, "url": u, "ready": rtReady}
 	} else if probes.RealtimeEnabled {
 		out["realtime"] = map[string]any{
-			"enabled": true, "skipped": true, "ready": true,
-			"note": "SelfBaseURL unset (e.g. HTTPS standalone); realtime hub not HTTP-probed",
+			"enabled": true, "skipped": true, "ready": false,
+			"note": "SelfBaseURL unset; set SUPATYPE_HEALTH_SELF_BASE_URL or fix outer listen URL / TLS domain",
 		}
 	} else {
 		out["realtime"] = map[string]any{"enabled": false, "skipped": true, "ready": true}
@@ -126,6 +127,12 @@ func aggregateReady(components map[string]any) bool {
 			continue
 		}
 		if skip, _ := m["skipped"].(bool); skip {
+			// Realtime must be HTTP-probed when enabled; skipped means we cannot reach the hub.
+			if key == "realtime" {
+				if en, ok := m["enabled"].(bool); ok && en {
+					return false
+				}
+			}
 			continue
 		}
 		r, ok := m["ready"].(bool)

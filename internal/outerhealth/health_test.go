@@ -110,6 +110,33 @@ func TestCollectComponents_realtimeHTTPProbe(t *testing.T) {
 	}
 }
 
+func TestCollectComponents_realtimeEnabledNoSelfBaseURLBlocksReady(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/", "/graphql/v1":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := collectComponents(ProbeConfig{
+		PostgRESTURL:     ts.URL,
+		GraphQLURL:       ts.URL,
+		StorageRemoteURL: ts.URL,
+		RealtimeEnabled:  true,
+		SelfBaseURL:      "",
+	}, time.Second)
+	if aggregateReady(c) {
+		t.Fatalf("expected aggregate not ready, components=%#v", c)
+	}
+	rt, ok := c["realtime"].(map[string]any)
+	if !ok || rt["ready"] != false {
+		t.Fatalf("expected realtime ready=false, got %#v", rt)
+	}
+}
+
 func TestProbePostgREST(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

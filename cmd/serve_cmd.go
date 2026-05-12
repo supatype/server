@@ -220,14 +220,13 @@ func serve(ctx context.Context) {
 		} else {
 			pc = outerhealth.ProbeConfigFrom(srvCfg, fm.(*proxy.RouteManifest), denoBaseStr)
 		}
-		// Loopback self-probe for realtime HTTP liveness (skip when ACME TLS terminates on this listener).
-		if !(strings.TrimSpace(srvCfg.Mode) == "standalone" && strings.TrimSpace(srvCfg.TLSDomain) != "") {
-			h := strings.TrimSpace(config.API.Host)
-			if h == "" || h == "0.0.0.0" {
-				h = "127.0.0.1"
-			}
-			pc.SelfBaseURL = "http://" + net.JoinHostPort(h, strings.TrimSpace(config.API.Port))
-		}
+		pc.SelfBaseURL = outerhealth.SelfBaseURLForRealtimeProbe(
+			srvCfg.HealthSelfBaseURL,
+			srvCfg.Mode,
+			srvCfg.TLSDomain,
+			config.API.Host,
+			config.API.Port,
+		)
 		return pc
 	}
 

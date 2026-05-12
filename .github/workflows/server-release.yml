@@ -83,7 +83,7 @@ jobs:
           OUTPUT="${{ steps.build.outputs.output }}"
           if command -v strip >/dev/null 2>&1; then strip "$OUTPUT" || true; fi
 
-      - name: Sign binary (macOS — best-effort)
+      - name: Sign binary (macOS)
         if: matrix.goos == 'darwin' && env.APPLE_CERT_BASE64 != ''
         env:
           APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
@@ -107,7 +107,7 @@ jobs:
             --apple-id "$APPLE_NOTARY_APPLE_ID" \
             --password "$APPLE_NOTARY_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait --timeout 10m || true
+            --wait --timeout 10m
           rm -f "${OUTPUT}.zip"
 
       - name: Upload binary to CDN

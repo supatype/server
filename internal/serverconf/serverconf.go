@@ -35,6 +35,16 @@ type ServerConfig struct {
 	// AppStaticDir is the directory to serve static files from (AppMode=static).
 	AppStaticDir string `envconfig:"SUPATYPE_APP_STATIC_DIR"`
 
+	// StaticCacheHTML overrides Cache-Control for HTML and SPA fallback (manifest may override).
+	StaticCacheHTML string `envconfig:"SUPATYPE_STATIC_CACHE_HTML"`
+
+	// StaticCacheHashedAssets overrides Cache-Control for hashed asset URL prefixes (manifest may override).
+	StaticCacheHashedAssets string `envconfig:"SUPATYPE_STATIC_CACHE_HASHED_ASSETS"`
+
+	// StaticCachePrefixesJSON is optional JSON object mapping URL path prefix → Cache-Control.
+	// Example: {"\/blog\/":"public, max-age=300"}. Manifest static_cache_prefixes merges over these keys.
+	StaticCachePrefixesJSON string `envconfig:"SUPATYPE_STATIC_CACHE_PREFIXES_JSON"`
+
 	// AppSPAFallback enables serving index.html for unmatched paths (AppMode=static).
 	AppSPAFallback bool `envconfig:"SUPATYPE_APP_SPA_FALLBACK" default:"true"`
 

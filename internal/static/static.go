@@ -18,15 +18,27 @@ func init() {
 	_ = mime.AddExtensionType(".mjs", "text/javascript")
 }
 
+// CacheOpts configures Cache-Control for static.Handler.
+// Empty HTML / HashedAssets use built-in defaults.
+// Prefixes matches longest URL path prefix first (keys may omit a leading slash).
+type CacheOpts struct {
+	HTML         string
+	HashedAssets string
+	Prefixes     map[string]string
+}
+
+const (
+	defaultHTMLCache   = "no-cache"
+	defaultHashedCache = "public, max-age=31536000, immutable"
+)
+
 // Handler returns an http.Handler that serves static files from dir.
 //
 // When spa is true, requests for paths that don't match an existing file are
 // served with dir/index.html (SPA client-side routing fallback).
 //
-// Cache headers are applied automatically:
-//   - Paths under /assets/, /_next/, /_astro/, /static/, /_app/ get
-//     Cache-Control: public, max-age=31536000, immutable
-//   - All .html files (including the SPA fallback) get Cache-Control: no-cache
+// Cache headers use CacheOpts (defaults when empty): hashed bundle prefixes get a long immutable
+// cache; .html and "/" get no-cache; SPA fallback uses the HTML policy.
 //
 // Precompressed assets: for request path P, if P.br or P.gz exists on disk and
 // the client sends a matching Accept-Encoding token, that file is served with
@@ -35,13 +47,13 @@ func init() {
 // when the client accepts that encoding. When no precompressed sidecar exists,
 // compressible text types may be gzip-compressed on the fly (small files only;
 // Range requests skip on-the-fly gzip and use plain ServeContent).
-func Handler(dir string, spa bool) http.Handler {
+func Handler(dir string, spa bool, cache CacheOpts) http.Handler {
 	fs := http.FileServer(http.Dir(dir))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		setCacheHeaders(w, path)
+		setCacheHeaders(w, path, cache)
 
 		if disk, enc, ok := pickVariant(dir, path, r); ok {
 			serveVariant(w, r, disk, enc, path)
@@ -49,7 +61,7 @@ func Handler(dir string, spa bool) http.Handler {
 		}
 
 		if spa && !anyRepresentableFile(dir, path) {
-			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Cache-Control", cacheControlForSPAHTML(cache))
 			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
 			return
 		}
@@ -183,15 +195,61 @@ func compressiblePath(fullPath string) bool {
 	}
 }
 
-// setCacheHeaders sets the appropriate Cache-Control header for the path.
-func setCacheHeaders(w http.ResponseWriter, path string) {
+func cacheControlForSPAHTML(o CacheOpts) string {
+	if s := strings.TrimSpace(o.HTML); s != "" {
+		return s
+	}
+	return defaultHTMLCache
+}
+
+func normalizeURLPrefix(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return p
+}
+
+// cacheControlForPath returns the Cache-Control value for this URL path, or "" when unset.
+func cacheControlForPath(path string, o CacheOpts) string {
+	path = normalizeURLPrefix(path)
+	var bestPref string
+	var bestCC string
+	for pk, cc := range o.Prefixes {
+		pref := normalizeURLPrefix(pk)
+		if pref == "" {
+			continue
+		}
+		if strings.HasPrefix(path, pref) && len(pref) > len(bestPref) {
+			bestPref = pref
+			bestCC = cc
+		}
+	}
+	if bestPref != "" {
+		return strings.TrimSpace(bestCC)
+	}
 	if isHashedAssetPath(path) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		return
+		if s := strings.TrimSpace(o.HashedAssets); s != "" {
+			return s
+		}
+		return defaultHashedCache
 	}
 	if strings.HasSuffix(path, ".html") || path == "/" {
-		w.Header().Set("Cache-Control", "no-cache")
-		return
+		if s := strings.TrimSpace(o.HTML); s != "" {
+			return s
+		}
+		return defaultHTMLCache
+	}
+	return ""
+}
+
+// setCacheHeaders sets Cache-Control when cacheControlForPath returns non-empty.
+func setCacheHeaders(w http.ResponseWriter, path string, o CacheOpts) {
+	if cc := cacheControlForPath(path, o); cc != "" {
+		w.Header().Set("Cache-Control", cc)
 	}
 }
 

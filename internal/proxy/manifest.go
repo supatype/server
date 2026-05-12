@@ -43,6 +43,15 @@ type RouteManifest struct {
 	// Merged from Valkey tenant config / manifest in managed mode; may be
 	// combined with SUPATYPE_CORS_ALLOW_ORIGINS on the server.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
+
+	// StaticCacheHTML overrides Cache-Control for HTML responses and SPA fallback (default no-cache).
+	StaticCacheHTML string `json:"static_cache_html,omitempty"`
+
+	// StaticCacheHashedAssets overrides Cache-Control for bundled/hashed asset paths (default immutable long cache).
+	StaticCacheHashedAssets string `json:"static_cache_hashed_assets,omitempty"`
+
+	// StaticCachePrefixes maps URL path prefix → Cache-Control (longest matching prefix wins).
+	StaticCachePrefixes map[string]string `json:"static_cache_prefixes,omitempty"`
 }
 
 // Load reads and parses the manifest at path.
@@ -87,6 +96,12 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 	if cm.Schema == "" {
 		cm.Schema = "public"
 	}
+	if len(m.StaticCachePrefixes) > 0 {
+		cm.StaticCachePrefixes = make(map[string]string, len(m.StaticCachePrefixes))
+		for k, v := range m.StaticCachePrefixes {
+			cm.StaticCachePrefixes[k] = v
+		}
+	}
 	return &cm
 }
 
@@ -121,6 +136,20 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	base.FunctionsEnabled = overlay.FunctionsEnabled
 	if len(overlay.CorsAllowedOrigins) > 0 {
 		base.CorsAllowedOrigins = append([]string(nil), overlay.CorsAllowedOrigins...)
+	}
+	if overlay.StaticCacheHTML != "" {
+		base.StaticCacheHTML = overlay.StaticCacheHTML
+	}
+	if overlay.StaticCacheHashedAssets != "" {
+		base.StaticCacheHashedAssets = overlay.StaticCacheHashedAssets
+	}
+	if len(overlay.StaticCachePrefixes) > 0 {
+		if base.StaticCachePrefixes == nil {
+			base.StaticCachePrefixes = make(map[string]string)
+		}
+		for k, v := range overlay.StaticCachePrefixes {
+			base.StaticCachePrefixes[k] = v
+		}
 	}
 }
 

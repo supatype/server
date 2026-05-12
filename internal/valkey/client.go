@@ -37,6 +37,10 @@ type TenantConfig struct {
 
 	// CorsAllowedOrigins is merged into the route manifest when present.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
+
+	StaticCacheHTML         string            `json:"static_cache_html,omitempty"`
+	StaticCacheHashedAssets string            `json:"static_cache_hashed_assets,omitempty"`
+	StaticCachePrefixes     map[string]string `json:"static_cache_prefixes,omitempty"`
 }
 
 const (

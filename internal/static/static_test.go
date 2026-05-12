@@ -28,7 +28,7 @@ func TestPrecompressedGzipServedWhenAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(dir, false)
+	h := Handler(dir, false, CacheOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/a.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestPrecompressedBrotliPreferredOverGzip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(dir, false)
+	h := Handler(dir, false, CacheOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/pick.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	rec := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestOnTheFlyGzipWhenNoPrecompressedSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(dir, false)
+	h := Handler(dir, false, CacheOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestRangeRequestSkipsOnTheFlyGzip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(dir, false)
+	h := Handler(dir, false, CacheOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Range", "bytes=0-4")
@@ -161,7 +161,7 @@ func TestUncompressedWhenNoAcceptEncodingEvenIfGzipExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(dir, false)
+	h := Handler(dir, false, CacheOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/b.js", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -183,7 +183,7 @@ func TestSPAFallbackWhenNoAssetOrPrecompressed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(dir, true)
+	h := Handler(dir, true, CacheOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/app/route", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -208,7 +208,7 @@ func TestSPADoesNotMaskExistingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Handler(dir, true)
+	h := Handler(dir, true, CacheOpts{})
 	req := httptest.NewRequest(http.MethodGet, "/docs/", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -219,5 +219,88 @@ func TestSPADoesNotMaskExistingDirectory(t *testing.T) {
 	b, _ := io.ReadAll(rec.Body)
 	if bytes.Contains(b, []byte("<spa/>")) {
 		t.Fatalf("directory request incorrectly served SPA index: body=%q", b)
+	}
+}
+
+func TestCacheOptsPrefixLongestWins(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "assets", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "assets", "deep", "x.js"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := CacheOpts{
+		Prefixes: map[string]string{
+			"/assets/":      "short",
+			"/assets/deep/": "longer-wins",
+		},
+	}
+	h := Handler(dir, false, opts)
+	req := httptest.NewRequest(http.MethodGet, "/assets/deep/x.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Cache-Control"); got != "longer-wins" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+}
+
+func TestCacheOptsHTMLOverride(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := CacheOpts{HTML: "max-age=0, must-revalidate"}
+	h := Handler(dir, false, opts)
+	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Cache-Control"); got != "max-age=0, must-revalidate" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+}
+
+func TestCacheOptsHashedDefault(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "assets", "a.bin"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(dir, false, CacheOpts{})
+	req := httptest.NewRequest(http.MethodGet, "/assets/a.bin", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	want := "public, max-age=31536000, immutable"
+	if got := rec.Header().Get("Cache-Control"); got != want {
+		t.Fatalf("Cache-Control = %q want %q", got, want)
+	}
+}
+
+func TestSPAFallbackUsesHTMLCachePolicy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := CacheOpts{HTML: "private, no-store"}
+	h := Handler(dir, true, opts)
+	req := httptest.NewRequest(http.MethodGet, "/client/route", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("Cache-Control = %q", got)
 	}
 }

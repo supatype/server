@@ -18,6 +18,7 @@ func TestOuterAccessLogFormatter_JSONFields(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(WithOuterAccessLogContext("dev", ""))
 	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
 	r.Get("/api/x", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
@@ -40,6 +41,9 @@ func TestOuterAccessLogFormatter_JSONFields(t *testing.T) {
 	if line["component"] != "outer" {
 		t.Fatalf("component: %#v", line["component"])
 	}
+	if line["mode"] != "dev" {
+		t.Fatalf("mode: %#v", line["mode"])
+	}
 	if line["tenant"] != "proj-ref-1" {
 		t.Fatalf("tenant: %#v", line["tenant"])
 	}
@@ -61,13 +65,14 @@ func TestOuterAccessLogFormatter_JSONFields(t *testing.T) {
 	}
 }
 
-func TestOuterAccessLogFormatter_SkipsHealthPaths(t *testing.T) {
+func TestOuterAccessLogFormatter_healthAtInfoQuietAtDebugLogged(t *testing.T) {
 	var buf bytes.Buffer
 	configureOuterAccessLoggingWriter(&buf, "info")
 	t.Cleanup(func() { configureOuterAccessLogging("info") })
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(WithOuterAccessLogContext("dev", ""))
 	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -75,9 +80,79 @@ func TestOuterAccessLogFormatter_SkipsHealthPaths(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	r.ServeHTTP(httptest.NewRecorder(), req)
-
 	if buf.Len() != 0 {
-		t.Fatalf("expected no log for /health, got: %s", buf.String())
+		t.Fatalf("expected no Info log for /health at info level, got: %s", buf.String())
+	}
+
+	configureOuterAccessLoggingWriter(&buf, "debug")
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("log line: %v\n%s", err, buf.String())
+	}
+	if line["path"] != "/health/ready" {
+		t.Fatalf("path: %#v", line["path"])
+	}
+	if line["level"] != "debug" {
+		t.Fatalf("level: %#v", line["level"])
+	}
+	if line["msg"] != "request" {
+		t.Fatalf("msg: %#v", line["msg"])
+	}
+}
+
+func TestOuterAccessLogFormatter_queryField(t *testing.T) {
+	var buf bytes.Buffer
+	configureOuterAccessLoggingWriter(&buf, "info")
+	t.Cleanup(func() { configureOuterAccessLogging("info") })
+
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(WithOuterAccessLogContext("standalone", ""))
+	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
+	r.Get("/rest/v1/x", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/rest/v1/x?select=id", nil)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("log line: %v\n%s", err, buf.String())
+	}
+	if line["query"] != "select=id" {
+		t.Fatalf("query: %#v", line["query"])
+	}
+	if line["mode"] != "standalone" {
+		t.Fatalf("mode: %#v", line["mode"])
+	}
+}
+
+func TestOuterAccessLogFormatter_managedTenantFromProjectRef(t *testing.T) {
+	var buf bytes.Buffer
+	configureOuterAccessLoggingWriter(&buf, "info")
+	t.Cleanup(func() { configureOuterAccessLogging("info") })
+
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(WithOuterAccessLogContext("managed", "fixed-ref"))
+	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
+	r.Get("/api/z", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/z", nil))
+
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("log line: %v\n%s", err, buf.String())
+	}
+	if line["tenant"] != "fixed-ref" {
+		t.Fatalf("tenant: %#v", line["tenant"])
+	}
+	if line["mode"] != "managed" {
+		t.Fatalf("mode: %#v", line["mode"])
 	}
 }
 
@@ -88,6 +163,7 @@ func TestOuterAccessLogFormatter_levelFiltersInfo(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(WithOuterAccessLogContext("dev", ""))
 	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
 	r.Get("/api/y", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

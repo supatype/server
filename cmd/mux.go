@@ -52,7 +52,9 @@ const defaultUpstreamHTTPTimeout = 2 * time.Minute
 //	/realtime/v1/*            → LISTEN/NOTIFY WebSocket hub
 //	/*                        → App (none/static/proxy per config)
 //
-// In dev mode the mux is wrapped in DevMiddleware (permissive CORS + Vite HMR proxy).
+// In dev mode the mux is wrapped in DevMiddleware (permissive CORS). Vite HMR is mounted
+// on this router at /_vite/* when SUPATYPE_VITE_DEV_URL (or manifest vite_dev_url) is set,
+// or SUPATYPE_APP_UPSTREAM when app mode is not proxy (legacy), so outer JSON access logs apply.
 // In managed mode the mux is wrapped in ManagedCORSMiddleware (when configured) outside
 // TenantMiddleware (HMAC), then TenantMiddleware, so OPTIONS preflight is not blocked.
 func buildOuterMux(
@@ -240,6 +242,21 @@ func buildOuterMux(
 	}
 
 	appMode := firstNonEmpty(baseM.AppMode, cfg.AppMode, "none")
+
+	if strings.EqualFold(strings.TrimSpace(cfg.Mode), "dev") {
+		vu := firstNonEmpty(baseM.ViteDevURL, cfg.ViteDevURL)
+		if vu == "" && appMode != "proxy" {
+			vu = strings.TrimSpace(cfg.AppUpstream)
+		}
+		if vu != "" {
+			if u, err := url.Parse(vu); err == nil && u.Scheme != "" && u.Host != "" {
+				vh := proxy.WebSocketProxy(u, proxy.New(u, proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}))
+				r.Handle("/_vite/*", http.StripPrefix("/_vite", vh))
+				logrus.WithField("vite_dev_url", vu).Info("mux: Vite HMR proxy mounted at /_vite")
+			}
+		}
+	}
+
 	switch appMode {
 	case "static":
 		dir := firstNonEmpty(baseM.AppStaticDir, cfg.AppStaticDir)
@@ -262,7 +279,7 @@ func buildOuterMux(
 
 	switch cfg.Mode {
 	case "dev":
-		handler = modes.DevMiddleware(r, cfg.AppUpstream)
+		handler = modes.DevMiddleware(r)
 	case "managed":
 		inner := http.Handler(r)
 		if cfg.TenantHMACSecret != "" {

@@ -24,6 +24,7 @@ type TenantConfig struct {
 	StorageURL   string `json:"storage_url,omitempty"`
 	AppMode      string `json:"app_mode,omitempty"`
 	AppUpstream  string `json:"app_upstream,omitempty"`
+	ViteDevURL   string `json:"vite_dev_url,omitempty"`
 	AppStaticDir string `json:"app_static_dir,omitempty"`
 	Schema       string `json:"schema,omitempty"`
 

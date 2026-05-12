@@ -62,6 +62,9 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.AppUpstream != "" {
 		m.AppUpstream = tc.AppUpstream
 	}
+	if tc.ViteDevURL != "" {
+		m.ViteDevURL = tc.ViteDevURL
+	}
 	if tc.AppStaticDir != "" {
 		m.AppStaticDir = tc.AppStaticDir
 	}

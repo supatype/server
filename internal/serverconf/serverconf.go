@@ -51,6 +51,10 @@ type ServerConfig struct {
 	// AppUpstream is the URL to reverse proxy to (AppMode=proxy).
 	AppUpstream string `envconfig:"SUPATYPE_APP_UPSTREAM"`
 
+	// ViteDevURL is the Vite dev server base URL for HMR when SUPATYPE_MODE=dev (e.g. http://127.0.0.1:5173).
+	// When empty, dev mode falls back to SUPATYPE_APP_UPSTREAM only if app mode is not "proxy".
+	ViteDevURL string `envconfig:"SUPATYPE_VITE_DEV_URL"`
+
 	// TLSDomain is the domain to provision a Let's Encrypt certificate for (Mode=standalone).
 	TLSDomain string `envconfig:"SUPATYPE_TLS_DOMAIN"`
 

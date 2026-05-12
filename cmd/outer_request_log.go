@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,59 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sirupsen/logrus"
 )
+
+type outerLogCtxKey int
+
+const (
+	outerLogKeyMode outerLogCtxKey = iota
+	outerLogKeyManagedProjectRef
+)
+
+// WithOuterAccessLogContext attaches mode and optional managed project ref to the request
+// context so JSON access lines can emit `mode` and resolve `tenant` per A21.
+func WithOuterAccessLogContext(mode, managedProjectRef string) func(http.Handler) http.Handler {
+	mode = strings.TrimSpace(mode)
+	ref := strings.TrimSpace(managedProjectRef)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, outerLogKeyMode, mode)
+			ctx = context.WithValue(ctx, outerLogKeyManagedProjectRef, ref)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func outerLogMode(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	v, _ := r.Context().Value(outerLogKeyMode).(string)
+	return v
+}
+
+func outerLogManagedProjectRef(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	v, _ := r.Context().Value(outerLogKeyManagedProjectRef).(string)
+	return v
+}
+
+func tenantForAccessLog(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if h := strings.TrimSpace(r.Header.Get("X-Supatype-Tenant")); h != "" {
+		return h
+	}
+	if strings.TrimSpace(outerLogMode(r)) == "managed" {
+		if ref := strings.TrimSpace(outerLogManagedProjectRef(r)); ref != "" {
+			return ref
+		}
+	}
+	return ""
+}
 
 var (
 	outerAccessMu     sync.Mutex
@@ -57,7 +111,9 @@ func outerAccessLog() *logrus.Logger {
 }
 
 // outerAccessLogFormatter implements chi middleware.LogFormatter for supatype-server's
-// outer mux: one JSON line per request with request_id, duration_ms, and optional tenant.
+// outer mux: one JSON line per request with request_id, method, path, optional query,
+// status, duration_ms, mode, and tenant (header or managed fixed project ref).
+// /health and /health/ready are logged at Debug to keep default Info noise low.
 type outerAccessLogFormatter struct{}
 
 func (outerAccessLogFormatter) NewLogEntry(r *http.Request) middleware.LogEntry {
@@ -73,9 +129,7 @@ func (e *outerLogEntry) Write(status, bytes int, _ http.Header, elapsed time.Dur
 		return
 	}
 	p := e.req.URL.Path
-	if p == "/health" || p == "/health/ready" {
-		return
-	}
+	health := p == "/health" || p == "/health/ready"
 
 	fields := logrus.Fields{
 		"component":   "outer",
@@ -86,10 +140,21 @@ func (e *outerLogEntry) Write(status, bytes int, _ http.Header, elapsed time.Dur
 		"bytes":       bytes,
 		"duration_ms": elapsed.Milliseconds(),
 	}
-	if t := strings.TrimSpace(e.req.Header.Get("X-Supatype-Tenant")); t != "" {
+	if m := outerLogMode(e.req); m != "" {
+		fields["mode"] = m
+	}
+	if q := strings.TrimSpace(e.req.URL.RawQuery); q != "" {
+		fields["query"] = q
+	}
+	if t := tenantForAccessLog(e.req); t != "" {
 		fields["tenant"] = t
 	}
-	outerAccessLog().WithFields(fields).Info("request")
+	lg := outerAccessLog().WithFields(fields)
+	if health {
+		lg.Debug("request")
+		return
+	}
+	lg.Info("request")
 }
 
 func (e *outerLogEntry) Panic(v interface{}, stack []byte) {
@@ -106,7 +171,13 @@ func (e *outerLogEntry) Panic(v interface{}, stack []byte) {
 	if e.req != nil {
 		fields["method"] = e.req.Method
 		fields["path"] = e.req.URL.Path
-		if t := strings.TrimSpace(e.req.Header.Get("X-Supatype-Tenant")); t != "" {
+		if m := outerLogMode(e.req); m != "" {
+			fields["mode"] = m
+		}
+		if q := strings.TrimSpace(e.req.URL.RawQuery); q != "" {
+			fields["query"] = q
+		}
+		if t := tenantForAccessLog(e.req); t != "" {
 			fields["tenant"] = t
 		}
 	}

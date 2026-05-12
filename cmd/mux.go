@@ -69,6 +69,7 @@ func buildOuterMux(
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(WithOuterAccessLogContext(cfg.Mode, cfg.ManagedProjectRef))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestLogger(outerAccessLogFormatter{}))
 

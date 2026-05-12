@@ -5,8 +5,8 @@ import (
 )
 
 // ServerConfig holds configuration for the supatype-server outer layer.
-// It is loaded from environment variables (SUPATYPE_* prefix) and the .env
-// file loaded by LoadDotEnv before this is parsed.
+// It is loaded from environment variables (SUPATYPE_* prefix) and `.env` files
+// loaded by LoadDotEnvForServe (or LoadDotEnv) before this is parsed.
 type ServerConfig struct {
 	// Mode controls TLS and tenant resolution behaviour.
 	// "dev" = no TLS, permissive CORS, Vite HMR proxy
@@ -142,7 +142,7 @@ type ServerConfig struct {
 }
 
 // Load parses ServerConfig from environment variables (SUPATYPE_* prefix).
-// Call LoadDotEnv before this to populate the environment from .env.
+// Call LoadDotEnvForServe (or LoadDotEnv) before this to populate the environment from .env.
 func Load() (*ServerConfig, error) {
 	var cfg ServerConfig
 	if err := envconfig.Process("", &cfg); err != nil {

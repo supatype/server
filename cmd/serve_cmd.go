@@ -88,11 +88,13 @@ func serve(ctx context.Context) {
 	ah := reloader.NewAtomicHandler(initialAPI)
 
 	// ── supatype-server outer layer ───────────────────────────────────────────
-	// Load .env from the current working directory (dev/standalone convenience).
+	// Load `.env` / `.env.local` from --config dir, cwd, then manifest project root (A22).
 	if cwd, err := os.Getwd(); err == nil {
-		if err := serverconf.LoadDotEnv(cwd); err != nil {
-			logrus.WithError(err).Debug("serve: no .env file loaded")
+		if err := serverconf.LoadDotEnvForServe(cwd, configFile); err != nil {
+			logrus.WithError(err).Warn("serve: .env load failed")
 		}
+	} else {
+		logrus.WithError(err).Debug("serve: getwd failed; skipping .env")
 	}
 
 	srvCfg, err := serverconf.Load()

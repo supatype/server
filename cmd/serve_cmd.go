@@ -72,6 +72,8 @@ func serve(ctx context.Context) {
 	var wg sync.WaitGroup
 	defer wg.Wait() // Do not return to caller until this goroutine is done.
 
+	var acmeHTTPSrv *http.Server
+
 	mrCache := templatemailer.NewCache()
 	limiterOpts := api.NewLimiterOptions(config)
 	initialAPI := api.NewAPIWithVersion(
@@ -264,13 +266,22 @@ func serve(ctx context.Context) {
 		}
 		tlsCfg = modes.StandaloneTLSConfig(acm)
 
-		// HTTP-01 challenge handler on :80.
+		acmeAddr := strings.TrimSpace(srvCfg.ACMEHTTPAddr)
+		if acmeAddr == "" {
+			acmeAddr = ":80"
+		}
+		acmeHTTPSrv = &http.Server{
+			Addr:              acmeAddr,
+			Handler:           acm.HTTPHandler(nil),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       2 * time.Minute,
+			WriteTimeout:      2 * time.Minute,
+		}
+		wg.Add(1)
 		go func() {
-			challengeSrv := &http.Server{
-				Addr:    ":80",
-				Handler: acm.HTTPHandler(nil),
-			}
-			if err := challengeSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			defer wg.Done()
+			logrus.WithField("addr", acmeAddr).Info("serve: ACME HTTP-01 challenge listener")
+			if err := acmeHTTPSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logrus.WithError(err).Warn("serve: ACME HTTP challenge server error")
 			}
 		}()
@@ -381,6 +392,13 @@ func serve(ctx context.Context) {
 
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.WithError(err).Error("shutdown failed")
+		}
+		if acmeHTTPSrv != nil {
+			acmeShutdown, acmeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer acmeCancel()
+			if err := acmeHTTPSrv.Shutdown(acmeShutdown); err != nil && !errors.Is(err, context.Canceled) {
+				log.WithError(err).Warn("serve: ACME HTTP challenge server shutdown")
+			}
 		}
 	}()
 

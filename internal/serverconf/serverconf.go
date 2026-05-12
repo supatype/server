@@ -61,6 +61,10 @@ type ServerConfig struct {
 	// TLSACMECacheDir is the directory to cache ACME certificates in.
 	TLSACMECacheDir string `envconfig:"SUPATYPE_TLS_ACME_CACHE_DIR" default:"~/.supatype/acme"`
 
+	// ACMEHTTPAddr is the listen address for the HTTP-01 challenge handler (standalone + TLS domain).
+	// Default ":80". Use e.g. ":8080" when binding port 80 is not possible (you must forward port 80 externally).
+	ACMEHTTPAddr string `envconfig:"SUPATYPE_ACME_HTTP_ADDR" default:":80"`
+
 	// ManifestPath is the path to the .supatype/manifest.json route manifest file.
 	ManifestPath string `envconfig:"SUPATYPE_MANIFEST_PATH" default:".supatype/manifest.json"`
 

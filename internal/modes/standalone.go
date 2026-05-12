@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -11,7 +12,7 @@ import (
 // NewACMEManager returns an autocert.Manager configured for domain.
 // Certificates are cached in cacheDir (created if absent).
 // Use Manager.TLSConfig() as the http.Server.TLSConfig.
-// Use Manager.HTTPHandler(nil) as an http.Handler on port 80 for the
+// Use Manager.HTTPHandler(nil) on SUPATYPE_ACME_HTTP_ADDR (default :80) for the
 // HTTP-01 ACME challenge.
 func NewACMEManager(domain, cacheDir string) (*autocert.Manager, error) {
 	// Expand ~ in cache dir.
@@ -28,9 +29,10 @@ func NewACMEManager(domain, cacheDir string) (*autocert.Manager, error) {
 	}
 
 	m := &autocert.Manager{
-		Cache:      autocert.DirCache(cacheDir),
-		Prompt:     autocert.AcceptTOS,
-		HostPolicy: autocert.HostWhitelist(domain),
+		Cache:       autocert.DirCache(cacheDir),
+		Prompt:      autocert.AcceptTOS,
+		HostPolicy:  autocert.HostWhitelist(domain),
+		RenewBefore: 30 * 24 * time.Hour, // renew ~30 days before expiry (LE default window)
 	}
 	return m, nil
 }

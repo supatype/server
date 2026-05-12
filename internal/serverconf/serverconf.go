@@ -134,6 +134,10 @@ type ServerConfig struct {
 
 	// OuterLogLevel is the logrus level for supatype-server outer mux JSON access logs only (trace|debug|info|warn|error|fatal|panic).
 	OuterLogLevel string `envconfig:"SUPATYPE_OUTER_LOG_LEVEL" default:"info"`
+
+	// HealthSelfBaseURL overrides the outer base URL used to probe GET /realtime/v1/health from /health/ready
+	// (e.g. https://public.example.com when the process cannot infer a correct URL).
+	HealthSelfBaseURL string `envconfig:"SUPATYPE_HEALTH_SELF_BASE_URL"`
 }
 
 // Load parses ServerConfig from environment variables (SUPATYPE_* prefix).

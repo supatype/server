@@ -32,9 +32,10 @@ jobs:
             goarch: arm64
             runner: ubuntu-24.04
             cross: true
+          # macos-13 retired 2025-12-04 — cross-compile amd64 on Linux (CGO_ENABLED=0).
           - goos: darwin
             goarch: amd64
-            runner: macos-13
+            runner: ubuntu-24.04
             cross: false
           - goos: darwin
             goarch: arm64

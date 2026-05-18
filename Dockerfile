@@ -22,11 +22,12 @@ FROM alpine:3
 RUN adduser -D -u 1000 supabase
 
 RUN apk add --no-cache ca-certificates
-COPY --from=build /go/src/github.com/supatype/auth/auth /usr/local/bin/auth
+COPY --from=build /go/src/github.com/supatype/auth/supatype-server /usr/local/bin/supatype-server
 COPY --from=build /go/src/github.com/supatype/auth/migrations /usr/local/etc/auth/migrations/
-RUN ln -s /usr/local/bin/auth /usr/local/bin/gotrue
+RUN ln -sf /usr/local/bin/supatype-server /usr/local/bin/auth \
+ && ln -sf /usr/local/bin/supatype-server /usr/local/bin/gotrue
 
 ENV GOTRUE_DB_MIGRATIONS_PATH /usr/local/etc/auth/migrations
 
 USER supabase
-CMD ["auth"]
+CMD ["supatype-server"]

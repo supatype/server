@@ -15,8 +15,23 @@ import (
 //
 // secret must be a non-empty shared secret configured identically on Kong and
 // supatype-server. Timing-safe comparison is used (hmac.Equal).
+// tenantBypassPaths are reachable without Kong tenant headers.
+// /auth/v1 is the inner GoTrue mount (platform login + control-plane proxy); tenant
+// routing applies to /rest/v1, /storage/v1, etc.
+func tenantBypassPaths(path string) bool {
+	if path == "/health" || path == "/health/ready" {
+		return true
+	}
+	return strings.HasPrefix(path, "/auth/v1")
+}
+
 func TenantMiddleware(secret string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tenantBypassPaths(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		tenantID := r.Header.Get("X-Supatype-Tenant")
 		sig := r.Header.Get("X-Supatype-Tenant-Sig")
 

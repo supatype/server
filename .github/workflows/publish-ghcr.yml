@@ -1,0 +1,91 @@
+# Cloud platform image — GHCR only (Pulumi / k8s pull ghcr.io/supatype/server).
+# Public self-host Docker Hub image: publish.yml → supatype/server
+name: Publish server to GHCR
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/supatype/server
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: docker_latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION='${{ inputs.version }}'
+          VERSION_LC=$(echo "$VERSION" | tr '[:upper:]' '[:lower:]')
+          IS_PRE=false
+          case "$VERSION_LC" in
+            *alpha*|*beta*|*-rc*|*.rc.*|*preview*) IS_PRE=true ;;
+          esac
+          HAS_STABLE=false
+          while IFS= read -r t; do
+            [[ -z "${t:-}" ]] && continue
+            rest="${t#v}"
+            [[ "$rest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            HAS_STABLE=true
+            break
+          done < <(git tag -l 'v[0-9]*' 2>/dev/null || true)
+          if [[ "$IS_PRE" != true ]] || [[ "$HAS_STABLE" != true ]]; then
+            echo "docker_push_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docker_push_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: sed -i 's/RELEASE_VERSION=unspecified/RELEASE_VERSION=${{ inputs.version }}/' Dockerfile
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64,arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=v${{ inputs.version }}
+            type=raw,value=latest,enable=${{ steps.docker_latest.outputs.docker_push_latest == 'true' }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Notify supatype-cloud (pin server image on platform stack)
+        env:
+          GH_TOKEN: ${{ secrets.CLOUD_REPO_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "CLOUD_REPO_DISPATCH_TOKEN not set — skip repository_dispatch"
+            exit 0
+          fi
+          gh api "repos/${{ github.repository_owner }}/supatype-cloud/dispatches" \
+            -f event_type=server-image-published \
+            -f "client_payload[tag]=v${{ inputs.version }}"

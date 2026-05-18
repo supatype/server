@@ -1,4 +1,5 @@
-name: Publish to Docker Hub
+# Public self-host only — NOT used by supatype-cloud Pulumi (see publish-ghcr.yml).
+name: Publish to Docker Hub (public supatype/server)
 
 on:
   workflow_call:
@@ -50,7 +51,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            supatype/auth
+            supatype/server
           tags: |
             type=raw,value=v${{ inputs.version }}
             type=raw,value=latest,enable=${{ steps.docker_latest.outputs.docker_push_latest == 'true' }}

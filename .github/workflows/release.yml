@@ -101,16 +101,18 @@ jobs:
           RELEASE_VERSION=$RELEASE_VERSION make deps
           RELEASE_VERSION=$RELEASE_VERSION make all build-strip
 
-          ln -s auth gotrue
-          tar -czvf auth-v$RELEASE_VERSION-x86.tar.gz auth gotrue migrations/
-          mv auth-arm64 auth
-          tar -czvf auth-v$RELEASE_VERSION-arm64.tar.gz auth gotrue migrations/
+          mkdir -p dist/linux-amd64 dist/linux-arm64 dist/darwin-arm64 dist/linux-arm64-strip
 
-          mv auth-darwin-arm64 auth
-          tar -czvf auth-v$RELEASE_VERSION-darwin-arm64.tar.gz auth gotrue migrations/
+          cp supatype-server dist/linux-amd64/supatype-server
+          cp supatype-server-linux-arm64 dist/linux-arm64/supatype-server
+          cp supatype-server-darwin-arm64 dist/darwin-arm64/supatype-server
+          cp supatype-server-linux-arm64-strip dist/linux-arm64-strip/supatype-server
 
-          mv auth-arm64-strip auth
-          tar -cf - auth gotrue migrations/ | xz -T0 -9e -C crc64 > auth-v$RELEASE_VERSION-arm64.tar.xz
+          tar -czvf supatype-server-v$RELEASE_VERSION-linux-amd64.tar.gz -C dist/linux-amd64 supatype-server -C "$GITHUB_WORKSPACE" migrations/
+          tar -czvf supatype-server-v$RELEASE_VERSION-linux-arm64.tar.gz -C dist/linux-arm64 supatype-server -C "$GITHUB_WORKSPACE" migrations/
+          tar -czvf supatype-server-v$RELEASE_VERSION-darwin-arm64.tar.gz -C dist/darwin-arm64 supatype-server -C "$GITHUB_WORKSPACE" migrations/
+
+          tar -cf - -C dist/linux-arm64-strip supatype-server -C "$GITHUB_WORKSPACE" migrations/ | xz -T0 -9e -C crc64 > supatype-server-v$RELEASE_VERSION-linux-arm64.tar.xz
 
       - name: Generate checksums
         if: ${{ steps.release.outputs.release_created == 'true' || steps.release.outputs.prs_created == 'true' }}
@@ -121,7 +123,7 @@ jobs:
             local hash_type=$1
             local hash_cmd=$2
             echo "### ${hash_type}" >> checksums.txt
-            for file in auth-v$RELEASE_VERSION*.tar.{gz,xz}; do
+            for file in supatype-server-v$RELEASE_VERSION*.tar.{gz,xz}; do
               echo "\`$file\`:" >> checksums.txt
               echo "\`\`\`" >> checksums.txt
               $hash_cmd "$file" | awk '{print $1}' >> checksums.txt
@@ -182,7 +184,7 @@ jobs:
           FULL_NOTES=$(printf "%s\n\n%s\n" "$EXISTING_NOTES" "$CHECKSUM_CONTENT")
           GH_TOKEN='${{ github.token }}' gh release edit $RELEASE_NAME -n "$FULL_NOTES"
 
-          GH_TOKEN='${{ github.token }}' gh release upload $RELEASE_NAME ./auth-v$RELEASE_VERSION-x86.tar.gz ./auth-v$RELEASE_VERSION-arm64.tar.gz ./auth-v$RELEASE_VERSION-arm64.tar.xz ./auth-v$RELEASE_VERSION-darwin-arm64.tar.gz
+          GH_TOKEN='${{ github.token }}' gh release upload $RELEASE_NAME ./supatype-server-v$RELEASE_VERSION-linux-amd64.tar.gz ./supatype-server-v$RELEASE_VERSION-linux-arm64.tar.gz ./supatype-server-v$RELEASE_VERSION-linux-arm64.tar.xz ./supatype-server-v$RELEASE_VERSION-darwin-arm64.tar.gz
 
 
   publish_ghcr:

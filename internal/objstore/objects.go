@@ -65,19 +65,28 @@ func metaToListItem(m ObjectMeta) listItem {
 
 // ─── Filesystem helpers ───────────────────────────────────────────────────────
 
-func (s *store) objectFilePath(bucket, objPath string) string {
-	return filepath.Join(s.root, bucket, filepath.FromSlash(objPath))
-}
-
-// objectMetaPath returns the path to the sidecar metadata file for an object.
-// e.g. bucket/avatars + path/to/file.jpg → bucket/avatars/.meta/path/to/file.jpg.json
-func (s *store) objectMetaPath(bucket, objPath string) string {
-	dir, file := filepath.Split(filepath.FromSlash(objPath))
-	return filepath.Join(s.root, bucket, ".meta", dir, file+".json")
-}
-
 func (s *store) loadObjectMeta(bucket, objPath string) (*ObjectMeta, error) {
-	data, err := os.ReadFile(s.objectMetaPath(bucket, objPath))
+	metaRel, err := s.objectMetaRel(bucket, objPath)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.Open(metaRel)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -86,15 +95,34 @@ func (s *store) loadObjectMeta(bucket, objPath string) (*ObjectMeta, error) {
 }
 
 func (s *store) saveObjectMeta(meta *ObjectMeta, bucket, objPath string) error {
-	metaPath := s.objectMetaPath(bucket, objPath)
-	if err := os.MkdirAll(filepath.Dir(metaPath), 0o755); err != nil {
+	metaRel, err := s.objectMetaRel(bucket, objPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(s.root, filepath.Dir(metaRel)), 0o700); err != nil { // #nosec G703 -- metaRel is built from validated bucket and object paths under storageRoot.
 		return err
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(metaPath, data, 0o644)
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.OpenFile(metaRel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // newID generates a random UUID v4.
@@ -136,9 +164,23 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	upsert := r.Header.Get("x-upsert") == "true"
-	filePath := s.objectFilePath(bucket, objPath)
+	fileRel, err := s.objectFileRel(bucket, objPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filePath := filepath.Join(s.root, fileRel)
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to open storage root")
+		return
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
 	if !upsert {
-		if _, err := os.Stat(filePath); err == nil {
+		if _, err := root.Stat(fileRel); err == nil {
 			writeError(w, http.StatusConflict, "object already exists")
 			return
 		}
@@ -153,20 +195,24 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		contentType = mt
 	}
 
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil { // #nosec G703 -- filePath is built from validated bucket and object paths under storageRoot.
 		writeError(w, http.StatusInternalServerError, "failed to create directory")
 		return
 	}
 
-	f, err := os.Create(filePath)
+	f, err := root.OpenFile(fileRel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create file")
 		return
 	}
 	size, copyErr := io.Copy(f, r.Body)
-	f.Close()
+	closeErr := f.Close()
 	if copyErr != nil {
 		writeError(w, http.StatusInternalServerError, "failed to write file")
+		return
+	}
+	if closeErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to close file")
 		return
 	}
 
@@ -227,9 +273,22 @@ func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
 // saved metadata. Image transform query params (?width, ?height, etc.) are
 // accepted but silently ignored — local dev serves the raw file.
 func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPath string) {
-	filePath := s.objectFilePath(bucket, objPath)
+	fileRel, err := s.objectFileRel(bucket, objPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	f, err := os.Open(filePath)
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to open storage root")
+		return
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.Open(fileRel)
 	if os.IsNotExist(err) {
 		writeError(w, http.StatusNotFound, "object not found")
 		return
@@ -238,7 +297,9 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		writeError(w, http.StatusInternalServerError, "failed to open file")
 		return
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -282,10 +343,29 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var deleted []listItem
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to open storage root")
+		return
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
 	for _, prefix := range body.Prefixes {
 		meta, _ := s.loadObjectMeta(bucket, prefix)
-		if err := os.Remove(s.objectFilePath(bucket, prefix)); err == nil {
-			_ = os.Remove(s.objectMetaPath(bucket, prefix))
+		fileRel, err := s.objectFileRel(bucket, prefix)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		metaRel, err := s.objectMetaRel(bucket, prefix)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := root.Remove(fileRel); err == nil {
+			_ = root.Remove(metaRel)
 			if meta != nil {
 				deleted = append(deleted, metaToListItem(*meta))
 			}
@@ -329,14 +409,23 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 		offset = *body.Offset
 	}
 
-	bucketDir := filepath.Join(s.root, bucket)
+	bucketDir, err := s.bucketDir(bucket)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	searchDir := bucketDir
 	if prefix != "" {
-		searchDir = filepath.Join(bucketDir, filepath.FromSlash(prefix))
+		cleanPrefix, err := cleanObjectPath(prefix, true)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		searchDir = filepath.Join(bucketDir, cleanPrefix)
 	}
 
 	var results []ObjectMeta
-	_ = filepath.Walk(searchDir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(searchDir, func(path string, info os.FileInfo, err error) error { // #nosec G703 -- searchDir is under storageRoot after bucket/prefix validation above.
 		if err != nil || info.IsDir() {
 			return nil
 		}

@@ -39,7 +39,7 @@ func Handler(storageRoot, jwtSecret string) http.Handler {
 	}
 
 	metaDir := filepath.Join(storageRoot, ".supatype")
-	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+	if err := os.MkdirAll(metaDir, 0o700); err != nil {
 		logrus.WithError(err).Warn("objstore: failed to create metadata directory")
 	}
 

@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/crewjam/saml"
@@ -141,14 +143,12 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid Base64 string")
 		}
 
-		var peekResponse saml.Response
-		err = xml.Unmarshal(responseXML, &peekResponse)
+		entityId, err = samlResponseIssuer(responseXML)
 		if err != nil {
 			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid XML SAML assertion").WithInternalError(err)
 		}
 
 		initiatedBy = "idp"
-		entityId = peekResponse.Issuer.Value
 		redirectTo = relayStateValue
 	} else {
 		// RelayState can't be identified, so SAML flow can't continue
@@ -345,7 +345,7 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		http.Redirect(w, r, redirectTo, http.StatusFound)
+		redirectFound(w, r, redirectTo)
 		return nil
 	}
 
@@ -356,7 +356,37 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		})
 	}
 
-	http.Redirect(w, r, token.AsRedirectURL(redirectTo, url.Values{}), http.StatusFound)
+	redirectFound(w, r, token.AsRedirectURL(redirectTo, url.Values{}))
 
 	return nil
+}
+
+func samlResponseIssuer(responseXML []byte) (string, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(responseXML)) // #nosec G709 -- token scan only; the SAML response is fully validated by crewjam/saml after provider lookup.
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return "", err
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok || start.Name.Local != "Issuer" {
+			continue
+		}
+
+		var issuer strings.Builder
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				return "", err
+			}
+			switch t := tok.(type) {
+			case xml.CharData:
+				issuer.Write([]byte(t))
+			case xml.EndElement:
+				if t.Name.Local == start.Name.Local {
+					return strings.TrimSpace(issuer.String()), nil
+				}
+			}
+		}
+	}
 }

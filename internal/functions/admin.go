@@ -182,14 +182,31 @@ func functionEnvFilePath(dir, name string) string {
 }
 
 func readEnvFile(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+	dir, name := filepath.Split(filepath.Clean(path))
+	if dir == "" {
+		dir = "."
+	}
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[string]string{}, nil
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.Open(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil
+		}
+		return nil, err
+	}
+	defer func() {
+		_ = f.Close()
+	}()
 
 	result := map[string]string{}
 	scanner := bufio.NewScanner(f)

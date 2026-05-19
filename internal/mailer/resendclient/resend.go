@@ -82,7 +82,9 @@ func (c *Client) Mail(
 			Name    string `json:"name"`
 			Message string `json:"message"`
 		}
-		json.NewDecoder(resp.Body).Decode(&apiErr) //nolint:errcheck
+		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err != nil {
+			return fmt.Errorf("resend: API error %d: decode response: %w", resp.StatusCode, err)
+		}
 		return fmt.Errorf("resend: API error %d: %s — %s", resp.StatusCode, apiErr.Name, apiErr.Message)
 	}
 

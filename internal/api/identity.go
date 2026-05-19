@@ -114,7 +114,7 @@ func (a *API) LinkIdentity(w http.ResponseWriter, r *http.Request) error {
 			"url": rurl,
 		})
 	}
-	http.Redirect(w, r, rurl, http.StatusFound)
+	redirectFound(w, r, rurl)
 	return nil
 }
 

@@ -24,7 +24,7 @@ func TestPrecompressedGzipServedWhenAccepted(t *testing.T) {
 	if err := gw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "a.js.gz"), gzBuf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.js.gz"), gzBuf.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,17 +60,17 @@ func TestPrecompressedBrotliPreferredOverGzip(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "pick.js"), []byte("raw"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "pick.js"), []byte("raw"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "pick.js.br"), []byte("br-bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "pick.js.br"), []byte("br-bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var gzBuf bytes.Buffer
 	gw := gzip.NewWriter(&gzBuf)
 	_, _ = gw.Write([]byte("gz-bytes"))
 	_ = gw.Close()
-	if err := os.WriteFile(filepath.Join(dir, "pick.js.gz"), gzBuf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "pick.js.gz"), gzBuf.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,7 +97,7 @@ func TestOnTheFlyGzipWhenNoPrecompressedSidecar(t *testing.T) {
 
 	dir := t.TempDir()
 	payload := strings.Repeat("console.log(1);", 100)
-	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte(payload), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +130,7 @@ func TestRangeRequestSkipsOnTheFlyGzip(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte("body{color:red}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte("body{color:red}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,14 +150,14 @@ func TestUncompressedWhenNoAcceptEncodingEvenIfGzipExists(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "b.js"), []byte("plain"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "b.js"), []byte("plain"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var gzBuf bytes.Buffer
 	gw := gzip.NewWriter(&gzBuf)
 	_, _ = gw.Write([]byte("gz"))
 	_ = gw.Close()
-	if err := os.WriteFile(filepath.Join(dir, "b.js.gz"), gzBuf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "b.js.gz"), gzBuf.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,7 +179,7 @@ func TestSPAFallbackWhenNoAssetOrPrecompressed(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,10 +201,10 @@ func TestSPADoesNotMaskExistingDirectory(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<spa/>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<spa/>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,10 +226,10 @@ func TestCacheOptsPrefixLongestWins(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "assets", "deep"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "assets", "deep"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "assets", "deep", "x.js"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "assets", "deep", "x.js"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opts := CacheOpts{
@@ -252,7 +252,7 @@ func TestCacheOptsHTMLOverride(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h/>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h/>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opts := CacheOpts{HTML: "max-age=0, must-revalidate"}
@@ -270,10 +270,10 @@ func TestCacheOptsHashedDefault(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "assets", "a.bin"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "assets", "a.bin"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	h := Handler(dir, false, CacheOpts{})
@@ -291,7 +291,7 @@ func TestSPAFallbackUsesHTMLCachePolicy(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html/>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html/>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opts := CacheOpts{HTML: "private, no-store"}

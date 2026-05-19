@@ -1,7 +1,6 @@
 package realtime
 
 import (
-	"net/http"
 	"sync"
 )
 
@@ -9,7 +8,6 @@ import (
 type Subscriber struct {
 	channel string
 	send    chan []byte // buffered; Hub writes encoded messages here
-	w       http.ResponseWriter
 }
 
 // Hub routes notifications from Postgres to subscribed WebSocket clients.

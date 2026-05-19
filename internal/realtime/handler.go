@@ -139,11 +139,6 @@ func Handler(hub *Hub, jwtSecret string, presenceTrackers map[string]*PresenceTr
 	})
 }
 
-type locker interface {
-	Lock()
-	Unlock()
-}
-
 func getOrCreatePresenceTracker(m map[string]*PresenceTracker, mu interface{ Lock(); Unlock() }, channel string, hub *Hub) *PresenceTracker {
 	mu.Lock()
 	defer mu.Unlock()

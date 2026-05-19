@@ -22,11 +22,9 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 		}
 
 		// Dial the upstream.
-		targetHost := target.Host
+		targetHost := net.JoinHostPort(target.Hostname(), portOrDefault(target, "80"))
 		if target.Scheme == "https" || target.Scheme == "wss" {
 			targetHost = net.JoinHostPort(target.Hostname(), portOrDefault(target, "443"))
-		} else {
-			targetHost = net.JoinHostPort(target.Hostname(), portOrDefault(target, "80"))
 		}
 
 		backendConn, err := net.Dial("tcp", targetHost)

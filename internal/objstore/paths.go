@@ -50,14 +50,6 @@ func (s *store) objectFileRel(bucket, objPath string) (string, error) {
 	return filepath.Join(bucket, objPath), nil
 }
 
-func (s *store) objectFilePath(bucket, objPath string) (string, error) {
-	rel, err := s.objectFileRel(bucket, objPath)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(s.root, rel), nil
-}
-
 func (s *store) objectMetaRel(bucket, objPath string) (string, error) {
 	bucket, err := cleanBucketID(bucket)
 	if err != nil {
@@ -69,12 +61,4 @@ func (s *store) objectMetaRel(bucket, objPath string) (string, error) {
 	}
 	dir, file := filepath.Split(objPath)
 	return filepath.Join(bucket, ".meta", dir, file+".json"), nil
-}
-
-func (s *store) objectMetaPath(bucket, objPath string) (string, error) {
-	rel, err := s.objectMetaRel(bucket, objPath)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(s.root, rel), nil
 }

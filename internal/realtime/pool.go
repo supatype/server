@@ -107,6 +107,8 @@ func (p *ListenPool) waitLoop(ctx context.Context, conn *pgx.Conn) {
 
 func (p *ListenPool) closeAll() {
 	for _, conn := range p.conns {
-		conn.Close(context.Background()) //nolint:errcheck
+		if err := conn.Close(context.Background()); err != nil {
+			logrus.WithError(err).Warn("realtime pool: close connection failed")
+		}
 	}
 }

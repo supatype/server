@@ -45,7 +45,7 @@ func (s *store) saveBuckets(buckets []Bucket) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.bucketsPath(), data, 0o644)
+	return os.WriteFile(s.bucketsPath(), data, 0o600)
 }
 
 // findBucket returns the index and pointer for a bucket with the given ID,
@@ -104,6 +104,12 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 	if body.ID == "" {
 		body.ID = body.Name
 	}
+	bucketID, err := cleanBucketID(body.ID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.ID = bucketID
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,7 +140,12 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save bucket")
 		return
 	}
-	if err := os.MkdirAll(filepath.Join(s.root, bucket.ID), 0o755); err != nil {
+	bucketDir, err := s.bucketDir(bucket.ID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.MkdirAll(bucketDir, 0o700); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create bucket directory")
 		return
 	}
@@ -238,8 +249,16 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Refuse if non-empty (ignore .meta directory).
-	bucketDir := filepath.Join(s.root, id)
-	entries, _ := os.ReadDir(bucketDir)
+	bucketDir, err := s.bucketDir(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	entries, err := os.ReadDir(bucketDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read bucket")
+		return
+	}
 	for _, e := range entries {
 		if e.Name() != ".meta" {
 			writeError(w, http.StatusBadRequest, "bucket must be empty before deletion")
@@ -252,7 +271,10 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save buckets")
 		return
 	}
-	_ = os.RemoveAll(bucketDir)
+	if err := os.RemoveAll(bucketDir); err != nil { // #nosec G703 -- bucketDir is under storageRoot after bucket id validation above.
+		writeError(w, http.StatusInternalServerError, "failed to delete bucket directory")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Successfully deleted"})
 }
 
@@ -275,14 +297,21 @@ func (s *store) emptyBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bucketDir := filepath.Join(s.root, id)
+	bucketDir, err := s.bucketDir(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	entries, err := os.ReadDir(bucketDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read bucket")
 		return
 	}
 	for _, e := range entries {
-		_ = os.RemoveAll(filepath.Join(bucketDir, e.Name()))
+		if err := os.RemoveAll(filepath.Join(bucketDir, e.Name())); err != nil { // #nosec G703 -- bucketDir is validated and entry names come from os.ReadDir(bucketDir).
+			writeError(w, http.StatusInternalServerError, "failed to remove bucket entry")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Successfully emptied"})
 }

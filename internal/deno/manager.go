@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -171,6 +172,13 @@ func (m *Manager) runLoop(ctx context.Context) {
 
 // run spawns a single Deno process and blocks until it exits.
 func (m *Manager) run(ctx context.Context) error {
+	if err := validateCommandPath(m.denoPath, "deno path"); err != nil {
+		return err
+	}
+	if err := validateCommandPath(m.serveEntry, "serve entry"); err != nil {
+		return err
+	}
+
 	args := []string{"run"}
 	if m.watch {
 		args = append(args, "--watch")
@@ -182,6 +190,7 @@ func (m *Manager) run(ctx context.Context) error {
 		m.serveEntry,
 	)
 
+	// #nosec G204 -- denoPath and serveEntry are validated above; remaining args are fixed literals.
 	cmd := exec.CommandContext(ctx, m.denoPath, args...)
 	cmd.Env = envForDenoProcess(m.port, m.env)
 
@@ -215,6 +224,24 @@ func (m *Manager) run(ctx context.Context) error {
 	wg.Wait()
 
 	return cmd.Wait()
+}
+
+func validateCommandPath(pathValue, label string) error {
+	pathValue = strings.TrimSpace(pathValue)
+	if pathValue == "" {
+		return fmt.Errorf("deno: %s is required", label)
+	}
+	if strings.ContainsRune(pathValue, '\x00') {
+		return fmt.Errorf("deno: %s contains a null byte", label)
+	}
+	clean := filepath.Clean(pathValue)
+	if clean != pathValue {
+		return fmt.Errorf("deno: %s must be clean", label)
+	}
+	if !filepath.IsAbs(pathValue) && !filepath.IsLocal(pathValue) {
+		return fmt.Errorf("deno: %s must be absolute or local", label)
+	}
+	return nil
 }
 
 func envForDenoProcess(port int, extra []string) []string {

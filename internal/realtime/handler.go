@@ -53,7 +53,10 @@ func Handler(hub *Hub, jwtSecret string, presenceTrackers map[string]*PresenceTr
 		defer conn.Close() //nolint:errcheck
 
 		// Require JWT auth within jwtTimeout.
-		conn.SetReadDeadline(time.Now().Add(jwtTimeout)) //nolint:errcheck
+		if err := conn.SetReadDeadline(time.Now().Add(jwtTimeout)); err != nil {
+			logrus.WithError(err).Debug("realtime: set auth read deadline failed")
+			return
+		}
 
 		var claims jwt.MapClaims
 		for {
@@ -69,12 +72,20 @@ func Handler(hub *Hub, jwtSecret string, presenceTrackers map[string]*PresenceTr
 					jwt.WithValidMethods([]string{"HS256"}),
 				)
 				if err != nil || !tok.Valid {
-					conn.WriteJSON(map[string]string{"event": "error", "message": "invalid token"}) //nolint:errcheck
+					if err := conn.WriteJSON(map[string]string{"event": "error", "message": "invalid token"}); err != nil {
+						logrus.WithError(err).Debug("realtime: write auth error failed")
+					}
 					return
 				}
 				claims = tok.Claims.(jwt.MapClaims)
-				conn.WriteJSON(map[string]string{"event": "auth_ok"}) //nolint:errcheck
-				conn.SetReadDeadline(time.Time{})                     //nolint:errcheck
+				if err := conn.WriteJSON(map[string]string{"event": "auth_ok"}); err != nil {
+					logrus.WithError(err).Debug("realtime: write auth ok failed")
+					return
+				}
+				if err := conn.SetReadDeadline(time.Time{}); err != nil {
+					logrus.WithError(err).Debug("realtime: clear read deadline failed")
+					return
+				}
 				break
 			}
 		}
@@ -91,7 +102,10 @@ func Handler(hub *Hub, jwtSecret string, presenceTrackers map[string]*PresenceTr
 		// Pump outbound messages to WebSocket.
 		go func() {
 			for msg := range sub.send {
-				conn.SetWriteDeadline(time.Now().Add(writeTimeout)) //nolint:errcheck
+				if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+					logrus.WithError(err).Debug("realtime: set write deadline failed")
+					return
+				}
 				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 					return
 				}
@@ -108,23 +122,36 @@ func Handler(hub *Hub, jwtSecret string, presenceTrackers map[string]*PresenceTr
 			switch msg.Event {
 			case "subscribe":
 				hub.Subscribe(sub, msg.Topic)
-				conn.WriteJSON(map[string]string{"event": "subscribed", "topic": msg.Topic}) //nolint:errcheck
+				if err := conn.WriteJSON(map[string]string{"event": "subscribed", "topic": msg.Topic}); err != nil {
+					logrus.WithError(err).Debug("realtime: write subscribe ack failed")
+					return
+				}
 
 			case "unsubscribe":
 				hub.Unsubscribe(sub)
 
 			case "broadcast":
-				b, _ := json.Marshal(map[string]interface{}{
+				b, err := json.Marshal(map[string]interface{}{
 					"event":   "broadcast",
 					"topic":   msg.Topic,
 					"payload": msg.Payload,
 					"role":    role,
 				})
+				if err != nil {
+					logrus.WithError(err).Debug("realtime: marshal broadcast failed")
+					continue
+				}
 				hub.Broadcast(msg.Topic, b)
 
 			case "presence:join":
 				var state PresenceState
-				json.Unmarshal(msg.Payload, &state) //nolint:errcheck
+				if err := json.Unmarshal(msg.Payload, &state); err != nil {
+					if writeErr := conn.WriteJSON(map[string]string{"event": "error", "message": "invalid presence payload"}); writeErr != nil {
+						logrus.WithError(writeErr).Debug("realtime: write presence error failed")
+						return
+					}
+					continue
+				}
 				pt := getOrCreatePresenceTracker(presenceTrackers, mu, msg.Topic, hub)
 				pt.Join(role, state)
 

@@ -10,7 +10,7 @@ func TestProjectRootFromManifestPath_underSupatype(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	sup := filepath.Join(dir, "app", ".supatype")
-	if err := os.MkdirAll(sup, 0o755); err != nil {
+	if err := os.MkdirAll(sup, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	man := filepath.Join(sup, "manifest.json")
@@ -31,7 +31,7 @@ func TestLoadDotEnvForServe_secondProjectRoot(t *testing.T) {
 	cwd := t.TempDir()
 	app := filepath.Join(cwd, "app")
 	sup := filepath.Join(app, ".supatype")
-	if err := os.MkdirAll(sup, 0o755); err != nil {
+	if err := os.MkdirAll(sup, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	man := filepath.Join(sup, "manifest.json")

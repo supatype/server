@@ -28,7 +28,7 @@ func (a *API) ExternalProviderRedirect(w http.ResponseWriter, r *http.Request) e
 	if err != nil {
 		return err
 	}
-	http.Redirect(w, r, rurl, http.StatusFound)
+	redirectFound(w, r, rurl)
 	return nil
 }
 
@@ -278,7 +278,7 @@ func (a *API) internalExternalProviderCallback(w http.ResponseWriter, r *http.Re
 
 	}
 
-	http.Redirect(w, r, rurl, http.StatusFound)
+	redirectFound(w, r, rurl)
 	return nil
 }
 
@@ -807,7 +807,7 @@ func redirectErrors(handler apiHandler, w http.ResponseWriter, r *http.Request, 
 		// Add Supatype Auth identifier to help clients distinguish Supatype Auth redirects
 		hq.Set("sb", "")
 		u.Fragment = hq.Encode()
-		http.Redirect(w, r, u.String(), http.StatusFound)
+		redirectFound(w, r, u.String())
 	}
 }
 

@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"encoding/json"
+	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
@@ -61,7 +63,7 @@ type RouteManifest struct {
 // Returns an empty manifest (not an error) if the file does not exist yet —
 // this is normal on first run before `supatype push` has been called.
 func Load(path string) (*RouteManifest, error) {
-	data, err := os.ReadFile(path)
+	data, err := readFileUnderParent(path)
 	if os.IsNotExist(err) {
 		return &RouteManifest{Schema: "public"}, nil
 	}
@@ -76,6 +78,29 @@ func Load(path string) (*RouteManifest, error) {
 		m.Schema = "public"
 	}
 	return &m, nil
+}
+
+func readFileUnderParent(path string) ([]byte, error) {
+	dir, name := filepath.Split(filepath.Clean(path))
+	if dir == "" {
+		dir = "."
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+	return io.ReadAll(f)
 }
 
 // ParseRouteManifestJSON unmarshals JSON bytes into RouteManifest (same shape as manifest.json).
@@ -168,7 +193,9 @@ func Watch(path string, fn func(*RouteManifest)) error {
 	}
 
 	if err := watcher.Add(path); err != nil {
-		watcher.Close() //nolint:errcheck
+		if closeErr := watcher.Close(); closeErr != nil {
+			logrus.WithError(closeErr).Warn("manifest watcher close failed")
+		}
 		return err
 	}
 

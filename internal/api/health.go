@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var authStartTime = time.Now()
@@ -77,7 +79,11 @@ func HandleReadiness(db interface{ Ping() error }, upstreamURLs map[string]strin
 				checks[label] = "unreachable"
 				overallOK = false
 			} else {
-				resp.Body.Close() //nolint:errcheck
+				if err := resp.Body.Close(); err != nil {
+					checks[label] = "error"
+					overallOK = false
+					continue
+				}
 				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 					checks[label] = "ok"
 				} else {
@@ -103,5 +109,7 @@ func HandleReadiness(db interface{ Ping() error }, upstreamURLs map[string]strin
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		logrus.WithError(err).Debug("health: write response failed")
+	}
 }

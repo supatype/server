@@ -56,7 +56,7 @@ func Handler(dir string, spa bool, cache CacheOpts) http.Handler {
 		setCacheHeaders(w, path, cache)
 
 		if disk, enc, ok := pickVariant(dir, path, r); ok {
-			serveVariant(w, r, disk, enc, path)
+			serveVariant(w, r, dir, disk, enc, path)
 			return
 		}
 
@@ -71,27 +71,47 @@ func Handler(dir string, spa bool, cache CacheOpts) http.Handler {
 }
 
 func anyRepresentableFile(dir, urlPath string) bool {
-	rel := strings.TrimPrefix(urlPath, "/")
-	full := filepath.Join(dir, filepath.FromSlash(rel))
-	if fi, err := os.Stat(full); err == nil {
+	rel, ok := staticRelPath(urlPath)
+	if !ok {
+		return false
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	if fi, err := root.Stat(rel); err == nil {
 		if fi.IsDir() || fi.Mode().IsRegular() {
 			return true
 		}
 	}
-	if _, err := os.Stat(full + ".br"); err == nil {
+	if _, err := root.Stat(rel + ".br"); err == nil {
 		return true
 	}
-	if _, err := os.Stat(full + ".gz"); err == nil {
+	if _, err := root.Stat(rel + ".gz"); err == nil {
 		return true
 	}
 	return false
 }
 
 func pickVariant(dir, urlPath string, r *http.Request) (diskPath, contentEncoding string, ok bool) {
-	rel := strings.TrimPrefix(urlPath, "/")
-	fullPath := filepath.Join(dir, filepath.FromSlash(rel))
+	rel, ok := staticRelPath(urlPath)
+	if !ok {
+		return "", "", false
+	}
 
-	fi, err := os.Stat(fullPath)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return "", "", false
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	fi, err := root.Stat(rel)
 	if err == nil && fi.IsDir() {
 		return "", "", false
 	}
@@ -99,35 +119,46 @@ func pickVariant(dir, urlPath string, r *http.Request) (diskPath, contentEncodin
 	brOK := acceptEncodingToken(r.Header.Get("Accept-Encoding"), "br")
 	gzipOK := acceptEncodingToken(r.Header.Get("Accept-Encoding"), "gzip")
 
-	brPath := fullPath + ".br"
-	gzPath := fullPath + ".gz"
-	brInfo, brErr := os.Stat(brPath)
-	gzInfo, gzErr := os.Stat(gzPath)
+	brRel := rel + ".br"
+	gzRel := rel + ".gz"
+	brInfo, brErr := root.Stat(brRel)
+	gzInfo, gzErr := root.Stat(gzRel)
 	brExists := brErr == nil && brInfo.Mode().IsRegular()
 	gzExists := gzErr == nil && gzInfo.Mode().IsRegular()
 
 	if err == nil && fi.Mode().IsRegular() {
 		if brOK && brExists {
-			return brPath, "br", true
+			return brRel, "br", true
 		}
 		if gzipOK && gzExists {
-			return gzPath, "gzip", true
+			return gzRel, "gzip", true
 		}
 		if gzipOK && !gzExists && r.Header.Get("Range") == "" &&
-			compressiblePath(fullPath) && fi.Size() > 0 && fi.Size() <= maxOnTheFlyGzip {
-			return fullPath, "gzip-dynamic", true
+			compressiblePath(rel) && fi.Size() > 0 && fi.Size() <= maxOnTheFlyGzip {
+			return rel, "gzip-dynamic", true
 		}
-		return fullPath, "", true
+		return rel, "", true
 	}
 
 	if brOK && brExists {
-		return brPath, "br", true
+		return brRel, "br", true
 	}
 	if gzipOK && gzExists {
-		return gzPath, "gzip", true
+		return gzRel, "gzip", true
 	}
 
 	return "", "", false
+}
+
+func staticRelPath(urlPath string) (string, bool) {
+	rel := filepath.FromSlash(strings.TrimPrefix(urlPath, "/"))
+	if rel == "" {
+		return rel, true
+	}
+	if !filepath.IsLocal(rel) {
+		return "", false
+	}
+	return rel, true
 }
 
 func acceptEncodingToken(ae, enc string) bool {
@@ -143,13 +174,24 @@ func acceptEncodingToken(ae, enc string) bool {
 	return false
 }
 
-func serveVariant(w http.ResponseWriter, r *http.Request, diskPath, contentEncoding, logicalURLPath string) {
-	f, err := os.Open(diskPath)
+func serveVariant(w http.ResponseWriter, r *http.Request, dir, diskPath, contentEncoding, logicalURLPath string) {
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	defer f.Close() //nolint:errcheck
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.Open(diskPath)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer func() {
+		_ = f.Close()
+	}()
 
 	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() {

@@ -44,6 +44,12 @@ type RouteManifest struct {
 	// FunctionsEnabled indicates the Deno functions subsystem should start.
 	FunctionsEnabled bool `json:"functions_enabled"`
 
+	// FunctionsWorkerURL is the per-project worker base URL (Pro+ / self-host).
+	FunctionsWorkerURL string `json:"functions_worker_url,omitempty"`
+
+	// FunctionWorkerURLs maps function name → worker base URL (free-tier per-function pool).
+	FunctionWorkerURLs map[string]string `json:"function_worker_urls,omitempty"`
+
 	// CorsAllowedOrigins lists allowed browser Origin values (exact match).
 	// Merged from Valkey tenant config / manifest in managed mode; may be
 	// combined with SUPATYPE_CORS_ALLOW_ORIGINS on the server.
@@ -165,6 +171,19 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	}
 	base.RealtimeEnabled = overlay.RealtimeEnabled
 	base.FunctionsEnabled = overlay.FunctionsEnabled
+	if overlay.FunctionsWorkerURL != "" {
+		base.FunctionsWorkerURL = overlay.FunctionsWorkerURL
+	}
+	if len(overlay.FunctionWorkerURLs) > 0 {
+		if base.FunctionWorkerURLs == nil {
+			base.FunctionWorkerURLs = make(map[string]string)
+		}
+		for k, v := range overlay.FunctionWorkerURLs {
+			if v != "" {
+				base.FunctionWorkerURLs[k] = v
+			}
+		}
+	}
 	if len(overlay.CorsAllowedOrigins) > 0 {
 		base.CorsAllowedOrigins = append([]string(nil), overlay.CorsAllowedOrigins...)
 	}

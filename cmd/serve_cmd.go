@@ -178,10 +178,14 @@ func serve(ctx context.Context) {
 		logrus.WithError(watchErr).Debug("serve: manifest watch not started")
 	}
 
-	// Start Deno edge functions subprocess only when the binary is available.
+	// Start Deno edge functions subprocess when no external worker URL is configured.
 	// The functions admin API still mounts when DenoFunctionsDir is set (Studio list).
+	workerURL := strings.TrimSpace(srvCfg.FunctionsWorkerURL)
+	if workerURL != "" {
+		logrus.WithField("url", workerURL).Info("serve: using external functions worker (in-process Deno disabled)")
+	}
 	var dm *deno.Manager
-	if srvCfg.DenoFunctionsDir != "" && srvCfg.DenoPath != "" {
+	if workerURL == "" && srvCfg.DenoFunctionsDir != "" && srvCfg.DenoPath != "" {
 		if _, lookErr := exec.LookPath(srvCfg.DenoPath); lookErr != nil {
 			logrus.WithError(lookErr).Warn("serve: Deno not found on PATH — edge function invocations disabled; install Deno or set SUPATYPE_DENO_PATH")
 		} else {
@@ -210,8 +214,12 @@ func serve(ctx context.Context) {
 	}
 
 	denoBaseStr := ""
-	if srvCfg.DenoFunctionsDir != "" && dm != nil {
-		denoBaseStr = "http://127.0.0.1:" + firstNonEmpty(srvCfg.DenoPort, "8001")
+	if srvCfg.DenoFunctionsDir != "" {
+		if workerURL != "" {
+			denoBaseStr = workerURL
+		} else if dm != nil {
+			denoBaseStr = "http://127.0.0.1:" + firstNonEmpty(srvCfg.DenoPort, "8001")
+		}
 	}
 
 	healthProbes := func() outerhealth.ProbeConfig {

@@ -77,6 +77,19 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.FunctionsEnabled != nil {
 		m.FunctionsEnabled = *tc.FunctionsEnabled
 	}
+	if tc.FunctionsWorkerURL != "" {
+		m.FunctionsWorkerURL = tc.FunctionsWorkerURL
+	}
+	if len(tc.FunctionWorkerURLs) > 0 {
+		if m.FunctionWorkerURLs == nil {
+			m.FunctionWorkerURLs = make(map[string]string)
+		}
+		for k, v := range tc.FunctionWorkerURLs {
+			if v != "" {
+				m.FunctionWorkerURLs[k] = v
+			}
+		}
+	}
 	if len(tc.CorsAllowedOrigins) > 0 {
 		m.CorsAllowedOrigins = append([]string(nil), tc.CorsAllowedOrigins...)
 	}

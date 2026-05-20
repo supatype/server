@@ -36,6 +36,9 @@ type TenantConfig struct {
 	RealtimeEnabled  *bool `json:"realtime_enabled,omitempty"`
 	FunctionsEnabled *bool `json:"functions_enabled,omitempty"`
 
+	FunctionsWorkerURL string            `json:"functions_worker_url,omitempty"`
+	FunctionWorkerURLs map[string]string `json:"function_worker_urls,omitempty"`
+
 	// CorsAllowedOrigins is merged into the route manifest when present.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 

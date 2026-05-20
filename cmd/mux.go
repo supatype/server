@@ -221,15 +221,11 @@ func buildOuterMux(
 		logrus.WithField("dir", cfg.DenoFunctionsDir).Info("mux: Functions admin handler mounted at /functions/v1/admin")
 	}
 
-	if cfg.DenoFunctionsDir != "" {
-		denoURL := &url.URL{
-			Scheme: "http",
-			Host:   "127.0.0.1:" + cfg.DenoPort,
-		}
+	if cfg.DenoFunctionsDir != "" || strings.TrimSpace(cfg.FunctionsWorkerURL) != "" {
 		r.Mount("/functions/v1", http.StripPrefix("/functions/v1",
-			proxy.WebSocketProxy(denoURL, proxy.New(denoURL, proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout})),
+			functionsInvocationProxy(cfg, manifestFor, denoManager != nil),
 		))
-		logrus.WithField("port", cfg.DenoPort).Info("mux: Deno functions proxy mounted at /functions/v1")
+		logrus.Info("mux: Functions invocation proxy mounted at /functions/v1")
 	}
 
 	baseM := manifestFor(nil)
@@ -338,6 +334,84 @@ func parseStaticPrefixesJSON(raw string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// functionsInvocationProxy forwards to per-tenant / per-function workers or in-process Deno.
+func functionsInvocationProxy(
+	cfg *serverconf.ServerConfig,
+	manifestFor func(*http.Request) *proxy.RouteManifest,
+	inProcessDeno bool,
+) http.Handler {
+	opts := proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		m := manifestFor(req)
+		if m != nil && !m.FunctionsEnabled && strings.TrimSpace(cfg.FunctionsWorkerURL) == "" {
+			http.Error(w, "functions disabled", http.StatusNotFound)
+			return
+		}
+		fnName := firstURLSegment(req.URL.Path)
+		u, err := resolveFunctionsUpstreamURL(cfg, m, fnName, inProcessDeno)
+		if err != nil {
+			logrus.WithError(err).Error("mux: functions upstream resolve failed")
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+		proxy.WebSocketProxy(u, proxy.New(u, opts)).ServeHTTP(w, req)
+	})
+}
+
+func firstURLSegment(path string) string {
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return ""
+	}
+	if i := strings.Index(path, "/"); i >= 0 {
+		return path[:i]
+	}
+	return path
+}
+
+func resolveFunctionsUpstreamURL(
+	cfg *serverconf.ServerConfig,
+	m *proxy.RouteManifest,
+	fnName string,
+	inProcessDeno bool,
+) (*url.URL, error) {
+	if m != nil && fnName != "" {
+		if u := strings.TrimSpace(m.FunctionWorkerURLs[fnName]); u != "" {
+			return url.Parse(u)
+		}
+	}
+	if m != nil {
+		if u := strings.TrimSpace(m.FunctionsWorkerURL); u != "" {
+			return url.Parse(u)
+		}
+	}
+	if u := strings.TrimSpace(cfg.FunctionsWorkerURL); u != "" {
+		return url.Parse(u)
+	}
+	if inProcessDeno {
+		return functionsUpstreamURL(cfg)
+	}
+	return nil, fmt.Errorf("no functions worker configured")
+}
+
+// functionsUpstreamURL resolves the in-process Deno subprocess target.
+func functionsUpstreamURL(cfg *serverconf.ServerConfig) (*url.URL, error) {
+	if u := strings.TrimSpace(cfg.FunctionsWorkerURL); u != "" {
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return nil, err
+		}
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return nil, fmt.Errorf("SUPATYPE_FUNCTIONS_WORKER_URL must include scheme and host")
+		}
+		return parsed, nil
+	}
+	return &url.URL{
+		Scheme: "http",
+		Host:   "127.0.0.1:" + cfg.DenoPort,
+	}, nil
 }
 
 // firstNonEmpty returns the first non-empty string from vals.

@@ -101,6 +101,10 @@ type ServerConfig struct {
 	// DenoPort is the port deno will listen on (proxied by supatype-server).
 	DenoPort string `envconfig:"SUPATYPE_DENO_PORT" default:"8001"`
 
+	// FunctionsWorkerURL is the base URL of an external functions worker (Deno runtime).
+	// When set, supatype-server proxies /functions/v1 here and does not start an in-process Deno subprocess.
+	FunctionsWorkerURL string `envconfig:"SUPATYPE_FUNCTIONS_WORKER_URL"`
+
 	// PostgRESTURL is the upstream PostgREST URL.
 	PostgRESTURL string `envconfig:"SUPATYPE_POSTGREST_URL" default:"http://localhost:3000"`
 

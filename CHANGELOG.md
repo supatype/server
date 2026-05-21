@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/supatype/server/compare/v1.0.4...v1.1.0) (2026-05-21)
+
+
+### Features
+
+* **functions:** proxy invocations to external functions-worker ([214a108](https://github.com/supatype/server/commit/214a108476c24d8f857e2544daea30ed04025c96))
+
+
+### Bug Fixes
+
+* **ci:** build server release from package main and verify ELF ([ffebec7](https://github.com/supatype/server/commit/ffebec76a8f77df4902e9029132d63094adaa74c))
+
 ## 1.0.0 (2026-03-13)
 
 

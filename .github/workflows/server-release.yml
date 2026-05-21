@@ -75,7 +75,7 @@ jobs:
             -trimpath \
             -ldflags="-s -w -X github.com/supatype/auth/internal/utilities.Version=${VERSION}" \
             -o "${OUTPUT}" \
-            ./cmd/
+            .
           echo "output=${OUTPUT}" >> "$GITHUB_OUTPUT"
 
       - name: Strip (Unix)
@@ -83,6 +83,39 @@ jobs:
         run: |
           OUTPUT="${{ steps.build.outputs.output }}"
           if command -v strip >/dev/null 2>&1; then strip "$OUTPUT" || true; fi
+
+      - name: Verify built binary format
+        run: |
+          OUTPUT="${{ steps.build.outputs.output }}"
+          MAGIC=$(xxd -p -l 4 "${OUTPUT}")
+          if [ "${MAGIC}" = "213c6172" ]; then
+            echo "::error::${OUTPUT} is Go c-archive (magic=${MAGIC}) — build package main (.), not ./cmd/"
+            exit 1
+          fi
+          case "${{ matrix.goos }}" in
+            linux)
+              if [ "${MAGIC}" != "7f454c46" ]; then
+                echo "::error::${OUTPUT} is not ELF (magic=${MAGIC})"
+                exit 1
+              fi
+              ;;
+            darwin)
+              case "${MAGIC}" in
+                cffaedfe|cefaedfe|cafebabe) ;;
+                *)
+                  echo "::error::${OUTPUT} is not Mach-O (magic=${MAGIC})"
+                  exit 1
+                  ;;
+              esac
+              ;;
+            windows)
+              if ! echo "${MAGIC}" | grep -q '^4d5a'; then
+                echo "::error::${OUTPUT} is not PE/MZ (magic=${MAGIC})"
+                exit 1
+              fi
+              ;;
+          esac
+          echo "Binary format OK: ${OUTPUT} (magic=${MAGIC})"
 
       - name: Sign binary (macOS)
         if: matrix.goos == 'darwin' && env.APPLE_CERT_BASE64 != ''
@@ -120,9 +153,10 @@ jobs:
           CDN_ENDPOINT: ${{ secrets.CDN_ENDPOINT }}
         run: |
           VERSION="${{ github.ref_name || inputs.version }}"
+          VERSION="${VERSION#v}"
           OUTPUT="${{ steps.build.outputs.output }}"
           aws s3 cp "${OUTPUT}" \
-            "s3://${CDN_BUCKET}/server/${VERSION}/${OUTPUT}" \
+            "s3://${CDN_BUCKET}/server/v${VERSION}/${OUTPUT}" \
             --endpoint-url "${CDN_ENDPOINT}" \
             --cache-control "public, max-age=31536000, immutable"
 
@@ -158,6 +192,26 @@ jobs:
           VERSION="${VERSION#v}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
 
+      - name: Verify release artifacts before checksums
+        run: |
+          for f in supatype-server-*; do
+            [ -f "$f" ] || continue
+            MAGIC=$(xxd -p -l 4 "$f")
+            if [ "${MAGIC}" = "213c6172" ]; then
+              echo "::error::$f is Go c-archive (magic=${MAGIC})"
+              exit 1
+            fi
+          done
+          LINUX="supatype-server-linux-amd64"
+          if [ -f "${LINUX}" ]; then
+            MAGIC=$(xxd -p -l 4 "${LINUX}")
+            if [ "${MAGIC}" != "7f454c46" ]; then
+              echo "::error::${LINUX} is not ELF (magic=${MAGIC})"
+              exit 1
+            fi
+          fi
+          echo "Release artifacts format OK"
+
       - name: Generate checksums.sha256
         run: |
           sha256sum supatype-server-* > checksums.sha256
@@ -192,12 +246,22 @@ jobs:
       - name: Update server/latest.json
         run: |
           EP="${{ secrets.CDN_ENDPOINT }}"
-          printf '{"version":"%s","date":"%s","checksums_url":"https://releases.supatype.io/server/v%s/checksums.sha256"}\n' \
+          printf '{"version":"%s","date":"%s","checksums_url":"https://releases.supatype.com/server/v%s/checksums.sha256"}\n' \
             "${VERSION}" "$(date -u +%Y-%m-%d)" "${VERSION}" > latest.json
           aws s3 cp latest.json \
             "s3://${{ secrets.CDN_BUCKET }}/server/latest.json" \
             --endpoint-url "${EP}" \
             --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Verify CDN linux/amd64 binary is ELF
+        run: |
+          URL="https://releases.supatype.com/server/v${VERSION}/supatype-server-linux-amd64"
+          MAGIC=$(curl -fsSL --range 0-3 "${URL}" | xxd -p)
+          if [ "${MAGIC}" != "7f454c46" ]; then
+            echo "::error::CDN object at ${URL} is not ELF (magic=${MAGIC})"
+            exit 1
+          fi
+          echo "CDN verify OK: ${URL} (ELF)"
 
       - name: Attach all artefacts to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')

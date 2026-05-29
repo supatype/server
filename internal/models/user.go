@@ -181,6 +181,14 @@ func (u *User) BeforeSave(tx *pop.Connection) error {
 	if u.BannedUntil != nil && u.BannedUntil.IsZero() {
 		u.BannedUntil = nil
 	}
+	// Mirror the database-level default added in migration
+	// 20260430140500_user_role_default_authenticated: a user must always have a
+	// non-empty runtime role. Production sets this from JWT.DefaultGroupName;
+	// default it here so users persisted without an explicit role still satisfy
+	// the users_role_not_empty constraint instead of failing the insert.
+	if strings.TrimSpace(u.Role) == "" {
+		u.Role = "authenticated"
+	}
 	return nil
 }
 

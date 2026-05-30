@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/supatype/auth/internal/api/apierrors"
 	"github.com/supatype/auth/internal/conf"
 	"github.com/supatype/auth/internal/sbff"
+	"github.com/supatype/auth/internal/security"
 	"github.com/supatype/auth/internal/storage"
 )
 
@@ -28,6 +31,62 @@ const (
 	CaptchaResponse        string = "10000000-aaaa-bbbb-cccc-000000000001"
 	TurnstileCaptchaSecret string = "1x0000000000000000000000000000000AA"
 )
+
+// roundTripperFunc adapts a function to an http.RoundTripper.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// stubCaptchaClient swaps the package-level captcha HTTP client for one that
+// emulates the hcaptcha and turnstile siteverify endpoints in-memory, so these
+// tests do not depend on reaching those third-party services (which is both
+// flaky and impossible in network-restricted CI). The emulation mirrors the
+// providers' documented sandbox behaviour: the dummy test secrets succeed, any
+// other secret is rejected with the provider's canonical error code. The
+// original client is restored when the test finishes.
+func stubCaptchaClient(t *testing.T) {
+	t.Helper()
+
+	orig := security.Client
+	t.Cleanup(func() { security.Client = orig })
+
+	security.Client = &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			payload, _ := io.ReadAll(r.Body)
+			secret := mustParseForm(payload).Get("secret")
+
+			var resp security.VerificationResponse
+			switch {
+			case strings.Contains(r.URL.Host, "hcaptcha"):
+				if secret == HCaptchaSecret {
+					resp.Success = true
+				} else {
+					resp.ErrorCodes = []string{"not-using-dummy-secret"}
+				}
+			case strings.Contains(r.URL.Host, "cloudflare"):
+				if secret == TurnstileCaptchaSecret {
+					resp.Success = true
+				} else {
+					resp.ErrorCodes = []string{"invalid-input-secret"}
+				}
+			default:
+				resp.ErrorCodes = []string{"unknown-provider"}
+			}
+
+			body, _ := json.Marshal(resp)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		}),
+	}
+}
+
+func mustParseForm(body []byte) url.Values {
+	v, _ := url.ParseQuery(string(body))
+	return v
+}
 
 type MiddlewareTestSuite struct {
 	suite.Suite
@@ -49,6 +108,7 @@ func TestMiddlewareFunctions(t *testing.T) {
 }
 
 func (ts *MiddlewareTestSuite) TestVerifyCaptchaValid() {
+	stubCaptchaClient(ts.T())
 	ts.Config.Security.Captcha.Enabled = true
 
 	adminClaims := &AccessTokenClaims{
@@ -136,6 +196,7 @@ func (ts *MiddlewareTestSuite) TestVerifyCaptchaValid() {
 }
 
 func (ts *MiddlewareTestSuite) TestVerifyCaptchaInvalid() {
+	stubCaptchaClient(ts.T())
 	cases := []struct {
 		desc         string
 		captchaConf  *conf.CaptchaConfiguration

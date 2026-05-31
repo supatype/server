@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/gofrs/uuid"
@@ -251,6 +252,11 @@ func (ts *IdentityTestSuite) TestLinkIdentitySendsNotificationEmailEnabled() {
 		},
 	}
 	r := httptest.NewRequest(http.MethodGet, "/identities", nil)
+	// The external host is normally injected by request middleware; seed it on
+	// the request context so email delivery has a SiteURL to render against.
+	externalHost, err := url.Parse("http://example.com")
+	require.NoError(ts.T(), err)
+	r = r.WithContext(withExternalHost(r.Context(), externalHost))
 	u, err = ts.API.linkIdentityToUser(r, ctx, ts.API.db, testValidUserData, "google")
 	require.NoError(ts.T(), err)
 

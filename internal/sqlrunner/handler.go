@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
 
@@ -256,7 +256,7 @@ func getPool(_ context.Context) (*pgxpool.Pool, error) {
 		cfg.MaxConns = 5
 		// Use background context — pool lifetime must not be tied to the
 		// first request's context.
-		pool, poolErr = pgxpool.ConnectConfig(context.Background(), cfg)
+		pool, poolErr = pgxpool.NewWithConfig(context.Background(), cfg)
 		if poolErr != nil {
 			logrus.WithError(poolErr).WithField("dsn_host", cfg.ConnConfig.Host).Error("sqlrunner: failed to connect pool")
 		} else {

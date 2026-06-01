@@ -81,18 +81,6 @@ func (c *OIDCProviderCache) GetProvider(ctx context.Context, issuer string) (*oi
 	return val.(*oidc.Provider), nil
 }
 
-// Set stores provider for issuer, marking it as freshly fetched. It lets
-// callers pre-warm the cache so a subsequent GetProvider call is served without
-// performing live OIDC discovery (used by tests to avoid network access).
-func (c *OIDCProviderCache) Set(issuer string, p *oidc.Provider) {
-	c.mu.Lock()
-	c.cache[issuer] = &oidcCacheEntry{
-		provider:  p,
-		fetchedAt: c.now(),
-	}
-	c.mu.Unlock()
-}
-
 // Invalidate removes a cached provider for the given issuer.
 func (c *OIDCProviderCache) Invalidate(issuer string) {
 	c.mu.Lock()

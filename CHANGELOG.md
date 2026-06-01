@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.6](https://github.com/supatype/server/compare/v1.0.5...v1.0.6) (2026-06-01)
+
+
+### Bug Fixes
+
+* **deps:** resolve govulncheck failures ([b510d93](https://github.com/supatype/server/commit/b510d93ad7d0e692391afbccfd9599599f0fb7b4))
+* **deps:** resolve govulncheck failures ([d09b6b4](https://github.com/supatype/server/commit/d09b6b490643f5802a013e4779a5cee1c40d0932))
+* **deps:** resolve second round of govulncheck failures ([9361833](https://github.com/supatype/server/commit/93618330ba0e728a34e63d5c92b9196471382d08))
+* **docker:** bump build image to golang:1.25.10-alpine3.23 ([870211d](https://github.com/supatype/server/commit/870211db3b8c3c6f0e30306d99326c02ace4fba3))
+* **test:** repair pre-existing make test failures ([90f5d10](https://github.com/supatype/server/commit/90f5d104633286cfaa8a6bb217537d940cec03d0))
+
 ## 1.0.0 (2026-03-13)
 
 

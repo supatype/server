@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,11 +83,56 @@ var realIDTokens map[string]realIDToken = map[string]realIDToken{
 		IDToken:     "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6IlhvdVhMWVExVGlwNW9kWWFqaUN0RlZnVmFFcyJ9.eyJ2ZXIiOiIyLjAiLCJpc3MiOiJodHRwczovL2xvZ2luLm1pY3Jvc29mdG9ubGluZS5jb20vOTE4ODA0MGQtNmM2Ny00YzViLWIxMTItMzZhMzA0YjY2ZGFkL3YyLjAiLCJzdWIiOiJBQUFBQUFBQUFBQUFBQUFBQUFBQUFCWkRuRDkxOTBfc2wxcTZwenZlRHZNIiwiYXVkIjoiYTBkOGY5NzItNTRhYy00YWJmLTkxNGMtNTIyMDE0YzQwMjJhIiwiZXhwIjoxNjk3MzY0NDczLCJpYXQiOjE2OTcyNzc3NzMsIm5iZiI6MTY5NzI3Nzc3MywiZW1haWwiOiJzZGltaXRyb3Zza2lAZ21haWwuY29tIiwidGlkIjoiOTE4ODA0MGQtNmM2Ny00YzViLWIxMTItMzZhMzA0YjY2ZGFkIiwieG1zX2Vkb3YiOiIxIiwiYWlvIjoiRHBQV3lZSnRJcUl5OHpyVjROIUlIdGtFa09BMDhPS29lZ1RkYmZQUEVPYmxtYk9ESFQ0cGJVcVI1cExraENyWWZ6bUgzb3A1RzN5RGp2M0tNZ0Rad29lQ1FjKmVueldyb21iQ3BuKkR6OEpQOGMxU3pEVG1TbGp4U3U3UnVLTXNZSjRvS1lDazFBSVcqUUNUTmlMWkpUKlN3WWZQcjZBTW9IejFEZ3pBZEFkbk9uWiFHNUNFeEtQalBxcHRuVmpUZlEkJCJ9.CskICxOaeqd4SkiPdWEHJKZVdhAdgzM5SN7K7FYi0dguQH1-v6XTetDIoEsBn0GZoozXjbG2GgkFcVhhBvNA0ZrDIr4KcjfnJ5-7rwX3AtxdQ3umrHRlGu3jlmbDOtWzPWNMLLRXfR1Mm3pHEUvlzqmk3Ffh4TuAmXID-fb-Xmfuuv1k0UsZ5mlr_3ybTPVZk-Lj0bqkR1L5Zzt4HjgfpchRryJ3Y24b4dDsSjg7mgE_5JivgjhtVef5OnqYhKUF1DTy2pFysFO_eRliK6qjouYeZnQOJnWHP1MgpySAOQ3sVcwvE4P9g7V3QouxByZPv-g99N1K4GwZrtdm46gtTQ",
 		Verifier:    azureIDTokenVerifier,
 	},
-	IssuerVercelMarketplace: {
-		AccessToken: "access-token",
-		Time:        time.Unix(1744883141, 0), // 1 sec after iat
-		IDToken:     "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Im1yay00MzAyZWMxYjY3MGY0OGE5OGFkNjFkYWRlNGEyM2JlNyJ9.eyJpc3MiOiJodHRwczovL21hcmtldHBsYWNlLnZlcmNlbC5jb20iLCJzdWIiOiJhY2NvdW50OmRjYzIyNjJkZTY1ZjRmZGU2NDcyNWRkOWNiYzRjY2RlZjUzZWExNTc0NTU3ODZmNjU0YTdjNjNiZTQ3ZTI2YTE6dXNlcjo3Zjc5YjcwMDdkZWZjNmRlODZkMGQwZTEwMjM0NTlmYTFjMDljYjlhMGM2YzExY2I1YmQyMzRlMWJjZDVjOTkyIiwiYXVkIjoib2FjXzVuYzJGOGk3c3VYc0tmSjVURzc2NVRkeSIsImluc3RhbGxhdGlvbl9pZCI6ImljZmdfQ3hsUjhuRW9HOVc3bFFvSnB4QklFZGR3IiwiYWNjb3VudF9pZCI6ImRjYzIyNjJkZTY1ZjRmZGU2NDcyNWRkOWNiYzRjY2RlZjUzZWExNTc0NTU3ODZmNjU0YTdjNjNiZTQ3ZTI2YTEiLCJ1c2VyX2lkIjoiN2Y3OWI3MDA3ZGVmYzZkZTg2ZDBkMGUxMDIzNDU5ZmExYzA5Y2I5YTBjNmMxMWNiNWJkMjM0ZTFiY2Q1Yzk5MiIsInVzZXJfcm9sZSI6IkFETUlOIiwidXNlcl9lbWFpbCI6ImthbWlsLm9nb3Jla0BnbWFpbC5jb20iLCJnbG9iYWxfdXNlcl9pZCI6IjhyNlptNzFid2V6Z3daMlo1UWVCQm1oOCIsInVzZXJfbmFtZSI6IkthbWlsIE9nw7NyZWsiLCJ1c2VyX2F2YXRhcl91cmwiOiJodHRwczovL3ZlcmNlbC5jb20vYXBpL3d3dy9hdmF0YXIvODRhNzc0OTRjZWUwNjdmZWQyMTZjYzM3ZjY1ZTI1M2Y3OGZhMjgzMSIsIm5iZiI6MTc0NDg4MzE0MCwiaWF0IjoxNzQ0ODgzMTQwLCJleHAiOjE3NDQ4ODY3NDB9.bQ1CrgM7uGDmZs-ioEov9iosE-AFCHvfypasi-wEDEVD2uEcD4xU2C7vIXSLl_DAyIQFxWc7saQOcztiIltgHV3H_mSIBL1J2WKb7IX2dYe3bmxM32YC__vf_IKDzBFU7UufNEQW4fYq0abiej7heA4K_mJjvW_qZD-Skjxv51QdbXmcIUISrsS2jJID2B5cU0euBUV5Sc3sr1gLSrVIGChKROzboKG6Y0rtYAkjywdOGemHVz2aHBzo4uFxF1FcFx0EWGFI1AfNnSV0tP-RSOobfDai6RlCxmExUH2lEJaVrYfk9Hv5qIvbqtgrMv2LtqAydRhXHYmbAJHILmlK8Q",
-	},
+	// The Vercel Marketplace fixture is minted at runtime by
+	// newSyntheticVercelIDToken so the test never reaches the provider's live
+	// JWKS endpoint (which is unreachable in network-restricted CI and rotates
+	// over time).
+}
+
+// newSyntheticVercelIDToken mints a self-signed Vercel Marketplace ID token and
+// returns it together with a verifier backed by the matching public key and the
+// token's issued-at time. This lets TestParseIDToken exercise the Vercel code
+// path entirely offline instead of validating a captured token against Vercel's
+// live signing keys.
+func newSyntheticVercelIDToken(t *testing.T) (idToken string, verifier func(context.Context, *oidc.Config) *oidc.IDTokenVerifier, issuedAt time.Time) {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	issuedAt = time.Unix(1744883140, 0)
+	claims := jwt.MapClaims{
+		"iss":             IssuerVercelMarketplace,
+		"sub":             "account:dcc2262de65f4fde64725dd9cbc4ccdef53ea157455786f654a7c63be47e26a1:user:7f79b7007defc6de86d0d0e1023459fa1c09cb9a0c6c11cb5bd234e1bcd5c992",
+		"aud":             "oac_5nc2F8i7suXsKfJ5TG765Tdy",
+		"installation_id": "icfg_CxlR8nEoG9W7lQoJpxBIEddw",
+		"account_id":      "dcc2262de65f4fde64725dd9cbc4ccdef53ea157455786f654a7c63be47e26a1",
+		"user_id":         "7f79b7007defc6de86d0d0e1023459fa1c09cb9a0c6c11cb5bd234e1bcd5c992",
+		"user_role":       "ADMIN",
+		"user_email":      "kamil.ogorek@gmail.com",
+		"global_user_id":  "8r6Zm71bwezgwZ2Z5QeBBmh8",
+		"user_name":       "Kamil Ogórek",
+		"user_avatar_url": "https://vercel.com/api/www/avatar/84a77494cee067fed216cc37f65e253f78fa2831",
+		"nbf":             issuedAt.Unix(),
+		"iat":             issuedAt.Unix(),
+		"exp":             issuedAt.Add(time.Hour).Unix(),
+	}
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = "synthetic-vercel-key"
+
+	idToken, err = tok.SignedString(key)
+	require.NoError(t, err)
+
+	verifier = func(_ context.Context, config *oidc.Config) *oidc.IDTokenVerifier {
+		return oidc.NewVerifier(
+			IssuerVercelMarketplace,
+			&oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{key.Public()}},
+			config,
+		)
+	}
+
+	return idToken, verifier, issuedAt
 }
 
 func TestParseIDToken(t *testing.T) {
@@ -94,12 +141,32 @@ func TestParseIDToken(t *testing.T) {
 		OverrideClock = nil
 	}()
 
-	// note that this test can fail if/when the issuers rotate their
-	// signing keys (which happens rarely if ever)
-	// then you should obtain new ID tokens and update this test
-	for issuer, token := range realIDTokens {
-		oidcProvider, err := oidc.NewProvider(context.Background(), issuer)
-		require.NoError(t, err)
+	// The Google and Azure fixtures are captured tokens verified against their
+	// pinned public keys; the Vercel fixture is minted locally. None of them
+	// require network access. Note the captured tokens can still fail if Google
+	// or Azure ever rotate the keys these were signed with (rare).
+	tokens := map[string]realIDToken{
+		IssuerGoogle:         realIDTokens[IssuerGoogle],
+		IssuerAzureMicrosoft: realIDTokens[IssuerAzureMicrosoft],
+	}
+	vercelIDToken, vercelVerifier, vercelIssuedAt := newSyntheticVercelIDToken(t)
+	tokens[IssuerVercelMarketplace] = realIDToken{
+		AccessToken: "access-token",
+		IDToken:     vercelIDToken,
+		Time:        vercelIssuedAt.Add(time.Second),
+		Verifier:    vercelVerifier,
+	}
+
+	for issuer, token := range tokens {
+		// Build the provider from static endpoints rather than performing live
+		// OIDC discovery, so the test runs without network access. The verifier
+		// is always overridden below, so the JWKS endpoint is never contacted.
+		oidcProvider := (&oidc.ProviderConfig{
+			IssuerURL: issuer,
+			AuthURL:   issuer + "/authorize",
+			TokenURL:  issuer + "/token",
+			JWKSURL:   issuer + "/jwks",
+		}).NewProvider(context.Background())
 
 		OverrideVerifiers[oidcProvider.Endpoint().AuthURL] = token.Verifier
 

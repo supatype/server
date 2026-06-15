@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -170,23 +169,10 @@ func New(target *url.URL, opts ProxyOpts) http.Handler {
 	}
 
 	if opts.RequestTimeout > 0 {
-		transport := &http.Transport{}
-		rp.Transport = &timeoutTransport{inner: transport, timeout: opts.RequestTimeout}
+		rp.Transport = &http.Transport{
+			ResponseHeaderTimeout: opts.RequestTimeout,
+		}
 	}
 
 	return rp
-}
-
-type timeoutTransport struct {
-	inner   http.RoundTripper
-	timeout time.Duration
-}
-
-func (t *timeoutTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Attach a deadline to the request context.
-	ctx := req.Context()
-	var cancel func()
-	ctx, cancel = context.WithTimeout(ctx, t.timeout)
-	defer cancel()
-	return t.inner.RoundTrip(req.WithContext(ctx))
 }

@@ -148,7 +148,7 @@ func buildOuterMux(
 	})))
 	logrus.Info("mux: PostgREST proxy mounted at /rest/v1")
 
-	// ── pg_graphql ────────────────────────────────────────────────────────────
+	// ── pg_graphql (PostgREST RPC: graphql_public.graphql) ───────────────────
 	r.Mount("/graphql/v1", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := manifestFor(req)
 		graphQLUpstream := firstNonEmpty(m.GraphQLURL, cfg.GraphQLURL,
@@ -161,17 +161,13 @@ func buildOuterMux(
 		req2 := req.Clone(req.Context())
 		if req2.URL == nil {
 			req2.URL = &url.URL{}
+		} else {
+			u2 := *req2.URL
+			req2.URL = &u2
 		}
-		p := req2.URL.Path
-		switch {
-		case p == "" || p == "/":
-			req2.URL.Path = "/graphql/v1"
-		case strings.HasPrefix(p, "/graphql/v1"):
-			req2.URL.Path = p
-		default:
-			req2.URL.Path = "/graphql/v1" + p
-		}
+		req2.URL.Path = "/rpc/graphql"
 		req2.URL.RawPath = ""
+		req2.Header.Set("Content-Profile", "graphql_public")
 		endUserAuth := strings.TrimSpace(req.Header.Get("Authorization"))
 		px := proxy.New(u, proxy.ProxyOpts{
 			RequestTimeout: defaultUpstreamHTTPTimeout,

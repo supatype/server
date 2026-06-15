@@ -68,6 +68,10 @@ jobs:
               # No prior non-RC tag found; count all commits on the branch
               RC_NUMBER=$(git rev-list --count HEAD)
             fi
+            # Skip RC tags that already exist (release job retries / release-please re-runs).
+            while GH_TOKEN='${{ github.token }}' gh release view "rc${MAIN_RELEASE_VERSION}-rc.${RC_NUMBER}" >/dev/null 2>&1; do
+              RC_NUMBER=$((RC_NUMBER + 1))
+            done
             RELEASE_VERSION=$MAIN_RELEASE_VERSION-rc.$RC_NUMBER
 
             # release-please only ignores releases that have a form like [A-Z0-9]<version>, so prefixing with rc<version>
@@ -149,11 +153,13 @@ jobs:
 
             RELEASE_NOTES=$(printf "This is a release candidate. See release-please PR #%s for context.\n\n%s\n" "$PR_NUMBER" "$CHECKSUM_CONTENT")
 
-            GH_TOKEN='${{ github.token }}' gh release \
-              create $RELEASE_NAME \
-              --title "v$RELEASE_VERSION" \
-              --prerelease \
-              -n "$RELEASE_NOTES"
+            if ! GH_TOKEN='${{ github.token }}' gh release view "$RELEASE_NAME" >/dev/null 2>&1; then
+              GH_TOKEN='${{ github.token }}' gh release \
+                create "$RELEASE_NAME" \
+                --title "v$RELEASE_VERSION" \
+                --prerelease \
+                -n "$RELEASE_NOTES"
+            fi
 
             GH_TOKEN='${{ github.token }}' gh pr comment "$PR_NUMBER" \
               -b "Release candidate [v$RELEASE_VERSION](https://github.com/supatype/auth/releases/tag/$RELEASE_NAME) published."
@@ -184,7 +190,7 @@ jobs:
           FULL_NOTES=$(printf "%s\n\n%s\n" "$EXISTING_NOTES" "$CHECKSUM_CONTENT")
           GH_TOKEN='${{ github.token }}' gh release edit $RELEASE_NAME -n "$FULL_NOTES"
 
-          GH_TOKEN='${{ github.token }}' gh release upload $RELEASE_NAME ./supatype-server-v$RELEASE_VERSION-linux-amd64.tar.gz ./supatype-server-v$RELEASE_VERSION-linux-arm64.tar.gz ./supatype-server-v$RELEASE_VERSION-linux-arm64.tar.xz ./supatype-server-v$RELEASE_VERSION-darwin-arm64.tar.gz
+          GH_TOKEN='${{ github.token }}' gh release upload "$RELEASE_NAME" ./supatype-server-v$RELEASE_VERSION-linux-amd64.tar.gz ./supatype-server-v$RELEASE_VERSION-linux-arm64.tar.gz ./supatype-server-v$RELEASE_VERSION-linux-arm64.tar.xz ./supatype-server-v$RELEASE_VERSION-darwin-arm64.tar.gz --clobber
 
 
   publish_ghcr:

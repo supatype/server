@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.0](https://github.com/supatype/server/compare/v1.0.6...v1.1.0) (2026-06-15)
+
+
+### Features
+
+* **server:** add studio auth proxy routing and studioauth package ([3d4890f](https://github.com/supatype/server/commit/3d4890f2250186688d0e890aef9f5ff6a07f265f))
+
+
+### Bug Fixes
+
+* **deps:** bump Go to 1.25.11 for stdlib vuln fixes ([1ba324b](https://github.com/supatype/server/commit/1ba324b96d5de4092d902f013e899d0adb79f265))
+* **mux:** proxy GraphQL to PostgREST graphql_public RPC ([60dfa4f](https://github.com/supatype/server/commit/60dfa4ff71f25bc17aa28a3a3e2f056b66392f6b))
+* **release:** skip existing RC tags and make upload idempotent ([288f292](https://github.com/supatype/server/commit/288f29279f98e91fd22c201ce7ae4744526a11bd))
+* **studioauth:** read admin config via OpenRoot to satisfy gosec G304 ([fc24acc](https://github.com/supatype/server/commit/fc24accf1e236df4bb9dd565b126dc29ccee98b6))
+* **studioauth:** use restrictive file modes in roles tests for gosec ([56c3afb](https://github.com/supatype/server/commit/56c3afb4830e3448807232e178b1a2d64271d0d1))
+
 ## [1.0.6](https://github.com/supatype/server/compare/v1.0.5...v1.0.6) (2026-06-01)
 
 

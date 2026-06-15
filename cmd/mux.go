@@ -99,7 +99,7 @@ func buildOuterMux(
 	// ── Studio config ─────────────────────────────────────────────────────────
 	studioCfg := studioauth.ConfigFromServer(cfg)
 	studioConfigInner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		data, err := os.ReadFile(cfg.AdminConfigPath)
+		data, err := studioauth.ReadAdminConfigFile(cfg.AdminConfigPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				http.Error(w, `{"error":"schema not pushed yet"}`, http.StatusNotFound)

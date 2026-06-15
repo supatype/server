@@ -25,6 +25,7 @@ import (
 	"github.com/supatype/auth/internal/serverconf"
 	"github.com/supatype/auth/internal/sqlrunner"
 	"github.com/supatype/auth/internal/static"
+	"github.com/supatype/auth/internal/studioauth"
 	"github.com/supatype/auth/internal/valkey"
 )
 
@@ -96,7 +97,8 @@ func buildOuterMux(
 	logrus.Info("mux: admin API mounted at /admin/v1")
 
 	// ── Studio config ─────────────────────────────────────────────────────────
-	r.Post("/studio-config", func(w http.ResponseWriter, req *http.Request) {
+	studioCfg := studioauth.ConfigFromServer(cfg)
+	studioConfigInner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		data, err := os.ReadFile(cfg.AdminConfigPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -109,6 +111,7 @@ func buildOuterMux(
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(data)
 	})
+	r.Post("/studio-config", studioauth.RequireAdmin(studioCfg, studioConfigInner).ServeHTTP)
 
 	r.Post("/sql", sqlrunner.Handler().ServeHTTP)
 
@@ -253,6 +256,12 @@ func buildOuterMux(
 			}
 		}
 	}
+
+	// Studio admin API must register before app catch-all mounts at "/".
+	serviceHandler := r
+	r.Get("/studio/auth/verify", studioauth.VerifyHandler(studioCfg))
+	r.Mount("/studio/proxy", http.StripPrefix("/studio/proxy", studioauth.ProxyHandler(serviceHandler, studioCfg)))
+	logrus.Info("mux: Studio auth mounted at /studio/auth/verify and /studio/proxy")
 
 	switch appMode {
 	case "static":

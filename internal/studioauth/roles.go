@@ -2,7 +2,9 @@ package studioauth
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -43,13 +45,34 @@ type adminConfigRoles struct {
 	AdminRoles []string `json:"adminRoles"`
 }
 
+// ReadAdminConfigFile reads admin-config.json from a relative path under the working directory.
+func ReadAdminConfigFile(path string) ([]byte, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, os.ErrNotExist
+	}
+	clean := filepath.Clean(path)
+	if filepath.IsAbs(clean) {
+		return nil, fmt.Errorf("admin config path must be relative")
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("admin config path escapes working directory")
+	}
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.ReadFile(clean)
+}
+
 // AdminRolesFromConfigFile merges adminRoles from admin-config.json when present.
 func AdminRolesFromConfigFile(path string) []string {
 	roles := AdminRolesFromEnv()
 	if strings.TrimSpace(path) == "" {
 		return roles
 	}
-	data, err := os.ReadFile(path)
+	data, err := ReadAdminConfigFile(path)
 	if err != nil {
 		return roles
 	}

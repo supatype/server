@@ -23,11 +23,11 @@ func TestReadAdminConfigFile_readsRelativePath(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(origWd) })
 
 	cfgDir := filepath.Join(".supatype")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(cfgDir, "admin-config.json")
-	if err := os.WriteFile(cfgPath, []byte(`{"adminRoles":["editor"]}`), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`{"adminRoles":["editor"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,11 +50,11 @@ func TestAdminRolesFromConfigFile_mergesRoles(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(origWd) })
 
 	cfgDir := filepath.Join(".supatype")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(cfgDir, "admin-config.json")
-	if err := os.WriteFile(cfgPath, []byte(`{"adminRoles":["editor","ops"]}`), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`{"adminRoles":["editor","ops"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

@@ -23,30 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - id: docker_latest
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION='${{ inputs.version }}'
-          VERSION_LC=$(echo "$VERSION" | tr '[:upper:]' '[:lower:]')
-          IS_PRE=false
-          case "$VERSION_LC" in
-            *alpha*|*beta*|*-rc*|*.rc.*|*preview*) IS_PRE=true ;;
-          esac
-          HAS_STABLE=false
-          while IFS= read -r t; do
-            [[ -z "${t:-}" ]] && continue
-            rest="${t#v}"
-            [[ "$rest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
-            HAS_STABLE=true
-            break
-          done < <(git tag -l 'v[0-9]*' 2>/dev/null || true)
-          if [[ "$IS_PRE" != true ]] || [[ "$HAS_STABLE" != true ]]; then
-            echo "docker_push_latest=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docker_push_latest=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - run: sed -i 's/RELEASE_VERSION=unspecified/RELEASE_VERSION=${{ inputs.version }}/' Dockerfile
 
       - uses: docker/setup-qemu-action@v3
@@ -67,7 +43,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=v${{ inputs.version }}
-            type=raw,value=latest,enable=${{ steps.docker_latest.outputs.docker_push_latest == 'true' }}
+            type=raw,value=latest
 
       - uses: docker/build-push-action@v6
         with:

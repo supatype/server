@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/hooks/hookserrors"
-	"github.com/supatype/auth/internal/hooks/v0hooks"
-	mail "github.com/supatype/auth/internal/mailer"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/hooks/hookserrors"
+	"github.com/supatype/server/internal/hooks/v0hooks"
+	mail "github.com/supatype/server/internal/mailer"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
 
 	"gopkg.in/h2non/gock.v1"
 )

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/server/internal/api/provider"
 )
 
 const (

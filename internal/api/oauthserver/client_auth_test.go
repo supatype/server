@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/gofrs/uuid"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/models"
 )
 
 func TestInferClientTypeFromAuthMethod(t *testing.T) {

@@ -12,12 +12,12 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/provider"
-	"github.com/supatype/auth/internal/conf"
-	mail "github.com/supatype/auth/internal/mailer"
-	"github.com/supatype/auth/internal/mailer/mockclient"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/provider"
+	"github.com/supatype/server/internal/conf"
+	mail "github.com/supatype/server/internal/mailer"
+	"github.com/supatype/server/internal/mailer/mockclient"
+	"github.com/supatype/server/internal/models"
 )
 
 type IdentityTestSuite struct {

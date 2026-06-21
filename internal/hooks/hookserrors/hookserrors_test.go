@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/apierrors"
 )
 
 func TestFromBytes(t *testing.T) {

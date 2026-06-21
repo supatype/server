@@ -5,10 +5,10 @@ import (
 
 	"github.com/didip/tollbooth/v5"
 	"github.com/didip/tollbooth/v5/limiter"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/mailer"
-	"github.com/supatype/auth/internal/ratelimit"
-	"github.com/supatype/auth/internal/tokens"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/mailer"
+	"github.com/supatype/server/internal/ratelimit"
+	"github.com/supatype/server/internal/tokens"
 )
 
 type Option interface {

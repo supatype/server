@@ -2,7 +2,7 @@ package models
 
 import (
 	"github.com/gobuffalo/pop/v6"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/storage"
 )
 
 type Pagination struct {

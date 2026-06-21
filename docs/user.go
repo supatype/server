@@ -2,8 +2,8 @@
 package docs
 
 import (
-	"github.com/supatype/auth/internal/api"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/models"
 )
 
 // swagger:route GET /user user user-get

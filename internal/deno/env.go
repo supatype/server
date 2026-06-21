@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/supatype/auth/internal/serverconf"
+	"github.com/supatype/server/internal/serverconf"
 )
 
 const edgeEnvPrefix = "SUPATYPE_EDGE_"

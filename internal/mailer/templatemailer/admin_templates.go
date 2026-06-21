@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 // CanonicalPathTemplateType maps URL path segments (Supabase-compatible, e.g. magiclink) to internal template keys.

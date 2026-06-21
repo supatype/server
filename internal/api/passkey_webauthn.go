@@ -3,7 +3,7 @@ package api
 import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/models"
 )
 
 // getPasskeyWebAuthn creates a *webauthn.WebAuthn instance from the shared server-side WebAuthn configuration.

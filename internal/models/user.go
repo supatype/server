@@ -13,9 +13,9 @@ import (
 	"github.com/gobuffalo/pop/v6"
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/crypto"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/crypto"
+	"github.com/supatype/server/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
 

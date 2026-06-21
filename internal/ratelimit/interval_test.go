@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 func Example_newIntervalLimiter() {

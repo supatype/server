@@ -89,10 +89,10 @@ If you are on macOS Catalina you may [run into issues installing Soda with Brew]
 
 `go build -o /bin/soda github.com/gobuffalo/pop/soda` to resolve.
 
-- Clone the Auth [repository](https://github.com/supatype/auth)
+- Clone the Auth [repository](https://github.com/supatype/server)
 
 ```zsh
-git clone https://github.com/supatype/auth
+git clone https://github.com/supatype/server
 ```
 
 ### Install Auth

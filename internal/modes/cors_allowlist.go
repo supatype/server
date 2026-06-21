@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/supatype/auth/internal/proxy"
+	"github.com/supatype/server/internal/proxy"
 )
 
 const (

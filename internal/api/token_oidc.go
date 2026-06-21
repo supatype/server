@@ -9,13 +9,13 @@ import (
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/provider"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/metering"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/observability"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/provider"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/metering"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/observability"
+	"github.com/supatype/server/internal/storage"
 )
 
 // IdTokenGrantParams are the parameters the IdTokenGrant method accepts

@@ -14,9 +14,9 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // validateRedirectURIList validates a list of redirect URIs

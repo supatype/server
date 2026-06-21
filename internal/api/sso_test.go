@@ -14,8 +14,8 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/models"
 )
 
 const dateInPast = "2001-02-03T04:05:06.789"

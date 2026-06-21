@@ -3,8 +3,8 @@ package outerhealth
 import (
 	"strings"
 
-	"github.com/supatype/auth/internal/proxy"
-	"github.com/supatype/auth/internal/serverconf"
+	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/serverconf"
 )
 
 // ProbeConfigFrom builds probe targets from a route manifest plus server config

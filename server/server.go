@@ -89,7 +89,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if vkShared != nil {
 			vkShared.Close()
 		}
-		db.Close()
+		_ = db.Close()
 		return nil, nil, err
 	}
 
@@ -364,7 +364,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if vkShared != nil {
 			vkShared.Close()
 		}
-		db.Close()
+		_ = db.Close()
 	}
 
 	return outerMux, drain, nil

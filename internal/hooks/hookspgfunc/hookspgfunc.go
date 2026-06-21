@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/hooks/hookserrors"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/hooks/hookserrors"
+	"github.com/supatype/server/internal/storage"
 )
 
 const (

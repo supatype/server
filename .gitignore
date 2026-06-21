@@ -10,6 +10,8 @@ auth-darwin-arm64
 auth.exe
 supatype-server
 supatype-server.exe
+supatype-server.exe~
+supatype-server-linux
 coverage.out
 
 .DS_Store

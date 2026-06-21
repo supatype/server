@@ -13,9 +13,9 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/reloader"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/reloader"
 )
 
 type M = map[string]any

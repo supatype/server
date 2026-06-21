@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/sbff"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/sbff"
 )
 
 func getIPAddressWithXFF(r *http.Request) string {

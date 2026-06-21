@@ -18,8 +18,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/e2e"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/e2e"
 	"golang.org/x/sync/errgroup"
 )
 

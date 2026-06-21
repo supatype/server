@@ -11,8 +11,8 @@ import (
 
 	"github.com/gobuffalo/pop/v6"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/storage"
 )
 
 // ErrAdvisoryLockAlreadyAcquired is returned when another process already holds the advisory lock

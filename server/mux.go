@@ -1,4 +1,4 @@
-package cmd
+package server
 
 import (
 	"encoding/json"
@@ -13,20 +13,21 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/auth/internal/admin"
-	"github.com/supatype/auth/internal/apiconfig"
-	"github.com/supatype/auth/internal/deno"
-	"github.com/supatype/auth/internal/functions"
-	"github.com/supatype/auth/internal/modes"
-	"github.com/supatype/auth/internal/objstore"
-	"github.com/supatype/auth/internal/outerhealth"
-	"github.com/supatype/auth/internal/proxy"
-	"github.com/supatype/auth/internal/realtime"
-	"github.com/supatype/auth/internal/serverconf"
-	"github.com/supatype/auth/internal/sqlrunner"
-	"github.com/supatype/auth/internal/static"
-	"github.com/supatype/auth/internal/studioauth"
-	"github.com/supatype/auth/internal/valkey"
+	"github.com/supatype/server/internal/admin"
+	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/deno"
+	"github.com/supatype/server/internal/functions"
+	"github.com/supatype/server/internal/modes"
+	"github.com/supatype/server/internal/objstore"
+	"github.com/supatype/server/internal/outerhealth"
+	"github.com/supatype/server/internal/platformproxy"
+	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/realtime"
+	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/sqlrunner"
+	"github.com/supatype/server/internal/static"
+	"github.com/supatype/server/internal/studioauth"
+	"github.com/supatype/server/internal/valkey"
 )
 
 // defaultUpstreamHTTPTimeout caps reverse-proxy round-trips so a wedged upstream
@@ -226,6 +227,9 @@ func buildOuterMux(
 		))
 		logrus.Info("mux: Functions invocation proxy mounted at /functions/v1")
 	}
+
+	r.Mount("/platform/v1", http.StripPrefix("/platform/v1", platformproxy.Handler()))
+	logrus.Info("mux: Platform control plane proxy mounted at /platform/v1")
 
 	baseM := manifestFor(nil)
 	if baseM.RealtimeEnabled {

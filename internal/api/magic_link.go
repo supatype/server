@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/crypto"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/crypto"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
 )
 
 // MagicLinkParams holds the parameters for a magic link request

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/models"
 )
 
 // MockMailer implements the mailer.Mailer interface for testing

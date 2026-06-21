@@ -9,11 +9,11 @@ import (
 
 	"github.com/gofrs/uuid"
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/shared"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/shared"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
 )
 
 // requireAuthentication checks incoming requests for tokens presented using the Authorization header

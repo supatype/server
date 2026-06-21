@@ -4,9 +4,9 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
 )
 
 var autoconfirm, isAdmin bool

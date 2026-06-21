@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/supatype/auth/internal/hooks/v0hooks"
-	mail "github.com/supatype/auth/internal/mailer"
-	"github.com/supatype/auth/internal/mailer/validateclient"
-	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/server/internal/hooks/v0hooks"
+	mail "github.com/supatype/server/internal/mailer"
+	"github.com/supatype/server/internal/mailer/validateclient"
+	"github.com/supatype/server/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -19,12 +19,12 @@ import (
 	"github.com/fatih/structs"
 	"github.com/pkg/errors"
 	"github.com/sethvargo/go-password/password"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/provider"
-	"github.com/supatype/auth/internal/crypto"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/provider"
+	"github.com/supatype/server/internal/crypto"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/utilities"
 )
 
 var (

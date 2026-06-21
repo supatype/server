@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/supatype/auth/internal/serverconf"
+	"github.com/supatype/server/internal/serverconf"
 )
 
 // Config holds studio auth handler dependencies.

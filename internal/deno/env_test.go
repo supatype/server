@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/supatype/auth/internal/serverconf"
+	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestEdgeSubprocessEnv_coreAndPassThrough(t *testing.T) {

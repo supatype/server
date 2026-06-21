@@ -11,12 +11,12 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
 	"github.com/sethvargo/go-password/password"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/provider"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/observability"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/provider"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/observability"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/utilities"
 	"golang.org/x/crypto/bcrypt"
 )
 

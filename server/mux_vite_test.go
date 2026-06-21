@@ -1,4 +1,4 @@
-package cmd
+package server
 
 import (
 	"io"
@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/supatype/auth/internal/outerhealth"
-	"github.com/supatype/auth/internal/proxy"
-	"github.com/supatype/auth/internal/serverconf"
+	"github.com/supatype/server/internal/outerhealth"
+	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestBuildOuterMux_ViteDevProxyStripPrefix(t *testing.T) {

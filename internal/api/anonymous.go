@@ -3,10 +3,10 @@ package api
 import (
 	"net/http"
 
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/metering"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/metering"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
 )
 
 func (a *API) SignupAnonymously(w http.ResponseWriter, r *http.Request) error {

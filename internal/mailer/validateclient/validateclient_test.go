@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 func TestEmalValidatorService(t *testing.T) {

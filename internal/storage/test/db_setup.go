@@ -1,8 +1,8 @@
 package test
 
 import (
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/storage"
 )
 
 func SetupDBConnection(globalConfig *conf.GlobalConfiguration) (*storage.Connection, error) {

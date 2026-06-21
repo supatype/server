@@ -162,7 +162,7 @@ jobs:
             fi
 
             GH_TOKEN='${{ github.token }}' gh pr comment "$PR_NUMBER" \
-              -b "Release candidate [v$RELEASE_VERSION](https://github.com/supatype/auth/releases/tag/$RELEASE_NAME) published."
+              -b "Release candidate [v$RELEASE_VERSION](https://github.com/supatype/server/releases/tag/$RELEASE_NAME) published."
           else
             if [ "$GITHUB_REF" == "refs/heads/main" ] || [ "$GITHUB_REF" == "refs/heads/master" ]
             then

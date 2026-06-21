@@ -306,7 +306,7 @@ type HIBPConfiguration struct {
 	Enabled    bool `json:"enabled"`
 	FailClosed bool `json:"fail_closed" split_words:"true"`
 
-	UserAgent string `json:"user_agent" split_words:"true" default:"https://github.com/supatype/auth"`
+	UserAgent string `json:"user_agent" split_words:"true" default:"https://github.com/supatype/server"`
 
 	Bloom HIBPBloomConfiguration `json:"bloom"`
 }

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/supatype/auth/internal/proxy"
+	"github.com/supatype/server/internal/proxy"
 )
 
 func TestParseCSV(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/supatype/auth
+module github.com/supatype/server
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0

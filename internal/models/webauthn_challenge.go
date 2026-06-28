@@ -6,7 +6,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/storage"
 )
 
 const (

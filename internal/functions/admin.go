@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/supatype/auth/internal/deno"
+	"github.com/supatype/server/internal/deno"
 )
 
 // Handler returns a chi.Router that serves the functions admin API.
@@ -30,7 +30,7 @@ import (
 func Handler(functionsDir string, manager *deno.Manager) http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(requireServiceRole)
+	r.Use(RequireServiceRoleMiddleware)
 
 	r.Get("/list", listFunctions(functionsDir))
 	r.Get("/{name}/logs", functionLogs(manager))
@@ -45,6 +45,11 @@ func Handler(functionsDir string, manager *deno.Manager) http.Handler {
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
+
+// RequireServiceRoleMiddleware rejects requests that don't carry the service-role key.
+func RequireServiceRoleMiddleware(next http.Handler) http.Handler {
+	return requireServiceRole(next)
+}
 
 // requireServiceRole rejects requests that don't carry the service-role key.
 // The service-role key is read from the SUPATYPE_SERVICE_ROLE_KEY env var at

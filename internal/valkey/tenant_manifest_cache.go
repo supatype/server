@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/supatype/auth/internal/proxy"
+	"github.com/supatype/server/internal/proxy"
 	"golang.org/x/sync/singleflight"
 )
 

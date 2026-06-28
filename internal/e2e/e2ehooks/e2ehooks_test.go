@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/hooks/v0hooks"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/hooks/v0hooks"
 )
 
 func TestInstance(t *testing.T) {

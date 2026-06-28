@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/sms_provider"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/sms_provider"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/models"
 )
 
 type PhoneTestSuite struct {

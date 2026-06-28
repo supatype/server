@@ -1,9 +1,9 @@
 package oauthserver
 
 import (
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/tokens"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/tokens"
 )
 
 // Server represents the OAuth 2.1 server functionality

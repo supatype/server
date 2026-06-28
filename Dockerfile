@@ -5,14 +5,14 @@ ENV GOOS=linux
 
 RUN apk add --no-cache make git
 
-WORKDIR /go/src/github.com/supatype/auth
+WORKDIR /go/src/github.com/supatype/server
 
 # Pulling dependencies
 COPY ./Makefile ./go.* ./
 RUN make deps
 
 # Building stuff
-COPY . /go/src/github.com/supatype/auth
+COPY . /go/src/github.com/supatype/server
 
 # Make sure you change the RELEASE_VERSION value before publishing an image.
 RUN RELEASE_VERSION=unspecified make build
@@ -22,8 +22,8 @@ FROM alpine:3
 RUN adduser -D -u 1000 supabase
 
 RUN apk add --no-cache ca-certificates
-COPY --from=build /go/src/github.com/supatype/auth/supatype-server /usr/local/bin/supatype-server
-COPY --from=build /go/src/github.com/supatype/auth/migrations /usr/local/etc/auth/migrations/
+COPY --from=build /go/src/github.com/supatype/server/supatype-server /usr/local/bin/supatype-server
+COPY --from=build /go/src/github.com/supatype/server/migrations /usr/local/etc/auth/migrations/
 RUN ln -sf /usr/local/bin/supatype-server /usr/local/bin/auth \
  && ln -sf /usr/local/bin/supatype-server /usr/local/bin/gotrue
 

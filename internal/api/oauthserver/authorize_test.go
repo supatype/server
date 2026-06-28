@@ -8,10 +8,10 @@ import (
 	"github.com/gobwas/glob"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/hooks/v0hooks"
-	"github.com/supatype/auth/internal/storage/test"
-	"github.com/supatype/auth/internal/tokens"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/hooks/v0hooks"
+	"github.com/supatype/server/internal/storage/test"
+	"github.com/supatype/server/internal/tokens"
 )
 
 func TestValidateRequestOrigin(t *testing.T) {

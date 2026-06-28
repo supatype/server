@@ -3,7 +3,7 @@ package shared
 import (
 	"context"
 
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/models"
 )
 
 // ContextKey is the type for context keys to avoid collisions

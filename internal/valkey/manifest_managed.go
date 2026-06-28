@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/supatype/auth/internal/proxy"
+	"github.com/supatype/server/internal/proxy"
 )
 
 // RouteManifestKey returns the Valkey key for a full route manifest override

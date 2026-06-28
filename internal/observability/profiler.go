@@ -9,7 +9,7 @@ import (
 	"net/http/pprof"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 func ConfigureProfiler(ctx context.Context, pc *conf.ProfilerConfig) error {

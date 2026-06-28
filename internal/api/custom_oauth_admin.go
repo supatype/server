@@ -12,11 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	popslices "github.com/gobuffalo/pop/v6/slices"
 	"github.com/gofrs/uuid"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/observability"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/observability"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // TODO: Admin Audit Logging for Custom OAuth/OIDC Providers

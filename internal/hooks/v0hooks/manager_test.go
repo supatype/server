@@ -9,11 +9,11 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/e2e"
-	"github.com/supatype/auth/internal/hooks/hookshttp"
-	"github.com/supatype/auth/internal/hooks/hookspgfunc"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/e2e"
+	"github.com/supatype/server/internal/hooks/hookshttp"
+	"github.com/supatype/server/internal/hooks/hookspgfunc"
+	"github.com/supatype/server/internal/models"
 )
 
 type M = map[string]any

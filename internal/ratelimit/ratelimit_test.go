@@ -3,7 +3,7 @@ package ratelimit
 import (
 	"testing"
 
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 func TestNew(t *testing.T) {

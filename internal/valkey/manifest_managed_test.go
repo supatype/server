@@ -3,7 +3,7 @@ package valkey
 import (
 	"testing"
 
-	"github.com/supatype/auth/internal/proxy"
+	"github.com/supatype/server/internal/proxy"
 )
 
 func TestTenantConfig_mergeRoutingInto(t *testing.T) {

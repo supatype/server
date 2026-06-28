@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/observability"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/observability"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Common error messages during signup flow

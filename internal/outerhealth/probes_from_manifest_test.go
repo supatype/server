@@ -3,8 +3,8 @@ package outerhealth
 import (
 	"testing"
 
-	"github.com/supatype/auth/internal/proxy"
-	"github.com/supatype/auth/internal/serverconf"
+	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestProbeConfigFrom(t *testing.T) {

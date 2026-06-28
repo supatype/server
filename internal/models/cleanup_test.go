@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/storage/test"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/storage/test"
 )
 
 func TestCleanup(t *testing.T) {

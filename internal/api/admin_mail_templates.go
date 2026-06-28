@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/mailer/templatemailer"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/mailer/templatemailer"
 )
 
 func (a *API) adminMailTemplateGet(w http.ResponseWriter, r *http.Request) error {

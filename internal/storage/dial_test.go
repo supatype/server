@@ -10,8 +10,8 @@ import (
 	"github.com/gobuffalo/pop/v6"
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/observability"
 	"golang.org/x/sync/errgroup"
 )
 

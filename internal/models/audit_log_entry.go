@@ -11,10 +11,10 @@ import (
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/observability"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/observability"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/utilities"
 )
 
 type AuditAction string

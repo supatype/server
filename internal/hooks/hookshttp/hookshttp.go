@@ -15,10 +15,10 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/hooks/hookserrors"
-	"github.com/supatype/auth/internal/observability"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/hooks/hookserrors"
+	"github.com/supatype/server/internal/observability"
 
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 )

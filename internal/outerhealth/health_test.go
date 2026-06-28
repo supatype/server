@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/supatype/auth/internal/serverconf"
+	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestAttachHealthJSON(t *testing.T) {

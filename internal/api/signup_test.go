@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	mail "github.com/supatype/auth/internal/mailer"
+	mail "github.com/supatype/server/internal/mailer"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/models"
 )
 
 type SignupTestSuite struct {

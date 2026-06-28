@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/models"
 )
 
 var filterColumnMap = map[string][]string{

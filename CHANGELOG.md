@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/supatype/server/compare/v1.1.1...v1.2.0) (2026-06-28)
+
+
+### Features
+
+* **server:** REST GET cache with Valkey, admin API, and table cache config ([3dd0cd9](https://github.com/supatype/server/commit/3dd0cd9e99278deea8c55b6eac8703a6e0d7c6a3))
+
+
+### Bug Fixes
+
+* **server:** handle db.Close() errors in server.New bootstrap (gosec G104) ([cc44778](https://github.com/supatype/server/commit/cc44778e3b6c1045ddc14c4a3ed67cefb414a25f))
+
 ## [1.1.0](https://github.com/supatype/server/compare/v1.0.6...v1.1.0) (2026-06-15)
 
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/valkey"
 )
@@ -35,11 +36,21 @@ func Handler(store apiconfig.Store, cfg *serverconf.ServerConfig, vc *valkey.Cli
 
 		case http.MethodPatch:
 			var body struct {
-				Schema  *string `json:"schema"`
-				MaxRows *int    `json:"max_rows"`
+				Schema       *string                            `json:"schema"`
+				MaxRows      *int                               `json:"max_rows"`
+				CacheMaxTTL  *int                               `json:"cache_max_ttl"`
+				CacheTables  *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+				return
+			}
+			if (body.CacheMaxTTL != nil || body.CacheTables != nil) &&
+				!restcache.ServerCacheOffered(r.Context(), cfg, vc, r) {
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error":   "rest_cache_not_available",
+					"message": "Server-side REST caching is included on paid Cloud plans and self-host.",
+				})
 				return
 			}
 			cfg, err := store.Get(r.Context())
@@ -60,6 +71,16 @@ func Handler(store apiconfig.Store, cfg *serverconf.ServerConfig, vc *valkey.Cli
 					return
 				}
 				cfg.Rest.MaxRows = *body.MaxRows
+			}
+			if body.CacheMaxTTL != nil {
+				if *body.CacheMaxTTL < 0 || *body.CacheMaxTTL > 86_400 {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cache_max_ttl must be 0–86400"})
+					return
+				}
+				cfg.Rest.CacheMaxTTL = *body.CacheMaxTTL
+			}
+			if body.CacheTables != nil {
+				cfg.Rest.CacheTables = *body.CacheTables
 			}
 			if err := store.Set(r.Context(), cfg); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -146,6 +167,8 @@ func Handler(store apiconfig.Store, cfg *serverconf.ServerConfig, vc *valkey.Cli
 		}
 		credentialRotateHandler(cfg, vc).ServeHTTP(w, r)
 	})
+
+	mountCacheRoutes(mux, cfg, vc)
 
 	return RequireServiceRole(mux)
 }

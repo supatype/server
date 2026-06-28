@@ -135,12 +135,16 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	vkAddr := strings.TrimSpace(srvCfg.ValkeyAddr)
 	managed := strings.TrimSpace(srvCfg.Mode) == "managed"
 
-	if managed && vkAddr != "" {
+	if vkAddr != "" {
 		vc, vkErr := valkey.New(vkAddr)
 		if vkErr != nil {
-			return fail(fmt.Errorf("serve: Valkey connect failed (managed mode): %w", vkErr))
+			if managed {
+				return fail(fmt.Errorf("serve: Valkey connect failed (managed mode): %w", vkErr))
+			}
+			logrus.WithError(vkErr).Warn("serve: Valkey connect failed — REST cache will bypass")
+		} else {
+			vkShared = vc
 		}
-		vkShared = vc
 	}
 
 	mergeFromValkey := managed && vkShared != nil && ref != ""

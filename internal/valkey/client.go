@@ -45,6 +45,18 @@ type TenantConfig struct {
 	StaticCacheHTML         string            `json:"static_cache_html,omitempty"`
 	StaticCacheHashedAssets string            `json:"static_cache_hashed_assets,omitempty"`
 	StaticCachePrefixes     map[string]string `json:"static_cache_prefixes,omitempty"`
+
+	// RestCacheEnabled gates Valkey-backed REST GET caching on Cloud (false on free tier).
+	RestCacheEnabled *bool `json:"rest_cache_enabled,omitempty"`
+}
+
+// RestCacheOffered returns whether server-side REST caching is offered for this tenant.
+// When unset on a managed pod, defaults to false (fail closed for Cloud cost control).
+func (tc *TenantConfig) RestCacheOffered() bool {
+	if tc == nil || tc.RestCacheEnabled == nil {
+		return false
+	}
+	return *tc.RestCacheEnabled
 }
 
 const (
@@ -185,6 +197,51 @@ func (c *Client) Del(ctx context.Context, keys ...string) error {
 	}
 	c.recordSuccess()
 	return nil
+}
+
+// ScanPage scans keys matching pattern starting at cursor. count is a hint per page.
+func (c *Client) ScanPage(ctx context.Context, cursor uint64, pattern string, count int) (keys []string, next uint64, err error) {
+	if err := c.checkCircuit(); err != nil {
+		return nil, 0, err
+	}
+	if count <= 0 {
+		count = 50
+	}
+	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	result := c.vc.Do(rctx, c.vc.B().Scan().Cursor(cursor).Match(pattern).Count(int64(count)).Build())
+	if err := result.Error(); err != nil {
+		c.recordFailure()
+		return nil, 0, fmt.Errorf("valkey: SCAN: %w", err)
+	}
+	entry, err := result.AsScanEntry()
+	if err != nil {
+		c.recordFailure()
+		return nil, 0, fmt.Errorf("valkey: SCAN decode: %w", err)
+	}
+	c.recordSuccess()
+	return entry.Elements, entry.Cursor, nil
+}
+
+// TTLSeconds returns remaining TTL for key, or -1 when no expiry, -2 when missing.
+func (c *Client) TTLSeconds(ctx context.Context, key string) (int, error) {
+	if err := c.checkCircuit(); err != nil {
+		return 0, err
+	}
+	rctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+	result := c.vc.Do(rctx, c.vc.B().Ttl().Key(key).Build())
+	if err := result.Error(); err != nil {
+		c.recordFailure()
+		return 0, fmt.Errorf("valkey: TTL %s: %w", key, err)
+	}
+	n, err := result.AsInt64()
+	if err != nil {
+		c.recordFailure()
+		return 0, fmt.Errorf("valkey: TTL decode %s: %w", key, err)
+	}
+	c.recordSuccess()
+	return int(n), nil
 }
 
 // Close shuts down the underlying Valkey client.

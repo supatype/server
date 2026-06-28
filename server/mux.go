@@ -23,6 +23,7 @@ import (
 	"github.com/supatype/server/internal/platformproxy"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/realtime"
+	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/static"
@@ -85,9 +86,9 @@ func buildOuterMux(
 	// ── API config store ──────────────────────────────────────────────────────
 	apiStore := apiconfig.NewFileStore(cfg.ApiConfigPath)
 	valkeyClient := sharedValkey
-	if valkeyClient == nil && cfg.Mode == "managed" && strings.TrimSpace(cfg.ValkeyAddr) != "" {
+	if valkeyClient == nil && strings.TrimSpace(cfg.ValkeyAddr) != "" {
 		if client, err := valkey.New(cfg.ValkeyAddr); err != nil {
-			logrus.WithError(err).Warn("mux: failed to init valkey client for managed credentials")
+			logrus.WithError(err).Warn("mux: failed to init valkey client")
 		} else {
 			valkeyClient = client
 		}
@@ -119,7 +120,7 @@ func buildOuterMux(
 	r.Mount("/auth/v1", http.StripPrefix("/auth/v1", authHandler))
 
 	// ── PostgREST ─────────────────────────────────────────────────────────────
-	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	restProxy := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := manifestFor(req)
 		postURL := firstNonEmpty(m.PostgRESTURL, cfg.PostgRESTURL, "http://localhost:3000")
 		u, err := url.Parse(postURL)
@@ -146,7 +147,29 @@ func buildOuterMux(
 				return h
 			},
 		}).ServeHTTP(w, req)
-	})))
+	})
+	restSchemaFor := func(req *http.Request) string {
+		m := manifestFor(req)
+		defaultSchema := m.Schema
+		if defaultSchema == "" {
+			defaultSchema = "public"
+		}
+		restCfg, _ := apiStore.Get(req.Context())
+		if restCfg.Rest.Schema != "" {
+			return restCfg.Rest.Schema
+		}
+		return defaultSchema
+	}
+	restMaxRowsFor := func(req *http.Request) string {
+		restCfg, _ := apiStore.Get(req.Context())
+		if restCfg.Rest.MaxRows > 0 && restCfg.Rest.MaxRows != apiconfig.DefaultApiConfig().Rest.MaxRows {
+			return fmt.Sprintf("%d", restCfg.Rest.MaxRows)
+		}
+		return ""
+	}
+	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", restcache.Middleware(
+		apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, restProxy,
+	)))
 	logrus.Info("mux: PostgREST proxy mounted at /rest/v1")
 
 	// ── pg_graphql (PostgREST RPC: graphql_public.graphql) ───────────────────

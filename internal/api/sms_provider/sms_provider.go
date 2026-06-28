@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 // overrides the SmsProvider set to always return the mock provider

@@ -8,7 +8,7 @@
 //
 // In local dev, supatype.config.ts `email.send_email_hook` wires these env vars; optional
 // `send_email_hook_uri` / `send_email_hook_secrets` override defaults.
-package cmd
+package server
 
 import (
 	"encoding/json"
@@ -18,11 +18,11 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/auth/internal/api"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/hooks/v0hooks"
-	"github.com/supatype/auth/internal/reloader"
+	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/hooks/v0hooks"
+	"github.com/supatype/server/internal/reloader"
 
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 )

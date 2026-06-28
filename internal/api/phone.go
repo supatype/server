@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/sms_provider"
-	"github.com/supatype/auth/internal/crypto"
-	"github.com/supatype/auth/internal/hooks/v0hooks"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/sms_provider"
+	"github.com/supatype/server/internal/crypto"
+	"github.com/supatype/server/internal/hooks/v0hooks"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
 )
 
 var e164Format = regexp.MustCompile("^[1-9][0-9]{1,14}$")

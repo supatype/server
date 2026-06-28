@@ -1,6 +1,10 @@
 # supatype-server
 
-Runtime server for Supatype local development, self-hosted deployments, and managed environments.
+Unified API gateway for the [Supatype](https://github.com/supatype/supatype) platform — local dev, self-host, and production.
+
+**Product:** [github.com/supatype](https://github.com/supatype) · **Docs:** [supatype.github.io/supatype](https://supatype.github.io/supatype/)
+
+Most users run this via the CLI (`supatype dev` or `supatype self-host compose up`) — you only need this repo if you are hacking on the server itself.
 
 Repository: [github.com/supatype/server](https://github.com/supatype/server)
 
@@ -13,7 +17,7 @@ It can:
 - Run Auth (`/auth/v1`) with migrations and background workers.
 - Proxy PostgREST (`/rest/v1`) and GraphQL (`/graphql/v1`).
 - Serve Storage via built-in local filesystem mode or proxy mode (`/storage/v1`).
-- Run and proxy Edge Functions with Deno (`/functions/v1`).
+- Proxy Edge Functions to a functions worker or in-process Deno (`/functions/v1`).
 - Expose Functions admin endpoints (`/functions/v1/admin`).
 - Serve Realtime WebSockets when enabled (`/realtime/v1`).
 - Expose admin and Studio support endpoints (`/admin/v1`, `/studio-config`, `/sql`).
@@ -39,9 +43,11 @@ Set `SUPATYPE_MODE` to control gateway behavior:
 
 - `dev` (default): permissive CORS and optional dev-proxy behavior.
 - `standalone`: automatic ACME/TLS support for direct hosting.
-- `managed`: tenant HMAC verification middleware for managed multi-tenant setups.
+- `managed`: tenant HMAC verification middleware (hosted multi-tenant gateway).
 
 ## Quick Start
+
+> **Using Supatype as a product?** Run `npx supatype@latest init` then `supatype dev` — see [docs](https://supatype.github.io/supatype/#local-dev). The steps below are for **server contributors** cloning this repo.
 
 ### Prerequisites
 
@@ -110,6 +116,7 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_POSTGREST_URL`
 - `SUPATYPE_GRAPHQL_URL`
 - `SUPATYPE_STORAGE_URL`
+- `SUPATYPE_FUNCTIONS_WORKER_URL`
 - `SUPATYPE_DENO_PATH`
 - `SUPATYPE_DENO_FUNCTIONS_DIR`
 - `SUPATYPE_DENO_PORT`

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/utilities"
 )
 
 var versionCmd = cobra.Command{

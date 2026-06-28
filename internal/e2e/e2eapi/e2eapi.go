@@ -12,12 +12,12 @@ import (
 	"net/url"
 
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/supatype/auth/internal/api"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/storage/test"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/storage/test"
+	"github.com/supatype/server/internal/utilities"
 )
 
 type Instance struct {

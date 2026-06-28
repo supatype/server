@@ -1,4 +1,4 @@
-package cmd
+package server
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 )

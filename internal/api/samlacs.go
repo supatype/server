@@ -14,13 +14,13 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/fatih/structs"
 	"github.com/gofrs/uuid"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/api/provider"
-	"github.com/supatype/auth/internal/metering"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/observability"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/api/provider"
+	"github.com/supatype/server/internal/metering"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/observability"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/utilities"
 )
 
 func (a *API) samlDestroyRelayState(ctx context.Context, relayState *models.SAMLRelayState) error {

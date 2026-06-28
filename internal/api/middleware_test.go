@@ -19,11 +19,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/sbff"
-	"github.com/supatype/auth/internal/security"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/sbff"
+	"github.com/supatype/server/internal/security"
+	"github.com/supatype/server/internal/storage"
 )
 
 const (

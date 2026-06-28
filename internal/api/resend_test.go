@@ -10,9 +10,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/conf"
-	mail "github.com/supatype/auth/internal/mailer"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/conf"
+	mail "github.com/supatype/server/internal/mailer"
+	"github.com/supatype/server/internal/models"
 )
 
 type ResendTestSuite struct {

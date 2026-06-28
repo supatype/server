@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/supatype/auth/internal/proxy"
+	"github.com/supatype/server/internal/proxy"
 )
 
 func TestTenantManifestCache_nilClient(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 // Connection is the interface a storage provider must implement. Do not copy

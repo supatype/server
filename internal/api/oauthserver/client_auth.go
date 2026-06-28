@@ -3,7 +3,7 @@ package oauthserver
 import (
 	"fmt"
 
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/models"
 )
 
 // InferClientTypeFromAuthMethod infers client type from token_endpoint_auth_method

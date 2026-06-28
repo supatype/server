@@ -8,7 +8,7 @@ import (
 	"net/url"
 
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/auth/internal/api/provider"
+	"github.com/supatype/server/internal/api/provider"
 )
 
 const (

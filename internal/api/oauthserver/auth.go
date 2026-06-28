@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/models"
 )
 
 // ClientCredentials represents the extracted client credentials and authentication method used

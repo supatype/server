@@ -12,17 +12,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/supatype/auth/internal/api/apierrors"
-	mail "github.com/supatype/auth/internal/mailer"
-	"github.com/supatype/auth/internal/mailer/mockclient"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/api/apierrors"
+	mail "github.com/supatype/server/internal/mailer"
+	"github.com/supatype/server/internal/mailer/mockclient"
+	"github.com/supatype/server/internal/storage"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/crypto"
-	"github.com/supatype/auth/internal/models"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/crypto"
+	"github.com/supatype/server/internal/models"
 )
 
 type VerifyTestSuite struct {

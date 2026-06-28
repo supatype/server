@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/supatype/auth/internal/security"
-	"github.com/supatype/auth/internal/storage"
+	"github.com/supatype/server/internal/security"
+	"github.com/supatype/server/internal/storage"
 
 	"github.com/gofrs/uuid"
 )

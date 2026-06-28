@@ -16,14 +16,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/xeipuuv/gojsonschema"
 
-	"github.com/supatype/auth/internal/api/apierrors"
-	"github.com/supatype/auth/internal/conf"
-	"github.com/supatype/auth/internal/crypto"
-	"github.com/supatype/auth/internal/hooks/v0hooks"
-	"github.com/supatype/auth/internal/metering"
-	"github.com/supatype/auth/internal/models"
-	"github.com/supatype/auth/internal/storage"
-	"github.com/supatype/auth/internal/utilities"
+	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/crypto"
+	"github.com/supatype/server/internal/hooks/v0hooks"
+	"github.com/supatype/server/internal/metering"
+	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/utilities"
 )
 
 const retryLoopDuration = 5.0

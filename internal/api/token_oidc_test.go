@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/auth/internal/conf"
+	"github.com/supatype/server/internal/conf"
 )
 
 type TokenOIDCTestSuite struct {

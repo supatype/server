@@ -105,6 +105,10 @@ type ServerConfig struct {
 	// When set, supatype-server proxies /functions/v1 here and does not start an in-process Deno subprocess.
 	FunctionsWorkerURL string `envconfig:"SUPATYPE_FUNCTIONS_WORKER_URL"`
 
+	// RealtimeURL is the base URL of the external realtime service (WebSocket + /health).
+	// When set, supatype-server proxies /realtime/v1 here instead of using an in-process hub.
+	RealtimeURL string `envconfig:"SUPATYPE_REALTIME_URL"`
+
 	// PostgRESTURL is the upstream PostgREST URL.
 	PostgRESTURL string `envconfig:"SUPATYPE_POSTGREST_URL" default:"http://localhost:3000"`
 

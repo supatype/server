@@ -74,6 +74,9 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.RealtimeEnabled != nil {
 		m.RealtimeEnabled = *tc.RealtimeEnabled
 	}
+	if tc.RealtimeURL != "" {
+		m.RealtimeURL = tc.RealtimeURL
+	}
 	if tc.FunctionsEnabled != nil {
 		m.FunctionsEnabled = *tc.FunctionsEnabled
 	}

@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,7 +21,6 @@ import (
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/platformproxy"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/realtime"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/sqlrunner"
@@ -52,7 +50,7 @@ const defaultUpstreamHTTPTimeout = 2 * time.Minute
 //	/storage/v1/*             → Supatype Storage
 //	/functions/v1/admin/*     → Functions admin API (service-role protected)
 //	/functions/v1/*           → Deno edge functions proxy
-//	/realtime/v1/*            → LISTEN/NOTIFY WebSocket hub
+//	/realtime/v1/*            → external realtime WebSocket proxy
 //	/*                        → App (none/static/proxy per config)
 //
 // In dev mode the mux is wrapped in DevMiddleware (permissive CORS). Vite HMR is mounted
@@ -255,13 +253,11 @@ func buildOuterMux(
 	logrus.Info("mux: Platform control plane proxy mounted at /platform/v1")
 
 	baseM := manifestFor(nil)
-	if baseM.RealtimeEnabled {
-		r.Get("/realtime/v1/health", realtime.LivenessHandler())
-		hub := realtime.NewHub()
-		presenceTrackers := make(map[string]*realtime.PresenceTracker)
-		var presenceMu sync.Mutex
-		r.Mount("/realtime/v1", realtime.Handler(hub, cfg.ServiceRoleKey, presenceTrackers, &presenceMu))
-		logrus.Info("mux: Realtime WebSocket handler mounted at /realtime/v1")
+	if baseM.RealtimeEnabled || strings.TrimSpace(cfg.RealtimeURL) != "" {
+		r.Mount("/realtime/v1", http.StripPrefix("/realtime/v1",
+			realtimeInvocationProxy(cfg, manifestFor),
+		))
+		logrus.Info("mux: Realtime invocation proxy mounted at /realtime/v1")
 	}
 
 	appMode := firstNonEmpty(baseM.AppMode, cfg.AppMode, "none")
@@ -390,6 +386,43 @@ func functionsInvocationProxy(
 		}
 		proxy.WebSocketProxy(u, proxy.New(u, opts)).ServeHTTP(w, req)
 	})
+}
+
+// realtimeInvocationProxy forwards /realtime/v1 to the external realtime service.
+func realtimeInvocationProxy(
+	cfg *serverconf.ServerConfig,
+	manifestFor func(*http.Request) *proxy.RouteManifest,
+) http.Handler {
+	opts := proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		m := manifestFor(req)
+		if m != nil && !m.RealtimeEnabled {
+			http.Error(w, "realtime disabled", http.StatusNotFound)
+			return
+		}
+		u, err := resolveRealtimeUpstreamURL(cfg, m)
+		if err != nil {
+			logrus.WithError(err).Error("mux: realtime upstream resolve failed")
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+		proxy.WebSocketProxy(u, proxy.New(u, opts)).ServeHTTP(w, req)
+	})
+}
+
+func resolveRealtimeUpstreamURL(
+	cfg *serverconf.ServerConfig,
+	m *proxy.RouteManifest,
+) (*url.URL, error) {
+	if m != nil {
+		if u := strings.TrimSpace(m.RealtimeURL); u != "" {
+			return url.Parse(u)
+		}
+	}
+	if u := strings.TrimSpace(cfg.RealtimeURL); u != "" {
+		return url.Parse(u)
+	}
+	return nil, fmt.Errorf("no realtime upstream configured")
 }
 
 func firstURLSegment(path string) string {

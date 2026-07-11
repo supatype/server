@@ -38,8 +38,11 @@ type RouteManifest struct {
 	// ViteDevURL overrides SUPATYPE_VITE_DEV_URL when set (dev HMR at /_vite/*).
 	ViteDevURL string `json:"vite_dev_url,omitempty"`
 
-	// RealtimeEnabled indicates the realtime LISTEN/NOTIFY subsystem should start.
+	// RealtimeEnabled gates /realtime/v1 (tier / feature flag).
 	RealtimeEnabled bool `json:"realtime_enabled"`
+
+	// RealtimeURL overrides SUPATYPE_REALTIME_URL when set (internal realtime service base URL).
+	RealtimeURL string `json:"realtime_url,omitempty"`
 
 	// FunctionsEnabled indicates the Deno functions subsystem should start.
 	FunctionsEnabled bool `json:"functions_enabled"`
@@ -170,6 +173,9 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 		base.ViteDevURL = overlay.ViteDevURL
 	}
 	base.RealtimeEnabled = overlay.RealtimeEnabled
+	if overlay.RealtimeURL != "" {
+		base.RealtimeURL = overlay.RealtimeURL
+	}
 	base.FunctionsEnabled = overlay.FunctionsEnabled
 	if overlay.FunctionsWorkerURL != "" {
 		base.FunctionsWorkerURL = overlay.FunctionsWorkerURL

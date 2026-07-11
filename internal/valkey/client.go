@@ -34,6 +34,7 @@ type TenantConfig struct {
 	ServiceRoleKey string `json:"serviceRoleKey,omitempty"`
 
 	RealtimeEnabled  *bool `json:"realtime_enabled,omitempty"`
+	RealtimeURL      string `json:"realtime_url,omitempty"`
 	FunctionsEnabled *bool `json:"functions_enabled,omitempty"`
 
 	FunctionsWorkerURL string            `json:"functions_worker_url,omitempty"`

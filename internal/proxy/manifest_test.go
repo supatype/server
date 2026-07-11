@@ -51,6 +51,15 @@ func TestMergeRouteManifest_viteDevURL(t *testing.T) {
 	}
 }
 
+func TestMergeRouteManifest_realtimeURL(t *testing.T) {
+	base := &RouteManifest{Schema: "public", RealtimeURL: "http://old:4000"}
+	overlay := &RouteManifest{RealtimeURL: "http://new:4000"}
+	MergeRouteManifest(base, overlay)
+	if base.RealtimeURL != "http://new:4000" {
+		t.Fatalf("RealtimeURL = %q", base.RealtimeURL)
+	}
+}
+
 func TestParseRouteManifestJSON(t *testing.T) {
 	raw := []byte(`{"schema":"x","postgrest_url":"http://pg:3000","realtime_enabled":true}`)
 	m, err := ParseRouteManifestJSON(raw)

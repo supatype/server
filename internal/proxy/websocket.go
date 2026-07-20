@@ -33,30 +33,33 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			return
 		}
-		defer backendConn.Close() //nolint:errcheck
 
 		// Hijack the client connection.
 		hijacker, ok := w.(http.Hijacker)
 		if !ok {
+			_ = backendConn.Close()
 			http.Error(w, "websocket not supported", http.StatusInternalServerError)
 			return
 		}
 		clientConn, _, err := hijacker.Hijack()
 		if err != nil {
+			_ = backendConn.Close()
 			logrus.WithError(err).Error("websocket proxy: hijack failed")
 			return
 		}
-		defer clientConn.Close() //nolint:errcheck
 
-		augmentForwardedHeaders(r, r.Host)
+		clientFacingHost := r.Host
+		prepareUpstreamWebSocketRequest(r, target, clientFacingHost)
 
-		// Forward the original HTTP Upgrade request to the backend.
+		// Forward the HTTP upgrade request to the backend.
 		if err := r.Write(backendConn); err != nil {
+			_ = clientConn.Close()
+			_ = backendConn.Close()
 			logrus.WithError(err).Error("websocket proxy: write upgrade request failed")
 			return
 		}
 
-		// Splice bidirectionally.
+		// Splice bidirectionally until both directions finish.
 		errc := make(chan error, 2)
 		cp := func(dst io.Writer, src io.Reader) {
 			_, err := io.Copy(dst, src)
@@ -65,7 +68,24 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 		go cp(backendConn, clientConn)
 		go cp(clientConn, backendConn)
 		<-errc
+		<-errc
+		_ = clientConn.Close()
+		_ = backendConn.Close()
 	})
+}
+
+// prepareUpstreamWebSocketRequest rewrites r for forwarding over a raw TCP dial,
+// mirroring proxy.New's Director. http.Request.Write prefers RequestURI when set;
+// chi StripPrefix only updates URL.Path, so we must clear RequestURI here.
+func prepareUpstreamWebSocketRequest(r *http.Request, target *url.URL, clientFacingHost string) {
+	r.RequestURI = ""
+	r.URL.Scheme = target.Scheme
+	r.URL.Host = target.Host
+	if r.URL.Path == "" {
+		r.URL.Path = "/"
+	}
+	r.Host = target.Host
+	augmentForwardedHeaders(r, clientFacingHost)
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {

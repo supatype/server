@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0](https://github.com/supatype/server/compare/v1.2.0...v1.3.0) (2026-07-20)
+
+
+### Features
+
+* **server:** proxy /realtime/v1 to external WAL realtime ([fce6405](https://github.com/supatype/server/commit/fce640537e01b3e9437c2b0099213e745e52b3b6))
+* **server:** proxy /realtime/v1 to external WAL realtime service ([5923d84](https://github.com/supatype/server/commit/5923d841587f3bade07c16e3b5334392bc15913d))
+
+
+### Bug Fixes
+
+* **deps:** bump Go to 1.25.12 for stdlib vuln fixes ([b3b5660](https://github.com/supatype/server/commit/b3b5660255f88b4097a6bd23cc937406ff4bc74a))
+* **proxy:** rewrite WebSocket upgrade path after StripPrefix ([07472e3](https://github.com/supatype/server/commit/07472e3efc31aace7af78616c0e9e61c174dbac9))
+* **proxy:** rewrite WebSocket upgrade path after StripPrefix ([fd9e5ca](https://github.com/supatype/server/commit/fd9e5ca68069374b8adf384f964ff88758fd1a50))
+
 ## [1.2.0](https://github.com/supatype/server/compare/v1.1.1...v1.2.0) (2026-06-28)
 
 

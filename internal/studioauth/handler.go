@@ -15,7 +15,18 @@ type Config struct {
 	ServiceRoleKey string
 	AdminRoles    []string
 	Mode          string
+	// StudioRole resolves a verified user id to their Studio role from
+	// `_supatype.studio_members`. Studio capability deliberately does not come
+	// from a JWT claim: `app_metadata` is the developer's namespace for their own
+	// app roles, so reading it here means assigning an app role can hand out admin
+	// UI access by accident. Nil keeps the legacy claim-based path, so a
+	// deployment that has not been migrated still works.
+	StudioRole StudioRoleLookup
 }
+
+// StudioRoleLookup returns the Studio role recorded for a user id. The second
+// result is false when the user has no membership row.
+type StudioRoleLookup func(userID string) (string, bool)
 
 // ConfigFromServer builds handler config from ServerConfig and admin-config path.
 func ConfigFromServer(cfg *serverconf.ServerConfig) Config {
@@ -40,7 +51,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		result := VerifyRequest(req, c.JWTSecret, c.AdminRoles)
+		result := ResolveAccess(req, c)
 		if !result.Allowed {
 			status := http.StatusForbidden
 			if result.Sub == "" && result.Message == "Authentication required" {
@@ -79,7 +90,7 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 			next.ServeHTTP(w, req)
 			return
 		}
-		result := VerifyRequest(req, c.JWTSecret, c.AdminRoles)
+		result := ResolveAccess(req, c)
 		if !result.Allowed {
 			status := http.StatusForbidden
 			if result.Message == "Authentication required" {
@@ -97,7 +108,7 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 func ProxyHandler(inner http.Handler, c Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if !DevBypass() {
-			result := VerifyRequest(req, c.JWTSecret, c.AdminRoles)
+			result := ResolveAccess(req, c)
 			if !result.Allowed {
 				status := http.StatusForbidden
 				if result.Message == "Authentication required" {

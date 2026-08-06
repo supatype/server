@@ -94,3 +94,31 @@ func extractBearerToken(req *http.Request) string {
 	}
 	return strings.TrimSpace(token)
 }
+
+// ResolveAccess decides Studio access for a request.
+//
+// The token establishes *identity* (signature, expiry, subject). Capability comes
+// from `_supatype.studio_members` when a lookup is configured, so a user with no
+// membership row is refused even if their claims say "admin", and a member is
+// admitted without needing any claim at all.
+func ResolveAccess(req *http.Request, c Config) Result {
+	res := VerifyRequest(req, c.JWTSecret, c.AdminRoles)
+	if c.StudioRole == nil {
+		return res
+	}
+
+	// A token that failed verification outright carries no usable identity.
+	if strings.TrimSpace(res.Sub) == "" {
+		return res
+	}
+
+	role, ok := c.StudioRole(res.Sub)
+	if !ok || strings.TrimSpace(role) == "" {
+		return Result{
+			Allowed: false,
+			Message: "You don't have permission to access the admin panel",
+			Sub:     res.Sub,
+		}
+	}
+	return Result{Allowed: true, Message: "ok", Role: role, Sub: res.Sub}
+}

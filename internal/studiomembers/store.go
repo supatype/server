@@ -177,6 +177,39 @@ func Revoke(ctx context.Context, actingUserID, targetUserID string) error {
 // lookup and the cycle would be worse than the constant.
 const RoleAdmin = "admin"
 
+// AuditElevated records a request that bypassed RLS with the service role.
+//
+// No target: the record is about what the actor did, not about someone else. The
+// method and path go in `detail` so the trail says *what* was reached, which is
+// the whole point of making elevation visible.
+func AuditElevated(ctx context.Context, actorID, method, path string) {
+	pool, err := dbpool.Pool(ctx)
+	if err != nil {
+		logrus.WithError(err).Error("studiomembers: elevated request not audited")
+		return
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+
+	var actor any
+	if strings.TrimSpace(actorID) != "" {
+		actor = actorID
+	}
+	detail := fmt.Sprintf(`{"method":%q,"path":%q}`, method, path)
+
+	if _, err := pool.Exec(writeCtx, `
+		INSERT INTO _supatype.studio_audit (actor_id, target_id, action, detail)
+		VALUES ($1::uuid, NULL, 'elevated_request', $2::jsonb)`,
+		actor, detail); err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"actor":  actorID,
+			"method": method,
+			"path":   path,
+		}).Error("studiomembers: elevated request not audited")
+	}
+}
+
 // Audit records a membership change in `_supatype.studio_audit`.
 //
 // Deliberately *not* inside SetRole/Revoke's transaction, and deliberately

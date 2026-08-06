@@ -306,9 +306,14 @@ func buildOuterMux(
 	case "dev":
 		handler = modes.DevMiddleware(r)
 	case "managed":
-		inner := http.Handler(r)
+		// Data-plane requests must carry a project API key; without this an
+		// unkeyed request runs as the anon role.
+		inner := http.Handler(modes.APIKeyMiddleware(cfg.JWTSecret, r))
+		if cfg.JWTSecret == "" {
+			logrus.Error("mux: managed mode but JWT secret is unset — data-plane requests will be refused")
+		}
 		if cfg.TenantHMACSecret != "" {
-			inner = modes.TenantMiddleware(cfg.TenantHMACSecret, r)
+			inner = modes.TenantMiddleware(cfg.TenantHMACSecret, inner)
 		} else {
 			logrus.Warn("mux: managed mode but SUPATYPE_TENANT_HMAC_SECRET is unset — tenant verification disabled")
 		}

@@ -16,7 +16,10 @@ import (
 // The whole capability path over HTTP, against a real Postgres: token proves
 // identity, `_supatype.studio_members` decides admission.
 //
-// Skipped unless SUPATYPE_TEST_DSN points at a throwaway database.
+// Skipped unless SUPATYPE_TEST_DSN points at a throwaway database. Run the
+// DB-backed packages with `-p 1`: they share one database and the same
+// `_supatype` table names, so `go test`'s default per-package parallelism has
+// them dropping each other's tables mid-run.
 func TestVerifyHandlerUsesMembershipNotClaims(t *testing.T) {
 	dsn := os.Getenv("SUPATYPE_TEST_DSN")
 	if dsn == "" {
@@ -38,10 +41,14 @@ func TestVerifyHandlerUsesMembershipNotClaims(t *testing.T) {
 		`CREATE SCHEMA IF NOT EXISTS _supatype`,
 		`DROP TABLE IF EXISTS _supatype.studio_members`,
 		`CREATE TABLE _supatype.studio_members (
-			user_id UUID PRIMARY KEY,
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID UNIQUE,
+			platform_user_id UUID UNIQUE,
 			role TEXT NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			CONSTRAINT studio_members_one_identity
+				CHECK (num_nonnulls(user_id, platform_user_id) = 1))`,
 		`INSERT INTO _supatype.studio_members (user_id, role) VALUES ('` + member + `', 'admin')`,
 	} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {

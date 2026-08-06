@@ -123,6 +123,15 @@ func buildOuterMux(
 	})
 	r.Post("/studio-config", studioauth.RequireAdmin(studioCfg, studioConfigInner).ServeHTTP)
 
+	// Studio membership assignment. Mounted outside /admin/v1 (the service-role
+	// admin API) because this is authenticated as a project user with a Studio
+	// role, not with the service role key.
+	membersAPI := studioauth.MembersAPI(studioCfg)
+	r.Handle("/admin/studio-roles", membersAPI)
+	r.Handle("/admin/studio-members", membersAPI)
+	r.Handle("/admin/studio-members/*", membersAPI)
+	logrus.Info("mux: Studio membership API mounted at /admin/studio-members")
+
 	r.Post("/sql", sqlrunner.Handler().ServeHTTP)
 
 	r.Mount("/auth/v1", http.StripPrefix("/auth/v1", authHandler))

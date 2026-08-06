@@ -8,12 +8,15 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 )
 
-// Result is the outcome of an admin JWT check.
+// Result is the outcome of an admin access check.
 type Result struct {
 	Allowed bool
 	Message string
 	Role    string
 	Sub     string
+	// Permissions is set when capability came from a membership role. Nil on the
+	// legacy claim path, where the claim only ever meant "is an admin".
+	Permissions *StudioPermissions
 }
 
 // VerifyBearerToken validates a user JWT and checks studio admin role membership.
@@ -113,12 +116,26 @@ func ResolveAccess(req *http.Request, c Config) Result {
 	}
 
 	role, ok := c.StudioRole(res.Sub)
-	if !ok || strings.TrimSpace(role) == "" {
+	role = strings.TrimSpace(role)
+	if !ok || role == "" {
 		return Result{
 			Allowed: false,
 			Message: "You don't have permission to access the admin panel",
 			Sub:     res.Sub,
 		}
 	}
-	return Result{Allowed: true, Message: "ok", Role: role, Sub: res.Sub}
+
+	// A role this deployment does not understand grants nothing — see
+	// capability.go for why unknown roles must not inherit.
+	perms, known := PermissionsForRole(role)
+	if !known {
+		return Result{
+			Allowed: false,
+			Message: "Unrecognised Studio role \"" + role + "\" — access denied",
+			Role:    role,
+			Sub:     res.Sub,
+		}
+	}
+
+	return Result{Allowed: true, Message: "ok", Role: role, Sub: res.Sub, Permissions: &perms}
 }

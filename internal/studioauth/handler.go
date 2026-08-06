@@ -47,7 +47,10 @@ func VerifyHandler(c Config) http.HandlerFunc {
 		}
 
 		if DevBypass() {
-			writeJSON(w, http.StatusOK, verifyOKResponse("dev-bypass", "dev-bypass"))
+			writeJSON(w, http.StatusOK, verifyOKResponse(Result{
+				Role: "dev-bypass",
+				Sub:  "dev-bypass",
+			}))
 			return
 		}
 
@@ -65,21 +68,26 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, verifyOKResponse(result.Role, result.Sub))
+		writeJSON(w, http.StatusOK, verifyOKResponse(result))
 	}
 }
 
-func verifyOKResponse(role, sub string) map[string]interface{} {
+// verifyOKResponse reports the capability set Studio renders from.
+//
+// It used to hardcode every permission to true, so a `viewer` membership row was
+// handed a full-access UI while the control plane restricted the same role — the
+// two hosts disagreeing about what a role means.
+func verifyOKResponse(result Result) map[string]interface{} {
+	perms := result.Permissions
+	if perms == nil {
+		legacy := legacyAdminPermissions()
+		perms = &legacy
+	}
 	return map[string]interface{}{
-		"allowed": true,
-		"role":    role,
-		"sub":     sub,
-		"permissions": map[string]bool{
-			"read":           true,
-			"write":          true,
-			"manageUsers":    true,
-			"manageSettings": true,
-		},
+		"allowed":     true,
+		"role":        result.Role,
+		"sub":         result.Sub,
+		"permissions": perms,
 	}
 }
 
@@ -115,6 +123,17 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 					status = http.StatusUnauthorized
 				}
 				writeJSON(w, status, map[string]string{"error": result.Message})
+				return
+			}
+
+			// This handler injects the service role key, so the caller's own role
+			// is the only thing limiting what they can do. Admission alone is not
+			// enough — a `viewer` must not be able to write through it.
+			if result.Permissions != nil &&
+				!AllowsRequest(*result.Permissions, req.Method, req.URL.Path) {
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": "Studio role \"" + result.Role + "\" cannot perform this request",
+				})
 				return
 			}
 		}

@@ -20,7 +20,13 @@ import (
 // ErrNoDSN is returned when neither DSN environment variable is set.
 var ErrNoDSN = errors.New("no database DSN configured (SUPATYPE_SQL_DATABASE_URL or DATABASE_URL)")
 
-const maxConns = 5
+// maxConns is shared by every admin feature on this pool, and those have very
+// different shapes: the SQL runner allows 30-second queries returning up to
+// 10,000 rows, while a Studio capability check is a 3-second-bounded primary-key
+// read. A saturated pool makes the capability check time out and fail closed —
+// a spurious 403 on Studio while someone else runs slow SQL — so leave enough
+// headroom that saturation takes deliberate abuse rather than ordinary use.
+const maxConns = 10
 
 var (
 	once    sync.Once

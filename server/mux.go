@@ -26,6 +26,7 @@ import (
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/studioauth"
+	"github.com/supatype/server/internal/studiomembers"
 	"github.com/supatype/server/internal/valkey"
 )
 
@@ -98,6 +99,15 @@ func buildOuterMux(
 
 	// ── Studio config ─────────────────────────────────────────────────────────
 	studioCfg := studioauth.ConfigFromServer(cfg)
+	// Resolve Studio capability from `_supatype.studio_members` rather than from
+	// the token's claims. Without a DSN there is nothing to read, so the legacy
+	// claim path stays in place instead of locking the deployment out of Studio.
+	if studiomembers.Available() {
+		studioCfg.StudioRole = studiomembers.Lookup
+		logrus.Info("mux: Studio capability resolved from _supatype.studio_members")
+	} else {
+		logrus.Warn("mux: no database DSN — Studio capability falls back to JWT claims")
+	}
 	studioConfigInner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		data, err := studioauth.ReadAdminConfigFile(cfg.AdminConfigPath)
 		if err != nil {

@@ -298,6 +298,10 @@ func buildOuterMux(
 	// Studio admin API must register before app catch-all mounts at "/".
 	serviceHandler := r
 	r.Get("/studio/auth/verify", studioauth.VerifyHandler(studioCfg))
+	// Studio's bootstrap: the schema filtered to what the caller may reach, and
+	// what they may do with it. Both answered from the database per request.
+	r.Get("/studio/schema", studioauth.SchemaHandler(studioCfg))
+	r.Get("/studio/session", studioauth.SessionHandler(studioCfg))
 	r.Mount("/studio/proxy", http.StripPrefix("/studio/proxy", studioauth.ProxyHandler(serviceHandler, studioCfg)))
 	logrus.Info("mux: Studio auth mounted at /studio/auth/verify and /studio/proxy")
 

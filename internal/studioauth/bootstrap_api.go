@@ -120,6 +120,14 @@ func SessionHandler(c Config) http.HandlerFunc {
 				body["access"] = access
 				body["schemaHash"] = snapshot.Hash
 			}
+
+			// Per-column verdicts, so a masked cell can show a lock instead of an empty
+			// string, a readable-but-not-writable input can be disabled rather than
+			// rejected on save, and a column nobody can create is absent from a create
+			// form rather than blocking it.
+			if fields, err := studiobootstrap.FieldVerdictsForCaller(snapshot, caller); err == nil {
+				body["fields"] = fields
+			}
 		}
 
 		w.Header().Set("Cache-Control", "private, no-store")

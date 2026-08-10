@@ -16,6 +16,7 @@ import (
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/functions"
+	"github.com/supatype/server/internal/maskedfields"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/objstore"
 	"github.com/supatype/server/internal/outerhealth"
@@ -184,8 +185,13 @@ func buildOuterMux(
 		}
 		return ""
 	}
-	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", restcache.Middleware(
-		apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, restProxy,
+	// The masked-field header sits outside the response cache so it is present on hits as
+	// well as misses. Safe there because it describes the schema's restrictions, not one
+	// caller's verdicts.
+	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", maskedfields.Middleware(
+		restcache.Middleware(
+			apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, restProxy,
+		),
 	)))
 	logrus.Info("mux: PostgREST proxy mounted at /rest/v1")
 

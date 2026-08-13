@@ -37,9 +37,9 @@ type Target struct {
 	Table     string
 	Operation Operation
 	// Before is the hook to call before the write, if the table declares one.
-	Before *proxy.HookConfig
+	Before *HookConfigEntry
 	// After is the hook to call once the write has succeeded, if the table declares one.
-	After *proxy.HookConfig
+	After *HookConfigEntry
 	// BeforeEvent and AfterEvent name the events, so a dispatcher can set the header without
 	// re-deriving them from the operation.
 	BeforeEvent string
@@ -91,11 +91,31 @@ func operationForMethod(method string) (Operation, bool) {
 	}
 }
 
-// Classify decides which hooks, if any, a request implies.
+// Classify decides which hooks, if any, a request implies, from a manifest's hook map.
 //
-// Returns a zero Target for anything that is not a write to a hooked table, so the middleware can
-// hand the request straight to the proxy without touching its body.
+// A thin adapter over classifyViews: the matching rules live in one place, and this package stays
+// indifferent to whether the map arrived from a manifest file or a control plane.
 func Classify(req *http.Request, hooks map[string]proxy.TableHooks) Target {
+	views := make(map[string]TableHooksView, len(hooks))
+	for table, events := range hooks {
+		view := make(TableHooksView, len(events))
+		for event, cfg := range events {
+			view[event] = HookConfigEntry{
+				Function:      cfg.Function,
+				TimeoutMs:     cfg.TimeoutMs,
+				OnUnavailable: cfg.OnUnavailable,
+			}
+		}
+		views[table] = view
+	}
+	return classifyViews(req, views)
+}
+
+// classifyViews is Classify against the decoupled view types the middleware uses.
+//
+// The middleware deliberately does not depend on `proxy` for this: the hook map may arrive from a
+// manifest today and from the control plane tomorrow, and the matching logic should not care.
+func classifyViews(req *http.Request, hooks map[string]TableHooksView) Target {
 	if len(hooks) == 0 {
 		return Target{}
 	}
@@ -118,13 +138,15 @@ func Classify(req *http.Request, hooks map[string]proxy.TableHooks) Target {
 	} else {
 		target.BeforeEvent, target.AfterEvent = EventBeforeChange, EventAfterChange
 	}
-	// `&cfg` is safe: a map read of a value type already yields a copy, so nothing here points into
-	// the hot-reloaded manifest.
 	if cfg, ok := declared[target.BeforeEvent]; ok && cfg.Function != "" {
-		target.Before = &cfg
+		target.Before = &HookConfigEntry{
+			Function: cfg.Function, TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable,
+		}
 	}
 	if cfg, ok := declared[target.AfterEvent]; ok && cfg.Function != "" {
-		target.After = &cfg
+		target.After = &HookConfigEntry{
+			Function: cfg.Function, TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable,
+		}
 	}
 	return target
 }

@@ -153,3 +153,68 @@ func TestRestMountWithNoHooksInManifest(t *testing.T) {
 		t.Fatalf("write did not pass through cleanly: wrote=%v body=%q", wrote(), upstreamBody())
 	}
 }
+
+func TestHooksNamespaceIsNotPubliclyInvocable(t *testing.T) {
+	// A hook is procedural — the server calls it around a write. If a caller holding the anon key
+	// could POST to it directly, they would choose the payload: a made-up "row about to be deleted",
+	// or an afterChange that fires side effects for a write that never happened.
+	var called bool
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(worker.Close)
+
+	cfg := &serverconf.ServerConfig{
+		Mode:               "dev",
+		FunctionsWorkerURL: worker.URL,
+	}
+	manifest := &proxy.RouteManifest{
+		Schema:             "public",
+		FunctionsEnabled:   true,
+		FunctionsWorkerURL: worker.URL,
+	}
+	h := buildOuterMux(cfg, func(*http.Request) *proxy.RouteManifest { return manifest },
+		func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") },
+		http.NotFoundHandler(), nil, "test", nil, nil)
+
+	for _, path := range []string{"/functions/v1/hooks/moderate", "/functions/v1/hooks"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`)))
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("%s: status = %d, want 404", path, rr.Code)
+		}
+	}
+	if called {
+		t.Fatal("a hook was reachable through the public functions path")
+	}
+}
+
+func TestPublicFunctionsStillInvocable(t *testing.T) {
+	// The refusal must be the namespace, not functions in general.
+	var gotPath string
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(worker.Close)
+
+	cfg := &serverconf.ServerConfig{Mode: "dev", FunctionsWorkerURL: worker.URL}
+	manifest := &proxy.RouteManifest{
+		Schema:             "public",
+		FunctionsEnabled:   true,
+		FunctionsWorkerURL: worker.URL,
+	}
+	h := buildOuterMux(cfg, func(*http.Request) *proxy.RouteManifest { return manifest },
+		func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") },
+		http.NotFoundHandler(), nil, "test", nil, nil)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/functions/v1/send-email", strings.NewReader(`{}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a public function", rr.Code)
+	}
+	if !strings.Contains(gotPath, "send-email") {
+		t.Fatalf("worker path = %q", gotPath)
+	}
+}

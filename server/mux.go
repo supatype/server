@@ -225,8 +225,9 @@ func buildOuterMux(
 				return "", err
 			}
 			// The invocation proxy forwards the request path, so what comes back is a base and the
-			// function name has to be appended for a direct call.
-			return strings.TrimRight(base.String(), "/") + "/" + function, nil
+			// route has to be appended for a direct call. `hooks/` is the namespace the worker serves
+			// them under and the one the public path refuses.
+			return strings.TrimRight(base.String(), "/") + "/hooks/" + function, nil
 		},
 		Claims:    modelhooks.ClaimsFromBearer(cfg.JWTSecret),
 		RequestID: func(req *http.Request) string { return utilities.GetRequestID(req.Context()) },
@@ -457,6 +458,13 @@ func functionsInvocationProxy(
 		m := manifestFor(req)
 		if m != nil && !m.FunctionsEnabled && strings.TrimSpace(cfg.FunctionsWorkerURL) == "" {
 			http.Error(w, "functions disabled", http.StatusNotFound)
+			return
+		}
+		// Hooks are procedural: the API server calls them around a write. They live under a `hooks/`
+		// route on the same worker, and that route is not a public endpoint — a caller holding the anon
+		// key must not be able to invoke one directly with a payload of their own choosing.
+		if seg := firstURLSegment(req.URL.Path); seg == "hooks" {
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		fnName := firstURLSegment(req.URL.Path)

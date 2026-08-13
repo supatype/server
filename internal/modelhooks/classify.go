@@ -5,7 +5,11 @@
 // different feature, and merging them would confuse both.
 //
 // What a hook is not: a security boundary. It fires for writes through this API, so direct SQL, seeds
-// and anything holding service_role bypass it. Invariants belong in RLS.
+// and migrations bypass it. Invariants belong in RLS.
+//
+// Note what does *not* bypass it: `service_role`. That key changes what Postgres permits, not whether
+// this middleware runs, so a service-role write over HTTP fires hooks like any other — which is why a
+// hook writing to its own table would call itself forever without the depth guard.
 package modelhooks
 
 import (

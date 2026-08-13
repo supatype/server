@@ -97,6 +97,23 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 				return
 			}
 
+			depth := hookDepth(req)
+			if depth >= MaxHookDepth {
+				logrus.WithFields(logrus.Fields{
+					"component": "model_hook",
+					"table":     target.Table,
+					"operation": string(target.Operation),
+					"depth":     depth,
+				}).Error("hook chain too deep; refusing the write")
+				// Refused, not run without its hooks: a validation hook that stopped running must not
+				// let writes through. 508 is the honest status — the request is well formed and the
+				// server detected a loop while answering it.
+				writeJSON(w, http.StatusLoopDetected, map[string]string{
+					"message": "This write is too many hooks deep, so it was not applied",
+				})
+				return
+			}
+
 			log := logrus.WithFields(logrus.Fields{
 				"component": "model_hook",
 				"table":     target.Table,
@@ -109,7 +126,7 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 			}
 
 			if target.Before != nil {
-				outcome, proceed := runBefore(w, req, target, body, opts, log)
+				outcome, proceed := runBefore(w, req, target, body, opts, log, depth)
 				if !proceed {
 					return
 				}
@@ -130,7 +147,7 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 
 			rec := &recorder{ResponseWriter: w, captureBody: wantsRepresentation(req)}
 			next.ServeHTTP(rec, req)
-			runAfter(req, target, rec, opts, log)
+			runAfter(req, target, rec, opts, log, depth)
 		})
 	}
 }
@@ -175,6 +192,7 @@ func runBefore(
 	body []byte,
 	opts Options,
 	log *logrus.Entry,
+	depth int,
 ) (Outcome, bool) {
 	cfg := *target.Before
 	view := HookConfigView{TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable}
@@ -190,7 +208,7 @@ func runBefore(
 		return unavailable(w, view, target.BeforeEvent, "encoding the hook payload: "+err.Error(), log)
 	}
 
-	outcome := opts.Dispatcher.Call(req.Context(), url, target.BeforeEvent, view, encoded)
+	outcome := opts.Dispatcher.Call(req.Context(), url, target.BeforeEvent, view, encoded, depth+1)
 	switch outcome.Kind {
 	case OutcomeReject:
 		// The hook's own status and message. Nothing is added: a hook that chose 409 means 409.
@@ -238,6 +256,7 @@ func runAfter(
 	rec *recorder,
 	opts Options,
 	log *logrus.Entry,
+	depth int,
 ) {
 	if rec.status < 200 || rec.status >= 300 {
 		// The write did not happen, so there is nothing to react to.
@@ -276,7 +295,7 @@ func runAfter(
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), afterHookTimeout)
 	defer cancel()
 
-	outcome := opts.Dispatcher.Call(ctx, url, target.AfterEvent, view, encoded)
+	outcome := opts.Dispatcher.Call(ctx, url, target.AfterEvent, view, encoded, depth+1)
 	switch outcome.Kind {
 	case OutcomeReject:
 		// An after hook cannot undo a committed write, so a rejection is only a log line — and worth

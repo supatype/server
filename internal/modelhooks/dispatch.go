@@ -86,6 +86,9 @@ func (d *Dispatcher) Call(
 	event string,
 	cfg HookConfigView,
 	payload []byte,
+	// depth is how many hooks deep this invocation is. Stamped on the call so the chain can count
+	// itself: a handler's own writes carry it onward, and this middleware refuses past MaxHookDepth.
+	depth int,
 ) Outcome {
 	timeout := cfg.Timeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -97,6 +100,7 @@ func (d *Dispatcher) Call(
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Supatype-Hook", event)
+	req.Header.Set(HookDepthHeader, strconv.Itoa(depth))
 	// Identity encoding for the same reason hookshttp sets it: a gzipped response carries no length.
 	req.Header.Set("Accept-Encoding", "identity")
 	d.sign(req, payload)

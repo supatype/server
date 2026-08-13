@@ -15,7 +15,7 @@ func callAgainst(t *testing.T, handler http.HandlerFunc, cfg HookConfigView, eve
 	t.Cleanup(server.Close)
 
 	d := NewDispatcher(server.Client(), "")
-	return d.Call(context.Background(), server.URL, event, cfg, []byte(`{"table":"posts"}`))
+	return d.Call(context.Background(), server.URL, event, cfg, []byte(`{"table":"posts"}`), 1)
 }
 
 func TestCallProceedsOnEmptyVerdicts(t *testing.T) {
@@ -120,6 +120,7 @@ func TestCallTimesOutWithoutRetrying(t *testing.T) {
 		EventBeforeChange,
 		HookConfigView{TimeoutMs: 30},
 		[]byte(`{}`),
+		1,
 	)
 
 	if got.Kind != OutcomeUnavailable {
@@ -143,7 +144,7 @@ func TestCallSendsTheEventHeaderAndSignsWhenConfigured(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	d := NewDispatcher(server.Client(), "shhh")
-	d.Call(context.Background(), server.URL, EventAfterDelete, HookConfigView{}, []byte(`{}`))
+	d.Call(context.Background(), server.URL, EventAfterDelete, HookConfigView{}, []byte(`{}`), 1)
 
 	// The header is how one function serves several hooks, and how a plain HTTP function tells a
 	// hook call from a user calling it directly.
@@ -165,7 +166,7 @@ func TestCallOmitsSignatureWithoutASecret(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	NewDispatcher(server.Client(), "").
-		Call(context.Background(), server.URL, EventBeforeChange, HookConfigView{}, []byte(`{}`))
+		Call(context.Background(), server.URL, EventBeforeChange, HookConfigView{}, []byte(`{}`), 1)
 
 	if gotSig != "" {
 		t.Fatalf("signature = %q, want none", gotSig)

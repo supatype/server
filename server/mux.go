@@ -190,6 +190,26 @@ func buildOuterMux(
 	// Model hooks sit *inside* the response cache and immediately outside the proxy: a cached read
 	// never reaches them, and a write reaches them before PostgREST sees it — the only place a hook
 	// can still reject or rewrite one.
+	// `previous()` reads the rows a write is about to change, as the service role — see
+	// internal/modelhooks/previous.go for why that is the right privilege and what the token pins.
+	// A failure to build it is not fatal: hooks still run, and the context simply has no `previous`.
+	hookCallback, err := modelhooks.NewCallback(
+		func(req *http.Request) string {
+			m := manifestFor(req)
+			return firstNonEmpty(m.PostgRESTURL, cfg.PostgRESTURL, "http://localhost:3000")
+		},
+		restSchemaFor,
+		cfg.ServiceRoleKey,
+		nil,
+	)
+	if err != nil {
+		logrus.WithError(err).Warn("mux: hook previous() callback unavailable")
+		hookCallback = nil
+	} else {
+		r.Mount(strings.TrimSuffix(modelhooks.PreviousPathPrefix, "/"), hookCallback.Handler())
+		logrus.Infof("mux: hook callback mounted at %s", modelhooks.PreviousPathPrefix)
+	}
+
 	hooks := modelhooks.Middleware(modelhooks.Options{
 		Dispatcher: modelhooks.NewDispatcher(nil, cfg.JWTSecret),
 		Hooks: func(req *http.Request) map[string]modelhooks.TableHooksView {
@@ -210,6 +230,7 @@ func buildOuterMux(
 		},
 		Claims:    modelhooks.ClaimsFromBearer(cfg.JWTSecret),
 		RequestID: func(req *http.Request) string { return utilities.GetRequestID(req.Context()) },
+		Callback:  hookCallback,
 	})
 
 	// The masked-field header sits outside the response cache so it is present on hits as

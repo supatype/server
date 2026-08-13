@@ -60,6 +60,9 @@ type Options struct {
 	Claims       ClaimsFunc
 	RequestID    func(*http.Request) string
 	MaxBodyBytes int64
+	// Callback mints the `previous()` path. Optional: without it the context simply has no
+	// `previous`, which the generated types already model as absent rather than as a broken call.
+	Callback *Callback
 }
 
 type payload struct {
@@ -70,6 +73,9 @@ type payload struct {
 	Rows      json.RawMessage `json:"rows,omitempty"`
 	Patch     json.RawMessage `json:"patch,omitempty"`
 	Filter    string          `json:"filter,omitempty"`
+	// PreviousPath is a path, not a URL: the worker already knows how to reach the stack and the
+	// server does not know its own in-network address. The generated adapter joins them.
+	PreviousPath string `json:"previousPath,omitempty"`
 }
 
 // Middleware runs a table's declared hooks around a write.
@@ -296,6 +302,9 @@ func buildPayload(req *http.Request, target Target, body []byte, opts Options) p
 		p.Filter = req.URL.RawQuery
 	case OpDelete:
 		p.Filter = req.URL.RawQuery
+	}
+	if opts.Callback != nil {
+		p.PreviousPath = opts.Callback.Path(target.Operation, target.Table, req.URL.RawQuery)
 	}
 	return p
 }

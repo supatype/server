@@ -162,6 +162,18 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 	if cm.Schema == "" {
 		cm.Schema = "public"
 	}
+	// Deep-copied like every other map here. A shared hook map would let one tenant's reload mutate
+	// what another tenant's in-flight request is reading.
+	if len(m.Hooks) > 0 {
+		cm.Hooks = make(map[string]TableHooks, len(m.Hooks))
+		for table, events := range m.Hooks {
+			copied := make(TableHooks, len(events))
+			for event, cfg := range events {
+				copied[event] = cfg
+			}
+			cm.Hooks[table] = copied
+		}
+	}
 	if len(m.StaticCachePrefixes) > 0 {
 		cm.StaticCachePrefixes = make(map[string]string, len(m.StaticCachePrefixes))
 		for k, v := range m.StaticCachePrefixes {

@@ -17,6 +17,7 @@ import (
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/maskedfields"
+	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/objstore"
 	"github.com/supatype/server/internal/outerhealth"
@@ -28,6 +29,7 @@ import (
 	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/studioauth"
 	"github.com/supatype/server/internal/studiomembers"
+	"github.com/supatype/server/internal/utilities"
 	"github.com/supatype/server/internal/valkey"
 )
 
@@ -185,12 +187,37 @@ func buildOuterMux(
 		}
 		return ""
 	}
+	// Model hooks sit *inside* the response cache and immediately outside the proxy: a cached read
+	// never reaches them, and a write reaches them before PostgREST sees it — the only place a hook
+	// can still reject or rewrite one.
+	hooks := modelhooks.Middleware(modelhooks.Options{
+		Dispatcher: modelhooks.NewDispatcher(nil, cfg.JWTSecret),
+		Hooks: func(req *http.Request) map[string]modelhooks.TableHooksView {
+			m := manifestFor(req)
+			if m == nil {
+				return nil
+			}
+			return modelhooks.ViewsFromManifest(m.Hooks)
+		},
+		ResolveURL: func(function string) (string, error) {
+			base, err := resolveFunctionsUpstreamURL(cfg, manifestFor(nil), function, denoManager != nil)
+			if err != nil {
+				return "", err
+			}
+			// The invocation proxy forwards the request path, so what comes back is a base and the
+			// function name has to be appended for a direct call.
+			return strings.TrimRight(base.String(), "/") + "/" + function, nil
+		},
+		Claims:    modelhooks.ClaimsFromBearer(cfg.JWTSecret),
+		RequestID: func(req *http.Request) string { return utilities.GetRequestID(req.Context()) },
+	})
+
 	// The masked-field header sits outside the response cache so it is present on hits as
 	// well as misses. Safe there because it describes the schema's restrictions, not one
 	// caller's verdicts.
 	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", maskedfields.Middleware(
 		restcache.Middleware(
-			apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, restProxy,
+			apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, hooks(restProxy),
 		),
 	)))
 	logrus.Info("mux: PostgREST proxy mounted at /rest/v1")

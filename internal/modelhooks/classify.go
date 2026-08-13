@@ -96,19 +96,7 @@ func operationForMethod(method string) (Operation, bool) {
 // A thin adapter over classifyViews: the matching rules live in one place, and this package stays
 // indifferent to whether the map arrived from a manifest file or a control plane.
 func Classify(req *http.Request, hooks map[string]proxy.TableHooks) Target {
-	views := make(map[string]TableHooksView, len(hooks))
-	for table, events := range hooks {
-		view := make(TableHooksView, len(events))
-		for event, cfg := range events {
-			view[event] = HookConfigEntry{
-				Function:      cfg.Function,
-				TimeoutMs:     cfg.TimeoutMs,
-				OnUnavailable: cfg.OnUnavailable,
-			}
-		}
-		views[table] = view
-	}
-	return classifyViews(req, views)
+	return classifyViews(req, ViewsFromManifest(hooks))
 }
 
 // classifyViews is Classify against the decoupled view types the middleware uses.
@@ -149,4 +137,27 @@ func classifyViews(req *http.Request, hooks map[string]TableHooksView) Target {
 		}
 	}
 	return target
+}
+
+// ViewsFromManifest adapts a manifest's hook map into the view types this package works in.
+//
+// Exported so the mount can build a HooksFunc without the middleware depending on how the map was
+// delivered — a manifest file today, possibly a control-plane push later.
+func ViewsFromManifest(hooks map[string]proxy.TableHooks) map[string]TableHooksView {
+	if len(hooks) == 0 {
+		return nil
+	}
+	views := make(map[string]TableHooksView, len(hooks))
+	for table, events := range hooks {
+		view := make(TableHooksView, len(events))
+		for event, cfg := range events {
+			view[event] = HookConfigEntry{
+				Function:      cfg.Function,
+				TimeoutMs:     cfg.TimeoutMs,
+				OnUnavailable: cfg.OnUnavailable,
+			}
+		}
+		views[table] = view
+	}
+	return views
 }

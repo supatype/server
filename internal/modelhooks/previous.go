@@ -124,6 +124,13 @@ func (c *Callback) verify(token string) (previousClaims, error) {
 	return claims, nil
 }
 
+// previousResponse is what a hook receives from the callback: the affected rows as stored, and
+// whether the cap trimmed them.
+type previousResponse struct {
+	Rows      json.RawMessage `json:"rows"`
+	Truncated bool            `json:"truncated"`
+}
+
 // Handler serves the callback. Mounted at PreviousPathPrefix on the outer mux.
 func (c *Callback) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -145,11 +152,18 @@ func (c *Callback) Handler() http.Handler {
 			return
 		}
 
+		// Encoded from a struct rather than assembled by hand. The rows are row *content* — values a
+		// caller wrote — so streaming them into the response with string concatenation puts
+		// attacker-influenced bytes past the encoder, which gosec flags as tainted output (G705) and
+		// which would also emit invalid JSON for a nil `rows`. `nosniff` because a JSON content type is
+		// only a promise until the browser is told not to guess.
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if len(rows) == 0 {
+			rows = json.RawMessage("[]")
+		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"rows":`))
-		_, _ = w.Write(rows)
-		_, _ = w.Write([]byte(`,"truncated":` + strconv.FormatBool(truncated) + `}`))
+		_ = json.NewEncoder(w).Encode(previousResponse{Rows: rows, Truncated: truncated})
 	})
 }
 

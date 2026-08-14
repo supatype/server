@@ -5,6 +5,10 @@ import (
 	"strconv"
 )
 
+// HooksRoutePrefix is the namespace the functions worker serves hooks under, and the one the public
+// functions path refuses. Exported so the mount and the worker cannot drift apart on it.
+const HooksRoutePrefix = "hooks/"
+
 // HookDepthHeader carries how many hooks deep a write already is.
 //
 // A hook receives the service-role key and can write through the API. If it writes to a table that

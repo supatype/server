@@ -73,7 +73,7 @@ func newStack(t *testing.T, hooks map[string]TableHooksView, hookFn http.Handler
 	mw := Middleware(Options{
 		Dispatcher: NewDispatcher(nil, ""),
 		Hooks:      func(*http.Request) map[string]TableHooksView { return hooks },
-		ResolveURL: func(string) (string, error) { return fnServer.URL, nil },
+		ResolveURL: func(*http.Request, string) (string, error) { return fnServer.URL, nil },
 		Claims: func(*http.Request) *Claims {
 			return &Claims{Sub: "user-1", Role: "authenticated"}
 		},
@@ -341,7 +341,7 @@ func TestOversizedBodyIsRefusedRatherThanUnhooked(t *testing.T) {
 	mw := Middleware(Options{
 		Dispatcher:   NewDispatcher(nil, ""),
 		Hooks:        func(*http.Request) map[string]TableHooksView { return beforeHooks("moderate") },
-		ResolveURL:   func(string) (string, error) { return fn.URL, nil },
+		ResolveURL:   func(*http.Request, string) (string, error) { return fn.URL, nil },
 		MaxBodyBytes: 16,
 	})
 	server := httptest.NewServer(mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

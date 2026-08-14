@@ -83,7 +83,9 @@ func liveServer(t *testing.T, rest string, hooks map[string]TableHooksView, scri
 	mw := Middleware(Options{
 		Dispatcher: NewDispatcher(nil, "test-secret"),
 		Hooks:      func(*http.Request) map[string]TableHooksView { return hooks },
-		ResolveURL: func(function string) (string, error) { return hookSrv.URL + "/" + function, nil },
+		ResolveURL: func(_ *http.Request, function string) (string, error) {
+			return hookSrv.URL + "/" + function, nil
+		},
 		Claims:     func(*http.Request) *Claims { return nil },
 		Callback:   callback,
 	})

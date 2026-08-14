@@ -26,7 +26,7 @@ const afterHookTimeout = 30 * time.Second
 
 // UpstreamResolver returns the URL to POST a named function to.
 // Wired to the server's existing functions resolution rather than duplicating it.
-type UpstreamResolver func(function string) (string, error)
+type UpstreamResolver func(req *http.Request, function string) (string, error)
 
 // Claims is the caller identity a hook payload carries.
 type Claims struct {
@@ -198,7 +198,7 @@ func runBefore(
 	view := HookConfigView{TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable}
 	log = log.WithFields(logrus.Fields{"event": target.BeforeEvent, "function": cfg.Function})
 
-	url, err := opts.ResolveURL(cfg.Function)
+	url, err := opts.ResolveURL(req, cfg.Function)
 	if err != nil {
 		return unavailable(w, view, target.BeforeEvent, "resolving the function URL: "+err.Error(), log)
 	}
@@ -266,7 +266,7 @@ func runAfter(
 	view := HookConfigView{TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable}
 	log = log.WithFields(logrus.Fields{"event": target.AfterEvent, "function": cfg.Function})
 
-	url, err := opts.ResolveURL(cfg.Function)
+	url, err := opts.ResolveURL(req, cfg.Function)
 	if err != nil {
 		log.WithError(err).Warn("after hook not called: could not resolve the function URL")
 		return

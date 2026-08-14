@@ -219,15 +219,12 @@ func buildOuterMux(
 			}
 			return modelhooks.ViewsFromManifest(m.Hooks)
 		},
-		ResolveURL: func(function string) (string, error) {
-			base, err := resolveFunctionsUpstreamURL(cfg, manifestFor(nil), function, denoManager != nil)
-			if err != nil {
-				return "", err
-			}
-			// The invocation proxy forwards the request path, so what comes back is a base and the
-			// route has to be appended for a direct call. `hooks/` is the namespace the worker serves
-			// them under and the one the public path refuses.
-			return strings.TrimRight(base.String(), "/") + "/hooks/" + function, nil
+		ResolveURL: func(req *http.Request, function string) (string, error) {
+			// The request, not nil: a managed server reads the caller's tenant from it, and the hook map
+			// already comes from that tenant's config. Resolving the *URL* from the file manifest instead
+			// sent every hooked write to whatever worker the platform happened to be configured with — or
+			// to none, which is a 503 on every write to a hooked table.
+			return hookUpstreamURL(cfg, manifestFor(req), function, denoManager != nil)
 		},
 		Claims:    modelhooks.ClaimsFromBearer(cfg.JWTSecret),
 		RequestID: func(req *http.Request) string { return utilities.GetRequestID(req.Context()) },
@@ -524,6 +521,37 @@ func firstURLSegment(path string) string {
 		return path[:i]
 	}
 	return path
+}
+
+// hookUpstreamURL is where a hook invocation is sent.
+//
+// Extracted from the mount so the rule can be tested without building a mux: which worker serves a
+// hook is the difference between a hooked table working and every write to it answering 503.
+func hookUpstreamURL(
+	cfg *serverconf.ServerConfig,
+	m *proxy.RouteManifest,
+	function string,
+	inProcessDeno bool,
+) (string, error) {
+	// A hook's own Deployment is registered under its namespaced name, so a project may have a hook and
+	// a public function sharing a name without one resolving to the other's pod.
+	if m != nil {
+		if u := strings.TrimSpace(m.FunctionWorkerURLs[modelhooks.HooksRoutePrefix+function]); u != "" {
+			return strings.TrimRight(u, "/") + "/" + modelhooks.HooksRoutePrefix + function, nil
+		}
+	}
+
+	// Empty function name on purpose: the per-function map has already been consulted under the
+	// namespaced key, and consulting it again under the bare name is exactly the collision above. What
+	// is left is the project's own worker.
+	base, err := resolveFunctionsUpstreamURL(cfg, m, "", inProcessDeno)
+	if err != nil {
+		return "", err
+	}
+	// The invocation proxy forwards the request path, so what comes back is a base and the route has to
+	// be appended for a direct call. `hooks/` is the namespace the worker serves them under, and the one
+	// the public functions path refuses.
+	return strings.TrimRight(base.String(), "/") + "/" + modelhooks.HooksRoutePrefix + function, nil
 }
 
 func resolveFunctionsUpstreamURL(

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -105,9 +106,12 @@ func TestCallTreatsBreakageAsUnavailableNotRefusal(t *testing.T) {
 }
 
 func TestCallTimesOutWithoutRetrying(t *testing.T) {
-	var attempts int
+	// Atomic because the handler runs on the server's goroutine while the assertion below reads from
+	// the test's. The timeout means the request is still in flight when `Call` returns, so there is no
+	// happens-before edge to borrow — `go test -race` fails a plain int here, and only under -race.
+	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		attempts++
+		attempts.Add(1)
 		time.Sleep(150 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -128,8 +132,8 @@ func TestCallTimesOutWithoutRetrying(t *testing.T) {
 	}
 	// Retrying before a write multiplies the latency the caller waits and re-invokes a handler that
 	// may already have acted. One attempt, on purpose.
-	if attempts != 1 {
-		t.Fatalf("attempts = %d, want exactly 1", attempts)
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("attempts = %d, want exactly 1", got)
 	}
 }
 

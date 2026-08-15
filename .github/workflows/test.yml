@@ -72,10 +72,10 @@ jobs:
           # coverage profile as they contain legacy or untestable code (like
           # `main` package)
 
-          sed -i '/^github.com\/supabase\/auth\/client/d' coverage.out
-          sed -i '/^github.com\/supabase\/auth\/cmd/d' coverage.out
-          sed -i '/^github.com\/supabase\/auth\/docs/d' coverage.out
-          sed -i '/^github.com\/supabase\/auth\/main/d' coverage.out
+          sed -i '/^github.com\/supatype\/server\/client/d' coverage.out
+          sed -i '/^github.com\/supatype\/server\/cmd/d' coverage.out
+          sed -i '/^github.com\/supatype\/server\/docs/d' coverage.out
+          sed -i '/^github.com\/supatype\/server\/main/d' coverage.out
 
       - uses: shogo82148/actions-goveralls@v1
         with:

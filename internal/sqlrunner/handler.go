@@ -18,11 +18,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/dbpool"
 )
 
 const (
@@ -61,7 +60,7 @@ func Handler() http.Handler {
 		schema := resolveSchema(r.Header.Get("Authorization"), body.Schema)
 		fmt.Fprintf(os.Stderr, "[sqlrunner] schema=%s\n", schema)
 
-		pool, err := getPool(r.Context())
+		pool, err := dbpool.Pool(r.Context())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[sqlrunner] pool error: %v\n", err)
 			logrus.WithError(err).Error("sqlrunner: database not available")
@@ -229,48 +228,6 @@ func sqlRunnerInsecure() bool {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv(insecureEnv)))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
-
-// ─── Connection pool ──────────────────────────────────────────────────────────
-
-var (
-	poolOnce sync.Once
-	pool     *pgxpool.Pool
-	poolErr  error
-)
-
-func getPool(_ context.Context) (*pgxpool.Pool, error) {
-	poolOnce.Do(func() {
-		dsn := os.Getenv("SUPATYPE_SQL_DATABASE_URL")
-		if dsn == "" {
-			dsn = os.Getenv("DATABASE_URL")
-		}
-		if dsn == "" {
-			poolErr = errNoDSN
-			return
-		}
-		cfg, err := pgxpool.ParseConfig(dsn)
-		if err != nil {
-			poolErr = err
-			return
-		}
-		cfg.MaxConns = 5
-		// Use background context — pool lifetime must not be tied to the
-		// first request's context.
-		pool, poolErr = pgxpool.NewWithConfig(context.Background(), cfg)
-		if poolErr != nil {
-			logrus.WithError(poolErr).WithField("dsn_host", cfg.ConnConfig.Host).Error("sqlrunner: failed to connect pool")
-		} else {
-			logrus.WithField("dsn_host", cfg.ConnConfig.Host).Info("sqlrunner: pool connected")
-		}
-	})
-	return pool, poolErr
-}
-
-var errNoDSN = &dsnError{}
-
-type dsnError struct{}
-
-func (e *dsnError) Error() string { return "DATABASE_URL is not set" }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

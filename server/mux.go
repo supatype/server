@@ -16,6 +16,8 @@ import (
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/functions"
+	"github.com/supatype/server/internal/maskedfields"
+	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/objstore"
 	"github.com/supatype/server/internal/outerhealth"
@@ -26,6 +28,8 @@ import (
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/studioauth"
+	"github.com/supatype/server/internal/studiomembers"
+	"github.com/supatype/server/internal/utilities"
 	"github.com/supatype/server/internal/valkey"
 )
 
@@ -98,6 +102,15 @@ func buildOuterMux(
 
 	// ── Studio config ─────────────────────────────────────────────────────────
 	studioCfg := studioauth.ConfigFromServer(cfg)
+	// Resolve Studio capability from `_supatype.studio_members` rather than from
+	// the token's claims. Without a DSN there is nothing to read, so the legacy
+	// claim path stays in place instead of locking the deployment out of Studio.
+	if studiomembers.Available() {
+		studioCfg.StudioRole = studiomembers.Lookup
+		logrus.Info("mux: Studio capability resolved from _supatype.studio_members")
+	} else {
+		logrus.Warn("mux: no database DSN — Studio capability falls back to JWT claims")
+	}
 	studioConfigInner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		data, err := studioauth.ReadAdminConfigFile(cfg.AdminConfigPath)
 		if err != nil {
@@ -112,6 +125,15 @@ func buildOuterMux(
 		_, _ = w.Write(data)
 	})
 	r.Post("/studio-config", studioauth.RequireAdmin(studioCfg, studioConfigInner).ServeHTTP)
+
+	// Studio membership assignment. Mounted outside /admin/v1 (the service-role
+	// admin API) because this is authenticated as a project user with a Studio
+	// role, not with the service role key.
+	membersAPI := studioauth.MembersAPI(studioCfg)
+	r.Handle("/admin/studio-roles", membersAPI)
+	r.Handle("/admin/studio-members", membersAPI)
+	r.Handle("/admin/studio-members/*", membersAPI)
+	logrus.Info("mux: Studio membership API mounted at /admin/studio-members")
 
 	r.Post("/sql", sqlrunner.Handler().ServeHTTP)
 
@@ -165,8 +187,57 @@ func buildOuterMux(
 		}
 		return ""
 	}
-	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", restcache.Middleware(
-		apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, restProxy,
+	// Model hooks sit *inside* the response cache and immediately outside the proxy: a cached read
+	// never reaches them, and a write reaches them before PostgREST sees it — the only place a hook
+	// can still reject or rewrite one.
+	// `previous()` reads the rows a write is about to change, as the service role — see
+	// internal/modelhooks/previous.go for why that is the right privilege and what the token pins.
+	// A failure to build it is not fatal: hooks still run, and the context simply has no `previous`.
+	hookCallback, err := modelhooks.NewCallback(
+		func(req *http.Request) string {
+			m := manifestFor(req)
+			return firstNonEmpty(m.PostgRESTURL, cfg.PostgRESTURL, "http://localhost:3000")
+		},
+		restSchemaFor,
+		cfg.ServiceRoleKey,
+		nil,
+	)
+	if err != nil {
+		logrus.WithError(err).Warn("mux: hook previous() callback unavailable")
+		hookCallback = nil
+	} else {
+		r.Mount(strings.TrimSuffix(modelhooks.PreviousPathPrefix, "/"), hookCallback.Handler())
+		logrus.Infof("mux: hook callback mounted at %s", modelhooks.PreviousPathPrefix)
+	}
+
+	hooks := modelhooks.Middleware(modelhooks.Options{
+		Dispatcher: modelhooks.NewDispatcher(nil, cfg.JWTSecret),
+		Hooks: func(req *http.Request) map[string]modelhooks.TableHooksView {
+			m := manifestFor(req)
+			if m == nil {
+				return nil
+			}
+			return modelhooks.ViewsFromManifest(m.Hooks)
+		},
+		ResolveURL: func(req *http.Request, function string) (string, error) {
+			// The request, not nil: a managed server reads the caller's tenant from it, and the hook map
+			// already comes from that tenant's config. Resolving the *URL* from the file manifest instead
+			// sent every hooked write to whatever worker the platform happened to be configured with — or
+			// to none, which is a 503 on every write to a hooked table.
+			return hookUpstreamURL(cfg, manifestFor(req), function, denoManager != nil)
+		},
+		Claims:    modelhooks.ClaimsFromBearer(cfg.JWTSecret),
+		RequestID: func(req *http.Request) string { return utilities.GetRequestID(req.Context()) },
+		Callback:  hookCallback,
+	})
+
+	// The masked-field header sits outside the response cache so it is present on hits as
+	// well as misses. Safe there because it describes the schema's restrictions, not one
+	// caller's verdicts.
+	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", maskedfields.Middleware(
+		restcache.Middleware(
+			apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, hooks(restProxy),
+		),
 	)))
 	logrus.Info("mux: PostgREST proxy mounted at /rest/v1")
 
@@ -279,6 +350,10 @@ func buildOuterMux(
 	// Studio admin API must register before app catch-all mounts at "/".
 	serviceHandler := r
 	r.Get("/studio/auth/verify", studioauth.VerifyHandler(studioCfg))
+	// Studio's bootstrap: the schema filtered to what the caller may reach, and
+	// what they may do with it. Both answered from the database per request.
+	r.Get("/studio/schema", studioauth.SchemaHandler(studioCfg))
+	r.Get("/studio/session", studioauth.SessionHandler(studioCfg))
 	r.Mount("/studio/proxy", http.StripPrefix("/studio/proxy", studioauth.ProxyHandler(serviceHandler, studioCfg)))
 	logrus.Info("mux: Studio auth mounted at /studio/auth/verify and /studio/proxy")
 
@@ -306,9 +381,14 @@ func buildOuterMux(
 	case "dev":
 		handler = modes.DevMiddleware(r)
 	case "managed":
-		inner := http.Handler(r)
+		// Data-plane requests must carry a project API key; without this an
+		// unkeyed request runs as the anon role.
+		inner := http.Handler(modes.APIKeyMiddleware(cfg.JWTSecret, r))
+		if cfg.JWTSecret == "" {
+			logrus.Error("mux: managed mode but JWT secret is unset — data-plane requests will be refused")
+		}
 		if cfg.TenantHMACSecret != "" {
-			inner = modes.TenantMiddleware(cfg.TenantHMACSecret, r)
+			inner = modes.TenantMiddleware(cfg.TenantHMACSecret, inner)
 		} else {
 			logrus.Warn("mux: managed mode but SUPATYPE_TENANT_HMAC_SECRET is unset — tenant verification disabled")
 		}
@@ -377,6 +457,13 @@ func functionsInvocationProxy(
 			http.Error(w, "functions disabled", http.StatusNotFound)
 			return
 		}
+		// Hooks are procedural: the API server calls them around a write. They live under a `hooks/`
+		// route on the same worker, and that route is not a public endpoint — a caller holding the anon
+		// key must not be able to invoke one directly with a payload of their own choosing.
+		if seg := firstURLSegment(req.URL.Path); seg == "hooks" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		fnName := firstURLSegment(req.URL.Path)
 		u, err := resolveFunctionsUpstreamURL(cfg, m, fnName, inProcessDeno)
 		if err != nil {
@@ -434,6 +521,37 @@ func firstURLSegment(path string) string {
 		return path[:i]
 	}
 	return path
+}
+
+// hookUpstreamURL is where a hook invocation is sent.
+//
+// Extracted from the mount so the rule can be tested without building a mux: which worker serves a
+// hook is the difference between a hooked table working and every write to it answering 503.
+func hookUpstreamURL(
+	cfg *serverconf.ServerConfig,
+	m *proxy.RouteManifest,
+	function string,
+	inProcessDeno bool,
+) (string, error) {
+	// A hook's own Deployment is registered under its namespaced name, so a project may have a hook and
+	// a public function sharing a name without one resolving to the other's pod.
+	if m != nil {
+		if u := strings.TrimSpace(m.FunctionWorkerURLs[modelhooks.HooksRoutePrefix+function]); u != "" {
+			return strings.TrimRight(u, "/") + "/" + modelhooks.HooksRoutePrefix + function, nil
+		}
+	}
+
+	// Empty function name on purpose: the per-function map has already been consulted under the
+	// namespaced key, and consulting it again under the bare name is exactly the collision above. What
+	// is left is the project's own worker.
+	base, err := resolveFunctionsUpstreamURL(cfg, m, "", inProcessDeno)
+	if err != nil {
+		return "", err
+	}
+	// The invocation proxy forwards the request path, so what comes back is a base and the route has to
+	// be appended for a direct call. `hooks/` is the namespace the worker serves them under, and the one
+	// the public functions path refuses.
+	return strings.TrimRight(base.String(), "/") + "/" + modelhooks.HooksRoutePrefix + function, nil
 }
 
 func resolveFunctionsUpstreamURL(

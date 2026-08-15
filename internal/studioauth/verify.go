@@ -8,12 +8,15 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 )
 
-// Result is the outcome of an admin JWT check.
+// Result is the outcome of an admin access check.
 type Result struct {
 	Allowed bool
 	Message string
 	Role    string
 	Sub     string
+	// Permissions is set when capability came from a membership role. Nil on the
+	// legacy claim path, where the claim only ever meant "is an admin".
+	Permissions *StudioPermissions
 }
 
 // VerifyBearerToken validates a user JWT and checks studio admin role membership.
@@ -93,4 +96,46 @@ func extractBearerToken(req *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(token)
+}
+
+// ResolveAccess decides Studio access for a request.
+//
+// The token establishes *identity* (signature, expiry, subject). Capability comes
+// from `_supatype.studio_members` when a lookup is configured, so a user with no
+// membership row is refused even if their claims say "admin", and a member is
+// admitted without needing any claim at all.
+func ResolveAccess(req *http.Request, c Config) Result {
+	res := VerifyRequest(req, c.JWTSecret, c.AdminRoles)
+	if c.StudioRole == nil {
+		return res
+	}
+
+	// A token that failed verification outright carries no usable identity.
+	if strings.TrimSpace(res.Sub) == "" {
+		return res
+	}
+
+	role, ok := c.StudioRole(res.Sub)
+	role = strings.TrimSpace(role)
+	if !ok || role == "" {
+		return Result{
+			Allowed: false,
+			Message: "You don't have permission to access the admin panel",
+			Sub:     res.Sub,
+		}
+	}
+
+	// A role this deployment does not understand grants nothing — see
+	// capability.go for why unknown roles must not inherit.
+	perms, known := PermissionsForRole(role)
+	if !known {
+		return Result{
+			Allowed: false,
+			Message: "Unrecognised Studio role \"" + role + "\" — access denied",
+			Role:    role,
+			Sub:     res.Sub,
+		}
+	}
+
+	return Result{Allowed: true, Message: "ok", Role: role, Sub: res.Sub, Permissions: &perms}
 }

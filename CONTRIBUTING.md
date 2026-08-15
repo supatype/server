@@ -8,9 +8,9 @@ Please help us keep all our projects open and inclusive. Kindly follow our [Code
 
 ## Quick Start
 
-Auth has a development container setup that makes it easy to get started contributing. This setup only requires that [Docker](https://www.docker.com/get-started) is setup on your system. The development container setup includes a PostgreSQL container with migrations already applied and a container running GoTrue that will perform a hot reload when changes to the source code are detected.
+Auth has a development container setup that makes it easy to get started contributing. This setup only requires that [Docker](https://www.docker.com/get-started) is setup on your system. The development container setup includes a PostgreSQL container with migrations already applied and a container running supatype-server that will perform a hot reload when changes to the source code are detected.
 
-If you would like to run Auth locally or learn more about what these containers are doing for you, continue reading the [Setup and Tooling](#setup-and-tooling) section below. Otherwise, you can skip ahead to the [How To Verify that GoTrue is Available](#how-to-verify-that-auth-is-available) section to learn about working with and developing GoTrue.
+If you would like to run Auth locally or learn more about what these containers are doing for you, continue reading the [Setup and Tooling](#setup-and-tooling) section below. Otherwise, you can skip ahead to the [How To Verify that the server is Available](#how-to-verify-that-auth-is-available) section to learn about working with and developing supatype-server.
 
 Before using the containers, you will need to make sure an `.env.docker` file exists by making a copy of `example.docker.env` and configuring it for your needs. The set of env vars in `example.docker.env` only contain the necessary env vars for auth to start in a docker environment. For the full list of env vars, please refer to `example.env` and copy over the necessary ones into your `.env.docker` file.
 
@@ -491,7 +491,7 @@ We actively welcome your pull requests.
 
 - Is there a corresponding issue created for it? If so, please include it in the PR description so we can track / refer to it.
 - Does your PR follow the [semantic-release commit guidelines](https://github.com/angular/angular.js/blob/master/DEVELOPERS.md#-git-commit-guidelines)?
-- If the PR is a `feat`, an [RFC](https://github.com/supabase/rfcs) or a detailed description of the design implementation is required. The former (RFC) is preferred before starting on the PR.
+- If the PR is a `feat`, a detailed description of the design implementation is required. The former (RFC) is preferred before starting on the PR.
 - Are the existing tests passing?
 - Have you written some tests for your PR?
 
@@ -507,7 +507,7 @@ An end-to-end test includes:
 - Generating your own client_id and secret
 - Testing that `http://localhost:9999/authorize?provider=MY_COOL_NEW_PROVIDER` redirects you to the provider sign-in page
 - The callback is handled properly
-- Gotrue redirects to the `SITE_URL` or one of the URI's specified in the `URI_ALLOW_LIST` with the access_token, provider_token, expiry and refresh_token as query fragments
+- supatype-server redirects to the `SITE_URL` or one of the URI's specified in the `URI_ALLOW_LIST` with the access_token, provider_token, expiry and refresh_token as query fragments
 
 ### Writing tests for the new OAuth provider implemented
 

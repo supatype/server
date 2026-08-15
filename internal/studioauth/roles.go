@@ -18,7 +18,43 @@ func DevBypass() bool {
 		return false
 	}
 	v := strings.TrimSpace(strings.ToLower(os.Getenv("STUDIO_OPEN_DEV")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
+	if !(v == "1" || v == "true" || v == "yes" || v == "on") {
+		return false
+	}
+	// An open Studio proxy answers unauthenticated requests *and* injects the
+	// service role key, so it is full database access. Two env vars are easy to
+	// carry from a laptop to a server by copying a config, so also require the
+	// deployment to be locally addressed: convenience stays on localhost and
+	// cannot follow the config into production.
+	return isLocallyAddressed()
+}
+
+// isLocallyAddressed reports whether this deployment's public URL is a local
+// address. Unset is treated as local so `supatype dev` keeps working before any
+// URL is configured.
+func isLocallyAddressed() bool {
+	for _, key := range []string{"API_EXTERNAL_URL", "GOTRUE_API_EXTERNAL_URL", "GOTRUE_SITE_URL"} {
+		raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+		if raw == "" {
+			continue
+		}
+		host := raw
+		if i := strings.Index(host, "://"); i >= 0 {
+			host = host[i+3:]
+		}
+		if i := strings.IndexAny(host, "/:"); i >= 0 {
+			host = host[:i]
+		}
+		switch {
+		case host == "localhost", host == "127.0.0.1", host == "[::1]", host == "::1":
+		case strings.HasSuffix(host, ".localhost"), strings.HasSuffix(host, ".local"):
+		case host == "lvh.me", strings.HasSuffix(host, ".lvh.me"):
+		case host == "host.docker.internal":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // AdminRolesFromEnv reads STUDIO_ADMIN_ROLES (comma-separated) or returns defaults.

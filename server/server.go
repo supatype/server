@@ -69,7 +69,15 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 
 	// Include serve ctx which carries cancelation signals so DialContext does
 	// not hang indefinitely at startup.
-	db, err := storage.DialContext(ctx, config)
+	//
+	// Retried while the database is merely unreachable. Returning the error here exits the binary,
+	// which was survivable only because the Compose `db` healthcheck held the container back until
+	// Postgres answered — a stack pointed at an external database has no such container, and no
+	// healthcheck ever covered a database that restarts later. A wrong password or a missing database
+	// still fails immediately; see internal/storage/dial_retry.go for where that line sits.
+	db, err := storage.DialWithRetry(ctx, func(ctx context.Context) (*storage.Connection, error) {
+		return storage.DialContext(ctx, config)
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("error opening database: %w", err)
 	}
@@ -371,5 +379,6 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		_ = db.Close()
 	}
 
-	return outerMux, drain, nil
+	handler := wrapCloudGateway(outerMux)
+	return handler, drain, nil
 }

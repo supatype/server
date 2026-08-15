@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/studiobootstrap"
 	"github.com/supatype/server/internal/valkey"
 )
 
@@ -60,6 +61,21 @@ func Middleware(
 		usePublic := clientPublic && tableCfg.AllowPublic
 		if clientPublic && !tableCfg.AllowPublic {
 			logrus.WithField("table", table).Debug("restcache: public flag ignored — allow_public false")
+		}
+		// A public-scoped entry is keyed "global", so every caller shares one
+		// response. That is only safe when the table's read rule gives every caller
+		// the same answer. `allow_public` on a table whose rule depends on the
+		// caller would serve the first requester's rows to everyone until the TTL
+		// expires, which is a cross-user exposure through a config flag.
+		//
+		// Downgraded to per-identity scope rather than refused: the request still
+		// returns correct data, just with a less-shared cache entry. A
+		// misconfiguration should not become an outage.
+		if usePublic && !publicScopeSafe(req.Context(), table) {
+			usePublic = false
+			logrus.WithField("table", table).
+				Warn("restcache: allow_public ignored — this table's read rule depends on the caller, " +
+					"so a shared cache entry would serve one caller's rows to another")
 		}
 		identity := IdentityForCache(req, jwtSecret, usePublic)
 		scope := cacheScopeLabel(usePublic)
@@ -178,4 +194,25 @@ func storeEntry(ctx context.Context, vk *valkey.Client, key string, entry Entry,
 		return err
 	}
 	return vk.SetBytes(ctx, key, raw, ttl)
+}
+
+// publicScopeSafe reports whether responses for a table may share one cache entry
+// across callers.
+//
+// Fails safe: when the schema classification cannot be read at all, no table is
+// treated as publicly cacheable. "We could not check" is not a reason to start
+// sharing responses between users.
+func publicScopeSafe(ctx context.Context, table string) bool {
+	tables, ok := studiobootstrap.IdentityScopedTables(ctx)
+	if !ok {
+		return false
+	}
+	identityDependent, known := tables[table]
+	if !known {
+		// A table the schema does not describe — a view, or something created
+		// outside the schema. Its rules are unknown, so it does not get shared
+		// caching.
+		return false
+	}
+	return !identityDependent
 }

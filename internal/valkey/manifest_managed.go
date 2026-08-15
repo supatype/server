@@ -77,6 +77,11 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.RealtimeURL != "" {
 		m.RealtimeURL = tc.RealtimeURL
 	}
+	// Replaced wholesale, not merged per table: a hook removed from the schema has to stop firing, and
+	// a per-key merge would keep calling it.
+	if tc.Hooks != nil {
+		m.Hooks = tc.Hooks
+	}
 	if tc.FunctionsEnabled != nil {
 		m.FunctionsEnabled = *tc.FunctionsEnabled
 	}

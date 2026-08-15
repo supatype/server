@@ -66,6 +66,35 @@ type RouteManifest struct {
 
 	// StaticCachePrefixes maps URL path prefix → Cache-Control (longest matching prefix wins).
 	StaticCachePrefixes map[string]string `json:"static_cache_prefixes,omitempty"`
+
+	// Hooks maps table name → lifecycle hooks, written by `supatype push`.
+	//
+	// Keyed by table because that is what a REST path carries; the model name never reaches the
+	// wire. Absent for a project that declares none, which is the common case.
+	Hooks map[string]TableHooks `json:"hooks,omitempty"`
+}
+
+// TableHooks is one table's lifecycle hooks, keyed by event
+// ("beforeChange", "afterChange", "beforeDelete", "afterDelete").
+type TableHooks map[string]HookConfig
+
+// HookConfig is one hook: the edge function to call and how to treat its silence.
+type HookConfig struct {
+	// Function is the function name, as discovered by the worker (its directory name).
+	Function string `json:"function"`
+
+	// TimeoutMs abandons the hook after this long. The CLI fills a default well below the
+	// edge-function ceiling, so a hung hook fails fast instead of holding an invocation slot.
+	TimeoutMs int `json:"timeout,omitempty"`
+
+	// OnUnavailable is what a hook that does not *answer* means — a timeout, a connection failure,
+	// a 5xx, an unparseable body. "reject" fails the write, "log" allows it.
+	//
+	// Deliberately not consulted for a 4xx: that is the hook working correctly and saying no, and it
+	// reaches the caller as the status the hook chose. Collapsing the two would mean either a broken
+	// hook silently passing writes it was meant to check, or a considered rejection reading as an
+	// outage.
+	OnUnavailable string `json:"onUnavailable,omitempty"`
 }
 
 // Load reads and parses the manifest at path.
@@ -132,6 +161,18 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 	cm := *m
 	if cm.Schema == "" {
 		cm.Schema = "public"
+	}
+	// Deep-copied like every other map here. A shared hook map would let one tenant's reload mutate
+	// what another tenant's in-flight request is reading.
+	if len(m.Hooks) > 0 {
+		cm.Hooks = make(map[string]TableHooks, len(m.Hooks))
+		for table, events := range m.Hooks {
+			copied := make(TableHooks, len(events))
+			for event, cfg := range events {
+				copied[event] = cfg
+			}
+			cm.Hooks[table] = copied
+		}
 	}
 	if len(m.StaticCachePrefixes) > 0 {
 		cm.StaticCachePrefixes = make(map[string]string, len(m.StaticCachePrefixes))
@@ -206,6 +247,12 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 		for k, v := range overlay.StaticCachePrefixes {
 			base.StaticCachePrefixes[k] = v
 		}
+	}
+	// Replaced wholesale rather than merged per table. A hook removed from the schema must stop
+	// firing, and a per-key merge would keep calling it — the overlay is the current truth about
+	// which hooks exist.
+	if overlay.Hooks != nil {
+		base.Hooks = overlay.Hooks
 	}
 }
 

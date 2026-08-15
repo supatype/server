@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/supatype/server/internal/proxy"
 	vkgo "github.com/valkey-io/valkey-go"
 )
 
@@ -33,12 +34,19 @@ type TenantConfig struct {
 	AnonKey        string `json:"anonKey,omitempty"`
 	ServiceRoleKey string `json:"serviceRoleKey,omitempty"`
 
-	RealtimeEnabled  *bool `json:"realtime_enabled,omitempty"`
+	RealtimeEnabled  *bool  `json:"realtime_enabled,omitempty"`
 	RealtimeURL      string `json:"realtime_url,omitempty"`
-	FunctionsEnabled *bool `json:"functions_enabled,omitempty"`
+	FunctionsEnabled *bool  `json:"functions_enabled,omitempty"`
 
 	FunctionsWorkerURL string            `json:"functions_worker_url,omitempty"`
 	FunctionWorkerURLs map[string]string `json:"function_worker_urls,omitempty"`
+
+	// Hooks is the model-hook map, table → event → config, as `supatype push` computes it.
+	//
+	// Cloud has no manifest file on disk, so without this a project's hooks are declared in its schema
+	// and never called: the server would find nothing to dispatch and every hooked write would proceed
+	// unvalidated, silently. Same shape as the manifest's field so one type describes both paths.
+	Hooks map[string]proxy.TableHooks `json:"hooks,omitempty"`
 
 	// CorsAllowedOrigins is merged into the route manifest when present.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`

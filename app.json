@@ -1,7 +1,7 @@
 {
-  "name": "Gotrue",
+  "name": "supatype-server",
   "description": "",
-  "website": "https://www.gotrueapi.org",
+  "website": "https://supatype.github.io/supatype/",
   "repository": "https://github.com/supatype/server",
   "env": {
     "DATABASE_URL": {},

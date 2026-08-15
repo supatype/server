@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   version: latest
-  title: Supabase Auth REST API
+  title: Supatype Server REST API
   description: |-
-    This is the REST API for [Supabase Auth](https://supabase.com/auth). Visit https://supabase.com/docs/guides/auth for complete documentation.
+    This is the REST API for [supatype-server](https://github.com/supatype/server). Visit https://supatype.github.io/supatype/ for complete documentation.
 
     **Notes:**
     - HTTP 5XX errors are not listed for each endpoint.
@@ -24,23 +24,22 @@ info:
     - Endpoints marked as _Deprecated_ will be supported for at least 3 months since being marked as deprecated.
     - HTTP status codes like 400, 404, 422 may change for the same underlying error condition.
 
-  termsOfService: https://supabase.com/terms
   contact:
     name: Ask a question about this API
-    url: https://github.com/supabase/supabase/discussions
+    url: https://github.com/supatype/supatype/discussions
   license:
     name: MIT License
     url: https://github.com/supatype/server/blob/master/LICENSE
 externalDocs:
-  description: Learn more about Supabase Auth
-  url: https://supabase.com/docs/guides/auth/overview
+  description: Learn more about Supatype
+  url: https://supatype.github.io/supatype/
 servers:
-  - url: "https://{project}.supabase.co/auth/v1"
+  - url: "https://{host}/auth/v1"
     variables:
-      project:
+      host:
         description: >
-          Your Supabase project ID.
-        default: abcdefghijklmnopqrst
+          Your Supatype server host.
+        default: localhost:9999
 tags:
   - name: auth
     description: APIs for authentication and authorization.
@@ -49,7 +48,7 @@ tags:
   - name: oauth-client
     description: APIs for OAuth flows where this service acts as an OAuth client (connecting to external providers).
   - name: oauth-server
-    description: APIs for OAuth 2.1 flows where this service acts as an OAuth provider/server for other applications. Requires `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supabase Dashboard. (Experimental.)
+    description: APIs for OAuth 2.1 flows where this service acts as an OAuth provider/server for other applications. Requires `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio. (Experimental.)
   - name: sso
     description: APIs for authenticating using SSO providers (SAML). (Experimental.)
   - name: saml
@@ -2250,7 +2249,7 @@ paths:
       description: >
         Retrieves a list of all custom OAuth 2.0 and OIDC provider configurations.
         Optionally filter by provider type. Only available when custom OIDC/OAuth providers are enabled
-        (set `GOTRUE_CUSTOM_OAUTH_ENABLED=true` for self-hosted or enable in Supabase Dashboard).
+        (set `GOTRUE_CUSTOM_OAUTH_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - admin
         - oauth-client
@@ -2468,7 +2467,7 @@ paths:
                   summary: validation_failed
                   value:
                     error_code: validation_failed
-                    msg: "Cannot use reserved provider name: google. This provider is already built into Supabase Auth."
+                    msg: "Cannot use reserved provider name: google. This provider is already built into supatype-server."
                 discovery_fetch_failed:
                   summary: OIDC discovery fetch failed
                   value:
@@ -2724,7 +2723,7 @@ paths:
     post:
       summary: Register a new OAuth client dynamically (public endpoint).
       description: >
-        Allows applications to register as OAuth clients with this server dynamically. This follows the OAuth 2.0 Dynamic Client Registration Protocol. Only available when OAuth server is enabled and dynamic registration is allowed (set `GOTRUE_OAUTH_SERVER_ENABLED=true` and `GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=true` for self-hosted or enable both settings in Supabase Dashboard).
+        Allows applications to register as OAuth clients with this server dynamically. This follows the OAuth 2.0 Dynamic Client Registration Protocol. Only available when OAuth server is enabled and dynamic registration is allowed (set `GOTRUE_OAUTH_SERVER_ENABLED=true` and `GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=true` for self-hosted or enable both settings in Supatype Studio).
       tags:
         - oauth-server
       requestBody:
@@ -2806,7 +2805,7 @@ paths:
     post:
       summary: OAuth 2.1 Token endpoint
       description: >
-        Issues access tokens in exchange for authorization codes or refresh tokens. Supports authorization_code and refresh_token grant types. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supabase Dashboard).
+        Issues access tokens in exchange for authorization codes or refresh tokens. Supports authorization_code and refresh_token grant types. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       requestBody:
@@ -2875,7 +2874,7 @@ paths:
     get:
       summary: OAuth 2.1 Authorization endpoint
       description: >
-        Initiates the OAuth authorization code flow. Redirects users to login and authorize the requesting application. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supabase Dashboard).
+        Initiates the OAuth authorization code flow. Redirects users to login and authorize the requesting application. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       parameters:
@@ -2944,7 +2943,7 @@ paths:
     get:
       summary: Get OAuth authorization details
       description: >
-        Retrieves details about a pending OAuth authorization request. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supabase Dashboard).
+        Retrieves details about a pending OAuth authorization request. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       security:
@@ -3007,7 +3006,7 @@ paths:
     post:
       summary: Approve or deny OAuth authorization
       description: >
-        User approves or denies authorization to the OAuth client. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supabase Dashboard).
+        User approves or denies authorization to the OAuth client. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       security:
@@ -3153,7 +3152,7 @@ components:
       in: header
       name: apikey
       description: >
-        When deployed on Supabase, this server requires an `apikey` header containing a valid Supabase-issued API key to call any endpoint.
+        When deployed on Supatype, this server requires an `apikey` header containing a valid Supatype-issued API key to call any endpoint.
 
   schemas:
     GoTrueSecurity:

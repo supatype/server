@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.4.0](https://github.com/supatype/server/compare/v1.3.0...v1.4.0) (2026-08-15)
+
+
+### Features
+
+* **fields:** per-column verdicts for Studio and a masked-field header for REST ([5cb2e24](https://github.com/supatype/server/commit/5cb2e24c1002b053d1bbfd418ac15572c26e652c))
+* **server:** call a hook and classify its answer ([4fd7c72](https://github.com/supatype/server/commit/4fd7c7280d985640a6af27dc578ff20c30803247))
+* **server:** carry the model hook map through tenant config ([037fa68](https://github.com/supatype/server/commit/037fa68e672642ec5c0f61c73598fd50532ab940))
+* **server:** cloud gateway wrap — per-request activity, auth MAU, non-prod robots ([0b98fb5](https://github.com/supatype/server/commit/0b98fb5de0bd3f15ab27634fb1abf1c5aaf780f6))
+* **server:** make a hook chain count itself, and stop saying service_role skips hooks ([656be4f](https://github.com/supatype/server/commit/656be4fe24f95fd22b2e97da1e9b435acc17564d))
+* **server:** model hooks on the write path, Studio as the caller, API keys on the data plane ([c7cd013](https://github.com/supatype/server/commit/c7cd0138e95c0d0ca0d1f593367f527cf240e131))
+* **server:** mount model hooks on the REST write path ([995fbd7](https://github.com/supatype/server/commit/995fbd709816f56b6987be24211375af78789a15))
+* **server:** previous() — the rows a write is about to change ([170a7af](https://github.com/supatype/server/commit/170a7afc7cf9027e1b0e01544e0978c9a2e9978f))
+* **server:** read the hook map, and decide which hooks a REST write implies ([5bc843c](https://github.com/supatype/server/commit/5bc843c84f4e78c2aac0aa04e1c2ce8742a8a550))
+* **server:** refuse the hooks namespace on the public functions path ([c243c1e](https://github.com/supatype/server/commit/c243c1ea6f61e3a26f437034ba4f86d4540c5798))
+* **server:** require a project API key on the data plane; restrict dev bypass ([e7d2e18](https://github.com/supatype/server/commit/e7d2e1888780d9fa2b22aef20a868eb5db88654d))
+* **server:** run a table's hooks around its writes ([2e3d602](https://github.com/supatype/server/commit/2e3d602261098178c62dee78f5657d2c7b268756))
+* **studio:** act as the caller, not the service role ([cd0d4a2](https://github.com/supatype/server/commit/cd0d4a2296954fe0eb8bf669d84e722ae29f6a19))
+* **studio:** enforce the membership role, not just admission ([78eea33](https://github.com/supatype/server/commit/78eea3380e0ffe39a8f78ac3006083897d64d7bc))
+* **studio:** resolve Studio capability from membership, not JWT claims ([03b575f](https://github.com/supatype/server/commit/03b575f40de96603d405a3be5a70ef0a14e1e9db))
+* **studio:** resolve Studio capability from the database ([3b75cb0](https://github.com/supatype/server/commit/3b75cb0a577d987c0f98698e754c7fed51c371ca))
+* **studio:** schema and session bootstrap endpoints ([b278108](https://github.com/supatype/server/commit/b27810801e0f91b36b50475d50a0cd5df4ac254f))
+* **studio:** Studio membership assignment API ([efdc09e](https://github.com/supatype/server/commit/efdc09e91759c724eed2dc9c437be6f0b3418727))
+
+
+### Bug Fixes
+
+* **auth:** do not require a role named `postgres` to run auth migrations ([2bafa4e](https://github.com/supatype/server/commit/2bafa4e62a2f05d8b5a7d464fbd7f664f1bc0dae))
+* **build:** the builder image needs the Go version go.mod now requires ([f724465](https://github.com/supatype/server/commit/f7244652e5551245d784e7d30bf380f91af80552))
+* **build:** the builder image needs the Go version go.mod now requires ([a3ef385](https://github.com/supatype/server/commit/a3ef3851429a2669b63754f8f442e3537ad93086))
+* **deps:** clear the seven advisories govulncheck fails the build on ([b055844](https://github.com/supatype/server/commit/b055844b207d2401848c44df0bd8ca4809c31b69))
+* **restcache:** never share a cache entry across callers by config flag ([6e2907f](https://github.com/supatype/server/commit/6e2907f3dbbd98b96f36a28756187899532f0ecf))
+* **server:** encode the previous() response instead of assembling it by hand ([bbcc89b](https://github.com/supatype/server/commit/bbcc89bb5ddfed2664772e9c38b9df66efb2c8d8))
+* **server:** resolve a hook's worker from the caller's tenant, not the platform's file ([516ae54](https://github.com/supatype/server/commit/516ae544a2670cade876f9de03ef933eaeb33f95))
+* **server:** wait for Postgres instead of refusing to start ([f08d09e](https://github.com/supatype/server/commit/f08d09eda448f7cdb07751d3ab41cef7bc7f3904))
+
+
+### Performance Improvements
+
+* **dbpool:** raise the shared pool to 10 connections ([9b5d731](https://github.com/supatype/server/commit/9b5d7318079dff0a51d4e89f0b04741b0363906d))
+
 ## [1.3.0](https://github.com/supatype/server/compare/v1.2.0...v1.3.0) (2026-07-20)
 
 

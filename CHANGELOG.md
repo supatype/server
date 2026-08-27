@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/supatype/server/compare/v1.4.0...v1.5.0) (2026-08-27)
+
+
+### Features
+
+* **modelhooks:** run per-field validators, and name the field they refuse ([c33c453](https://github.com/supatype/server/commit/c33c45310b084e04c2ed1cfaaba504a874ac127e))
+
 ## [1.4.0](https://github.com/supatype/server/compare/v1.3.0...v1.4.0) (2026-08-15)
 
 

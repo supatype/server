@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestMergeRouteManifest(t *testing.T) {
 	base := &RouteManifest{Schema: "public", PostgRESTURL: "http://old:3000", RealtimeEnabled: false}
@@ -68,5 +71,41 @@ func TestParseRouteManifestJSON(t *testing.T) {
 	}
 	if m.Schema != "x" || m.PostgRESTURL != "http://pg:3000" || !m.RealtimeEnabled {
 		t.Fatalf("parse: %#v", m)
+	}
+}
+
+// The manifest is the seam between two repositories: the CLI writes it, this reads it. A key the CLI
+// writes and this ignores would be a validator declared in a schema and enforced by nobody, which is
+// the failure the whole feature exists to prevent, one layer up.
+func TestValidatorsSurviveTheManifestRoundTrip(t *testing.T) {
+	// Exactly what `supatype push` writes, including `onUnavailable` written explicitly.
+	raw := []byte(`{
+	  "validators": {
+	    "products": {
+	      "setup_items": { "function": "check-items", "timeout": 2000, "onUnavailable": "reject" }
+	    }
+	  }
+	}`)
+
+	var m RouteManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("the CLI's manifest must parse: %v", err)
+	}
+
+	entry, ok := m.Validators["products"]["setup_items"]
+	if !ok {
+		t.Fatal("the validator map must survive parsing, or no field is checked")
+	}
+	if entry.Function != "check-items" {
+		t.Errorf("function = %q", entry.Function)
+	}
+	if entry.OnUnavailable != "reject" {
+		t.Errorf("onUnavailable = %q; an unreachable validator must refuse", entry.OnUnavailable)
+	}
+
+	// And it must survive the defensive copy, or a hot reload would drop it.
+	copied := CloneRouteManifest(&m)
+	if copied.Validators["products"]["setup_items"].Function != "check-items" {
+		t.Error("cloning the manifest lost the validator map")
 	}
 }

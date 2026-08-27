@@ -54,8 +54,11 @@ type HookConfigEntry struct {
 
 // Options configures Middleware.
 type Options struct {
-	Dispatcher   *Dispatcher
-	Hooks        HooksFunc
+	Dispatcher *Dispatcher
+	Hooks      HooksFunc
+	// Validators supplies per-field rules. Optional: a project with none is the common case and
+	// must stay free, which is why this is a separate lookup rather than a field on every hook view.
+	Validators ValidatorsFunc
 	ResolveURL   UpstreamResolver
 	Claims       ClaimsFunc
 	RequestID    func(*http.Request) string
@@ -91,7 +94,7 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			target := classifyFor(req, opts.Hooks)
+			target := classifyFor(req, opts.Hooks, opts.Validators)
 			if !target.HasWork() {
 				next.ServeHTTP(w, req)
 				return
@@ -125,6 +128,13 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Field validators run before the hook. A hook may rewrite the body, and a validator
+			// that ran afterwards would be judging values the author never sent, while one that
+			// runs first judges exactly what arrived.
+			if len(target.Validators) > 0 && !runValidators(w, req, target, body, opts, log, depth) {
+				return
+			}
+
 			if target.Before != nil {
 				outcome, proceed := runBefore(w, req, target, body, opts, log, depth)
 				if !proceed {
@@ -153,11 +163,19 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 }
 
 // classifyFor adapts the caller-supplied hook map into what Classify needs.
-func classifyFor(req *http.Request, hooks HooksFunc) Target {
-	if hooks == nil {
+func classifyFor(req *http.Request, hooks HooksFunc, validators ValidatorsFunc) Target {
+	var declared map[string]TableHooksView
+	if hooks != nil {
+		declared = hooks(req)
+	}
+	var fields map[string]TableValidatorsView
+	if validators != nil {
+		fields = validators(req)
+	}
+	if declared == nil && fields == nil {
 		return Target{}
 	}
-	return classifyViews(req, hooks(req))
+	return classifyWith(req, declared, fields)
 }
 
 // readBody buffers the request body under the cap.

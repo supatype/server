@@ -5,3 +5,11 @@ CREATE USER supatype_auth_admin NOINHERIT CREATEROLE LOGIN NOREPLICATION PASSWOR
 CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supatype_auth_admin;
 GRANT CREATE ON DATABASE postgres TO supatype_auth_admin;
 ALTER USER supatype_auth_admin SET search_path = 'auth';
+
+-- Throwaway database for the Studio membership and bootstrap tests
+-- (SUPATYPE_TEST_DSN). They build their own minimal fixture, dropping and
+-- recreating auth.users and _supatype.studio_members, so they cannot run
+-- against the database the auth migrations own: there auth.users has dependent
+-- objects and the DROP fails. Those tests skip themselves without a DSN, which
+-- is why they had never run in CI.
+CREATE DATABASE supatype_studio_test;

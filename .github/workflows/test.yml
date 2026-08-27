@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - master
+      - main
     tags: ["*"]
 
 permissions:
@@ -36,11 +36,16 @@ jobs:
           go-version-file: go.mod
       - name: Check gofmt
         run: |
-          set -x
-
-          if [ ! -z $(gofmt -l .) ]
-          then
-            echo 'Make sure to run "gofmt -s -w ." before commit!' && exit 1
+          # Quoted, and tested with -n against a single string. The previous form
+          # was `[ ! -z $(gofmt -l .) ]`, which word-splits the file list: with
+          # two or more unformatted files it became `[ ! -z f1 f2 ]` and failed
+          # with "too many arguments". As an `if` condition a failure reads as
+          # false, so the check passed precisely when more files were broken.
+          unformatted="$(gofmt -s -l .)"
+          if [ -n "$unformatted" ]; then
+            echo 'Not gofmt-clean. Run "make format" and commit the result:'
+            echo "$unformatted"
+            exit 1
           fi
       - name: Check go vet
         run: |
@@ -63,6 +68,13 @@ jobs:
       - name: Run migrations
         run: make migrate_dev
       - name: Lint and test
+        env:
+          # Without a DSN the Studio membership and bootstrap tests skip
+          # themselves, so five DB-backed test files never ran in CI. The
+          # database is created by hack/init_postgres.sql and is separate from
+          # the migrated one on purpose: these tests drop and recreate
+          # auth.users, which fails where the auth migrations own it.
+          SUPATYPE_TEST_DSN: postgresql://postgres:root@localhost:5432/supatype_studio_test
         run: make test
       - name: Cleanup coverage
         run: |
@@ -76,6 +88,7 @@ jobs:
           sed -i '/^github.com\/supatype\/server\/cmd/d' coverage.out
           sed -i '/^github.com\/supatype\/server\/docs/d' coverage.out
           sed -i '/^github.com\/supatype\/server\/main/d' coverage.out
+          sed -i '/^github.com\/supatype\/server\/tools/d' coverage.out
 
       - uses: shogo82148/actions-goveralls@v1
         with:

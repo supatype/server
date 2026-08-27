@@ -124,3 +124,22 @@ func TestParseMessage(t *testing.T) {
 		})
 	}
 }
+
+// The Ledger off-chain signing envelope encodes the message length as a uint16,
+// so a message over 65535 bytes cannot be represented and verification must
+// refuse rather than truncate. That guard was the only reachable statement in
+// this package no test exercised.
+//
+// The binary.Write error check immediately below it in parser.go is not
+// reachable: it writes a uint16 into a bytes.Buffer, whose Write never fails.
+// It is left in place as defensive code, and it is why this package is recorded
+// with a measured floor rather than pinned at 100%.
+func TestVerifySignatureRefusesOversizedMessage(t *testing.T) {
+	msg := &SIWSMessage{
+		Domain:  "example.com",
+		Address: "GQuioVe2yA6KZfstgmirAvLGpzhKGV4zVUEz8uWMB9Uj",
+		Raw:     string(make([]byte, 70000)),
+	}
+	require.Greater(t, len(msg.Raw), 65535, "the message must exceed what a uint16 can encode")
+	require.False(t, msg.VerifySignature(make([]byte, 64)))
+}

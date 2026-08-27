@@ -77,9 +77,14 @@ unused: | check-staticcheck # Look for unused code
 static: | check-staticcheck
 	staticcheck ./...
 
+# Pinned, not @latest: honnef.co/go/tools v0.8.x requires go >= 1.26, while go.mod pins 1.25.13
+# and CI sets GOTOOLCHAIN=local, so @latest began failing the build on a day nobody touched it.
+# v0.7.0 is the newest release that builds on 1.25. Raise this with the go directive, together.
+STATICCHECK_VERSION ?= v0.7.0
+
 check-staticcheck:
 	@command -v staticcheck >/dev/null 2>&1 \
-		|| go install honnef.co/go/tools/cmd/staticcheck@latest
+		|| go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 
 generate: | check-oapi-codegen
 	go generate ./...

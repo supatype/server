@@ -14,6 +14,7 @@ package modelhooks
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/supatype/server/internal/proxy"
@@ -22,6 +23,10 @@ import (
 // Event names, matching what the CLI writes into the manifest.
 const (
 	EventBeforeChange = "beforeChange"
+	// EventBeforeValidate is a per-field validator. Named `before` because it runs before the
+	// write and, more importantly, because that is what decides the safe answer when it cannot
+	// be reached.
+	EventBeforeValidate = "beforeValidate"
 	EventAfterChange  = "afterChange"
 	EventBeforeDelete = "beforeDelete"
 	EventAfterDelete  = "afterDelete"
@@ -48,10 +53,18 @@ type Target struct {
 	// re-deriving them from the operation.
 	BeforeEvent string
 	AfterEvent  string
+	// Validators are per-field rules run before the write, keyed by column.
+	Validators map[string]HookConfigEntry
+	// ValidatorFields fixes the order they run in. A map's iteration order is random in Go, and a
+	// row breaching two rules would otherwise be refused by a different one each time, which makes
+	// the error a coin toss and any test of it flaky.
+	ValidatorFields []string
 }
 
 // HasWork reports whether anything needs calling.
-func (t Target) HasWork() bool { return t.Before != nil || t.After != nil }
+func (t Target) HasWork() bool {
+	return t.Before != nil || t.After != nil || len(t.Validators) > 0
+}
 
 // tableFromPath reads the table from a `/rest/v1`-relative path.
 //
@@ -108,7 +121,19 @@ func Classify(req *http.Request, hooks map[string]proxy.TableHooks) Target {
 // The middleware deliberately does not depend on `proxy` for this: the hook map may arrive from a
 // manifest today and from the control plane tomorrow, and the matching logic should not care.
 func classifyViews(req *http.Request, hooks map[string]TableHooksView) Target {
-	if len(hooks) == 0 {
+	return classifyWith(req, hooks, nil)
+}
+
+// classifyWith decides what a request needs, given the declared hooks and field validators.
+//
+// A table may declare validators and no hooks, or the reverse, so neither map alone can rule the
+// request out.
+func classifyWith(
+	req *http.Request,
+	hooks map[string]TableHooksView,
+	validators map[string]TableValidatorsView,
+) Target {
+	if len(hooks) == 0 && len(validators) == 0 {
 		return Target{}
 	}
 	op, isWrite := operationForMethod(req.Method)
@@ -119,8 +144,9 @@ func classifyViews(req *http.Request, hooks map[string]TableHooksView) Target {
 	if table == "" {
 		return Target{}
 	}
-	declared, ok := hooks[table]
-	if !ok || len(declared) == 0 {
+	declared := hooks[table]
+	tableValidators := validators[table]
+	if len(declared) == 0 && len(tableValidators) == 0 {
 		return Target{}
 	}
 
@@ -134,6 +160,18 @@ func classifyViews(req *http.Request, hooks map[string]TableHooksView) Target {
 		target.Before = &HookConfigEntry{
 			Function: cfg.Function, TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable,
 		}
+	}
+	// A delete carries no field values, so a per-field rule has nothing to run against.
+	if op != OpDelete && len(tableValidators) > 0 {
+		target.Validators = make(map[string]HookConfigEntry, len(tableValidators))
+		for field, cfg := range tableValidators {
+			if cfg.Function == "" {
+				continue
+			}
+			target.Validators[field] = cfg
+			target.ValidatorFields = append(target.ValidatorFields, field)
+		}
+		sort.Strings(target.ValidatorFields)
 	}
 	if cfg, ok := declared[target.AfterEvent]; ok && cfg.Function != "" {
 		target.After = &HookConfigEntry{
@@ -156,6 +194,29 @@ func ViewsFromManifest(hooks map[string]proxy.TableHooks) map[string]TableHooksV
 		view := make(TableHooksView, len(events))
 		for event, cfg := range events {
 			view[event] = HookConfigEntry{
+				Function:      cfg.Function,
+				TimeoutMs:     cfg.TimeoutMs,
+				OnUnavailable: cfg.OnUnavailable,
+			}
+		}
+		views[table] = view
+	}
+	return views
+}
+
+// ValidatorViewsFromManifest converts the manifest's validator map into the view the middleware
+// reads, mirroring ViewsFromManifest so neither shape leaks into the other package.
+func ValidatorViewsFromManifest(
+	validators map[string]proxy.TableValidators,
+) map[string]TableValidatorsView {
+	if len(validators) == 0 {
+		return nil
+	}
+	views := make(map[string]TableValidatorsView, len(validators))
+	for table, fields := range validators {
+		view := make(TableValidatorsView, len(fields))
+		for field, cfg := range fields {
+			view[field] = HookConfigEntry{
 				Function:      cfg.Function,
 				TimeoutMs:     cfg.TimeoutMs,
 				OnUnavailable: cfg.OnUnavailable,

@@ -72,7 +72,17 @@ type RouteManifest struct {
 	// Keyed by table because that is what a REST path carries; the model name never reaches the
 	// wire. Absent for a project that declares none, which is the common case.
 	Hooks map[string]TableHooks `json:"hooks,omitempty"`
+
+	// Validators maps table name → per-field validators, written by `supatype push`.
+	//
+	// Separate from Hooks rather than an extra event inside it: a hook is keyed by lifecycle event
+	// and a validator by column, and folding them into one map would mean a column named
+	// "beforeChange" collided with an event.
+	Validators map[string]TableValidators `json:"validators,omitempty"`
 }
+
+// TableValidators is one table's per-field validators, keyed by **column** name.
+type TableValidators map[string]HookConfig
 
 // TableHooks is one table's lifecycle hooks, keyed by event
 // ("beforeChange", "afterChange", "beforeDelete", "afterDelete").
@@ -172,6 +182,16 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 				copied[event] = cfg
 			}
 			cm.Hooks[table] = copied
+		}
+	}
+	if len(m.Validators) > 0 {
+		cm.Validators = make(map[string]TableValidators, len(m.Validators))
+		for table, fields := range m.Validators {
+			copied := make(TableValidators, len(fields))
+			for field, cfg := range fields {
+				copied[field] = cfg
+			}
+			cm.Validators[table] = copied
 		}
 	}
 	if len(m.StaticCachePrefixes) > 0 {

@@ -81,11 +81,16 @@ func LoadDotEnv(dir string) error {
 	localPath := filepath.Join(dir, ".env.local")
 	basePath := filepath.Join(dir, ".env")
 	var err error
+	// #nosec G703 -- the filename is a constant; only `dir` is tainted, and it comes from this
+	// process's own configuration (cwd, a config file's directory, or SUPATYPE_MANIFEST_PATH).
+	// Anyone who can set that already controls this process's environment, so there is no
+	// privilege boundary here to traverse.
 	if _, statErr := os.Stat(localPath); statErr == nil {
 		if err = godotenv.Load(localPath); err != nil {
 			return err
 		}
 	}
+	// #nosec G703 -- see above: constant filename, configuration-supplied directory.
 	if _, statErr := os.Stat(basePath); statErr == nil {
 		if err = godotenv.Load(basePath); err != nil {
 			return err

@@ -56,9 +56,15 @@ sec: check-gosec # Check for security vulnerabilities
 	gosec -quiet -exclude-generated -exclude=G117,G120,G704 $(CHECK_FILES)
 	gosec -quiet -tests -exclude-generated -exclude=G101,G104,G117,G120,G704 $(CHECK_FILES)
 
+# Pinned for the same reason as staticcheck: `@latest` reported itself as `Gosec : dev` and
+# gained a new check (G703 taint analysis) on a day nobody touched this repository, failing a
+# pull request about field validators on pre-existing code. v2.29.0 is the newest release whose
+# go directive 1.25 satisfies.
+GOSEC_VERSION ?= v2.29.0
+
 check-gosec:
 	@command -v gosec >/dev/null 2>&1 \
-		|| go install github.com/securego/gosec/v2/cmd/gosec@latest
+		|| go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
 
 vulncheck: check-govulncheck # Check for known vulnerabilities
 	govulncheck $(CHECK_FILES)
@@ -77,9 +83,14 @@ unused: | check-staticcheck # Look for unused code
 static: | check-staticcheck
 	staticcheck ./...
 
+# Pinned, not @latest: honnef.co/go/tools v0.8.x requires go >= 1.26, while go.mod pins 1.25.13
+# and CI sets GOTOOLCHAIN=local, so @latest began failing the build on a day nobody touched it.
+# v0.7.0 is the newest release that builds on 1.25. Raise this with the go directive, together.
+STATICCHECK_VERSION ?= v0.7.0
+
 check-staticcheck:
 	@command -v staticcheck >/dev/null 2>&1 \
-		|| go install honnef.co/go/tools/cmd/staticcheck@latest
+		|| go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 
 generate: | check-oapi-codegen
 	go generate ./...

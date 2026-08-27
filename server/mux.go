@@ -219,6 +219,13 @@ func buildOuterMux(
 			}
 			return modelhooks.ViewsFromManifest(m.Hooks)
 		},
+		Validators: func(req *http.Request) map[string]modelhooks.TableValidatorsView {
+			m := manifestFor(req)
+			if m == nil {
+				return nil
+			}
+			return modelhooks.ValidatorViewsFromManifest(m.Validators)
+		},
 		ResolveURL: func(req *http.Request, function string) (string, error) {
 			// The request, not nil: a managed server reads the caller's tenant from it, and the hook map
 			// already comes from that tenant's config. Resolving the *URL* from the file manifest instead

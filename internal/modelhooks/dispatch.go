@@ -211,6 +211,8 @@ func (h HookConfigView) RejectsWhenUnavailable(event string) bool {
 	case "log":
 		return false
 	default:
-		return event == EventBeforeChange || event == EventBeforeDelete
+		return event == EventBeforeChange ||
+			event == EventBeforeDelete ||
+			event == EventBeforeValidate
 	}
 }

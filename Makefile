@@ -56,9 +56,15 @@ sec: check-gosec # Check for security vulnerabilities
 	gosec -quiet -exclude-generated -exclude=G117,G120,G704 $(CHECK_FILES)
 	gosec -quiet -tests -exclude-generated -exclude=G101,G104,G117,G120,G704 $(CHECK_FILES)
 
+# Pinned for the same reason as staticcheck: `@latest` reported itself as `Gosec : dev` and
+# gained a new check (G703 taint analysis) on a day nobody touched this repository, failing a
+# pull request about field validators on pre-existing code. v2.29.0 is the newest release whose
+# go directive 1.25 satisfies.
+GOSEC_VERSION ?= v2.29.0
+
 check-gosec:
 	@command -v gosec >/dev/null 2>&1 \
-		|| go install github.com/securego/gosec/v2/cmd/gosec@latest
+		|| go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
 
 vulncheck: check-govulncheck # Check for known vulnerabilities
 	govulncheck $(CHECK_FILES)

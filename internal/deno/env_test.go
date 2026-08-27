@@ -11,9 +11,9 @@ func TestEdgeSubprocessEnv_coreAndPassThrough(t *testing.T) {
 	t.Setenv("SUPATYPE_EDGE_CUSTOM", "hello")
 
 	srv := &serverconf.ServerConfig{
-		SupatypeURL:       "",
-		AnonKey:           "anon-jwt",
-		ServiceRoleKey:    "service-jwt",
+		SupatypeURL:    "",
+		AnonKey:        "anon-jwt",
+		ServiceRoleKey: "service-jwt",
 	}
 	got := EdgeSubprocessEnv(srv, "http://localhost:9999")
 

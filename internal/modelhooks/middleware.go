@@ -58,7 +58,7 @@ type Options struct {
 	Hooks      HooksFunc
 	// Validators supplies per-field rules. Optional: a project with none is the common case and
 	// must stay free, which is why this is a separate lookup rather than a field on every hook view.
-	Validators ValidatorsFunc
+	Validators   ValidatorsFunc
 	ResolveURL   UpstreamResolver
 	Claims       ClaimsFunc
 	RequestID    func(*http.Request) string

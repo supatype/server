@@ -36,10 +36,10 @@ func Handler(store apiconfig.Store, cfg *serverconf.ServerConfig, vc *valkey.Cli
 
 		case http.MethodPatch:
 			var body struct {
-				Schema       *string                            `json:"schema"`
-				MaxRows      *int                               `json:"max_rows"`
-				CacheMaxTTL  *int                               `json:"cache_max_ttl"`
-				CacheTables  *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
+				Schema      *string                                    `json:"schema"`
+				MaxRows     *int                                       `json:"max_rows"`
+				CacheMaxTTL *int                                       `json:"cache_max_ttl"`
+				CacheTables *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})

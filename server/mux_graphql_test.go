@@ -14,11 +14,11 @@ import (
 
 func TestBuildOuterMux_GraphQLProxyInjectsServiceRoleAndForwardsEndUserAuth(t *testing.T) {
 	var (
-		mu              sync.Mutex
-		gotAuth         string
-		gotUser         string
-		gotPath         string
-		gotContentProf  string
+		mu             sync.Mutex
+		gotAuth        string
+		gotUser        string
+		gotPath        string
+		gotContentProf string
 	)
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

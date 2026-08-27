@@ -8,11 +8,11 @@ import (
 
 func TestRequireServiceRole(t *testing.T) {
 	tests := []struct {
-		name          string
-		mode          string
-		serviceKey    string
-		authHeader    string
-		wantStatus    int
+		name           string
+		mode           string
+		serviceKey     string
+		authHeader     string
+		wantStatus     int
 		wantNextCalled bool
 	}{
 		{

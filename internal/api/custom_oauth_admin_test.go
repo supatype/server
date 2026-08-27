@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	popslices "github.com/gobuffalo/pop/v6/slices"
-	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/gofrs/uuid"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"

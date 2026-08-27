@@ -8,6 +8,7 @@ import (
 	"github.com/rs/cors"
 	"github.com/sebest/xff"
 	"github.com/sirupsen/logrus"
+	"github.com/supabase/hibp"
 	"github.com/supatype/server/internal/api/apierrors"
 	"github.com/supatype/server/internal/api/apitask"
 	"github.com/supatype/server/internal/api/oauthserver"
@@ -24,7 +25,6 @@ import (
 	"github.com/supatype/server/internal/storage"
 	"github.com/supatype/server/internal/tokens"
 	"github.com/supatype/server/internal/utilities"
-	"github.com/supabase/hibp"
 )
 
 const (

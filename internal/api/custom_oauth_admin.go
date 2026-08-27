@@ -782,4 +782,3 @@ func validateAttributeMapping(mapping map[string]interface{}) error {
 
 	return nil
 }
-

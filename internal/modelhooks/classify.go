@@ -27,9 +27,9 @@ const (
 	// write and, more importantly, because that is what decides the safe answer when it cannot
 	// be reached.
 	EventBeforeValidate = "beforeValidate"
-	EventAfterChange  = "afterChange"
-	EventBeforeDelete = "beforeDelete"
-	EventAfterDelete  = "afterDelete"
+	EventAfterChange    = "afterChange"
+	EventBeforeDelete   = "beforeDelete"
+	EventAfterDelete    = "afterDelete"
 )
 
 // Operation is the write a request performs, as a hook payload reports it.

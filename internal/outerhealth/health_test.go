@@ -96,10 +96,10 @@ func TestCollectComponents_realtimeHTTPProbe(t *testing.T) {
 	defer ts.Close()
 
 	c := collectComponents(ProbeConfig{
-		PostgRESTURL:     ts.URL,
-		GraphQLURL:       ts.URL,
-		RealtimeEnabled:  true,
-		SelfBaseURL:      ts.URL,
+		PostgRESTURL:    ts.URL,
+		GraphQLURL:      ts.URL,
+		RealtimeEnabled: true,
+		SelfBaseURL:     ts.URL,
 	}, time.Second)
 	rt, ok := c["realtime"].(map[string]any)
 	if !ok {

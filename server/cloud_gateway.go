@@ -23,15 +23,15 @@ import (
 // Enabled when SUPATYPE_CLOUD_ACTIVITY_ENABLED=true (tenant gateway pods).
 
 type cloudGatewayCfg struct {
-	enabled          bool
-	activityBaseURL  string
-	internalSecret   string
-	tenantID         string
-	nonprod          bool
-	blockBots        bool
-	valkeyAddr       string
-	emailSalt        string
-	controlPlaneURL  string
+	enabled         bool
+	activityBaseURL string
+	internalSecret  string
+	tenantID        string
+	nonprod         bool
+	blockBots       bool
+	valkeyAddr      string
+	emailSalt       string
+	controlPlaneURL string
 }
 
 func loadCloudGatewayCfg() cloudGatewayCfg {

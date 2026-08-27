@@ -184,7 +184,7 @@ func TestApplyAttributeMapping(t *testing.T) {
 				Email:   "test@example.com",
 			},
 			mapping: map[string]interface{}{
-				"email_verified": true, // Literal boolean value
+				"email_verified": true,                // Literal boolean value
 				"iat":            float64(1234567890), // Literal number value
 			},
 			expected: Claims{
@@ -203,15 +203,15 @@ func TestApplyAttributeMapping(t *testing.T) {
 				AvatarURL: "https://example.com/avatar.jpg",
 			},
 			mapping: map[string]interface{}{
-				"name":    "full_name",    // Map full_name -> name
-				"picture": "avatar_url",   // Map avatar_url -> picture
+				"name":    "full_name",  // Map full_name -> name
+				"picture": "avatar_url", // Map avatar_url -> picture
 			},
 			expected: Claims{
-				Subject:  "user-123",
-				Email:    "test@example.com",
-				Name:     "John Doe",
-				Picture:  "https://example.com/avatar.jpg",
-				FullName: "John Doe",  // Original field still exists
+				Subject:   "user-123",
+				Email:     "test@example.com",
+				Name:      "John Doe",
+				Picture:   "https://example.com/avatar.jpg",
+				FullName:  "John Doe", // Original field still exists
 				AvatarURL: "https://example.com/avatar.jpg",
 			},
 		},
@@ -273,8 +273,8 @@ func TestNewCustomOIDCProvider(t *testing.T) {
 		"test-client-secret",
 		"https://myapp.com/callback",
 		[]string{"profile", "email"}, // Without openid
-		server.URL, // issuer
-		true, // PKCE enabled
+		server.URL,                   // issuer
+		true,                         // PKCE enabled
 		[]string{"ios-client", "android-client"},
 		map[string]interface{}{"email": "user_email"},
 		map[string]interface{}{"prompt": "consent"},
@@ -461,7 +461,7 @@ func TestCustomOIDCProvider_RequiresPKCE(t *testing.T) {
 			"https://myapp.com/callback",
 			[]string{"openid"},
 			server.URL, // issuer
-			true, // PKCE enabled
+			true,       // PKCE enabled
 			nil,
 			nil,
 			nil,
@@ -481,7 +481,7 @@ func TestCustomOIDCProvider_RequiresPKCE(t *testing.T) {
 			"https://myapp.com/callback",
 			[]string{"openid"},
 			server.URL, // issuer
-			false, // PKCE disabled
+			false,      // PKCE disabled
 			nil,
 			nil,
 			nil,

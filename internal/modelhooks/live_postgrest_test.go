@@ -86,8 +86,8 @@ func liveServer(t *testing.T, rest string, hooks map[string]TableHooksView, scri
 		ResolveURL: func(_ *http.Request, function string) (string, error) {
 			return hookSrv.URL + "/" + function, nil
 		},
-		Claims:     func(*http.Request) *Claims { return nil },
-		Callback:   callback,
+		Claims:   func(*http.Request) *Claims { return nil },
+		Callback: callback,
 	})
 
 	mux := http.NewServeMux()

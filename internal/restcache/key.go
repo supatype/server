@@ -58,16 +58,16 @@ func RestKeyPrefix(tenant string) string {
 }
 
 type keyParts struct {
-	Tenant     string
-	Schema     string
-	Method     string
-	Path       string
-	RawQuery   string
-	AuthHash   string
-	Accept     string
-	Range      string
-	Language   string
-	MaxRows    string
+	Tenant   string
+	Schema   string
+	Method   string
+	Path     string
+	RawQuery string
+	AuthHash string
+	Accept   string
+	Range    string
+	Language string
+	MaxRows  string
 }
 
 // BuildKey returns a Valkey key tenant:{ref}:rest:{hash}.

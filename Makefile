@@ -1,4 +1,5 @@
 .PHONY: all build deps image migrate test vet sec vulncheck format unused
+.PHONY: coverage coverage-reseed env-surface
 .PHONY: check-gosec check-govulncheck check-oapi-codegen check-staticcheck
 CHECK_FILES?=./...
 
@@ -45,9 +46,18 @@ migrate_dev: ## Run database migrations for development.
 migrate_test: ## Run database migrations for test.
 	hack/migrate.sh postgres
 
-test: build ## Run tests.
+test: build ## Run tests, then enforce the coverage ratchet.
 	go test $(CHECK_FILES) -coverprofile=coverage.out -coverpkg ./... -p 1 -race -v -count=1 -timeout=30m
-	./hack/coverage.sh
+	$(MAKE) coverage
+
+coverage: ## Enforce hack/coverage-floors.json against an existing coverage.out.
+	go run ./tools/coveragegate -profile coverage.out -floors hack/coverage-floors.json
+
+coverage-reseed: ## Rewrite the floors from the current coverage.out. Commit the diff deliberately.
+	go run ./tools/coveragegate -profile coverage.out -floors hack/coverage-floors.json -update
+
+env-surface: ## Rewrite hack/env-surface.txt from the current sources.
+	go run ./tools/envsurface -update
 
 vet: # Vet the code
 	go vet $(CHECK_FILES)

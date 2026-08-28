@@ -17,7 +17,28 @@ permissions:
   contents: write
 
 jobs:
+  # Refuse a version that is not a version, before anything is built or uploaded.
+  #
+  # `VERSION` used to read `github.ref_name || inputs.version`, and ref_name is always set, so a
+  # `workflow_dispatch` on main published under `vmain/` and rewrote server/latest.json to
+  # `{"version":"main"}`. Every native-provider CLI resolving the server then followed a dead URL.
+  # The ordering is fixed below; this refuses the mistake outright, because the cost of publishing
+  # a wrong version to an immutable path is not recoverable, only superseded.
+  version:
+    name: Version is a version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check
+        run: |
+          VERSION="${{ inputs.version || github.ref_name }}"
+          if ! printf '%s' "$VERSION" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Refusing to publish '${VERSION}': not a semantic version." \
+              "Dispatch with a tag ref, or pass version=v1.2.3."
+            exit 1
+          fi
+          echo "publishing ${VERSION}"
   build:
+    needs: version
     name: ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -68,7 +89,7 @@ jobs:
           CGO_ENABLED: "0"
           CC: ${{ matrix.cross == true && 'aarch64-linux-gnu-gcc' || '' }}
         run: |
-          VERSION="${{ github.ref_name || inputs.version }}"
+          VERSION="${{ inputs.version || github.ref_name }}"
           EXT="${{ matrix.goos == 'windows' && '.exe' || '' }}"
           OUTPUT="supatype-server-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
           go build \
@@ -152,7 +173,7 @@ jobs:
           CDN_BUCKET: ${{ secrets.CDN_BUCKET }}
           CDN_ENDPOINT: ${{ secrets.CDN_ENDPOINT }}
         run: |
-          VERSION="${{ github.ref_name || inputs.version }}"
+          VERSION="${{ inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
           OUTPUT="${{ steps.build.outputs.output }}"
           aws s3 cp "${OUTPUT}" \
@@ -188,7 +209,7 @@ jobs:
 
       - name: Extract version
         run: |
-          VERSION="${{ github.ref_name || inputs.version }}"
+          VERSION="${{ inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
 

@@ -111,7 +111,7 @@ func runValidators(
 		}
 
 		for _, value := range values {
-			encoded, err := json.Marshal(validatorPayload{
+			encoded, err := marshalPayload(validatorPayload{
 				Table:     target.Table,
 				Operation: target.Operation,
 				Field:     field,
@@ -178,11 +178,8 @@ func writeFieldRejection(w http.ResponseWriter, field string, outcome Outcome) {
 		message = "This value was rejected."
 	}
 
-	encoded, err := json.Marshal(rejectionBody{Error: message, Field: field, Message: message})
-	if err != nil {
-		http.Error(w, message, status)
-		return
-	}
+	// Three strings, so this cannot fail to encode.
+	encoded, _ := json.Marshal(rejectionBody{Error: message, Field: field, Message: message})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(encoded)

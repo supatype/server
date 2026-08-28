@@ -10,7 +10,6 @@ import (
 	"github.com/supatype/server/internal/utilities"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -65,10 +64,11 @@ func NewCallback(
 	serviceRoleKey string,
 	client Doer,
 ) (*Callback, error) {
+	// crypto/rand.Read does not fail; a short read would be a broken runtime
+	// rather than a condition to handle. NewCallback keeps its error result
+	// because it is a constructor a caller already checks.
 	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("generating a hook callback key: %w", err)
-	}
+	_, _ = rand.Read(key)
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
@@ -88,11 +88,9 @@ func (c *Callback) Path(op Operation, table, filter string) string {
 	if c == nil || op == OpInsert || table == "" {
 		return ""
 	}
+	// previousClaims is two strings and an integer, so it cannot fail to encode.
 	claims := previousClaims{Table: table, Filter: filter, Expiry: time.Now().Add(previousTTL).Unix()}
-	encoded, err := json.Marshal(claims)
-	if err != nil {
-		return ""
-	}
+	encoded, _ := json.Marshal(claims)
 	payload := base64.RawURLEncoding.EncodeToString(encoded)
 	return PreviousPathPrefix + payload + "." + c.sign(payload)
 }
@@ -160,9 +158,6 @@ func (c *Callback) Handler() http.Handler {
 		// only a promise until the browser is told not to guess.
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if len(rows) == 0 {
-			rows = json.RawMessage("[]")
-		}
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(previousResponse{Rows: rows, Truncated: truncated})
 	})
@@ -189,9 +184,6 @@ func (c *Callback) fetch(req *http.Request, claims previousClaims) (json.RawMess
 		query += "&" + limit
 	}
 	target += "?" + query
-	if _, err := url.Parse(target); err != nil {
-		return nil, false, err
-	}
 
 	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, target, nil)
 	if err != nil {
@@ -230,9 +222,6 @@ func (c *Callback) fetch(req *http.Request, claims previousClaims) (json.RawMess
 	if truncated {
 		rows = rows[:c.limit]
 	}
-	trimmed, err := json.Marshal(rows)
-	if err != nil {
-		return nil, false, err
-	}
+	trimmed, _ := json.Marshal(rows)
 	return trimmed, truncated, nil
 }

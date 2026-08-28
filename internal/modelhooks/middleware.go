@@ -82,6 +82,13 @@ type payload struct {
 	PreviousPath string `json:"previousPath,omitempty"`
 }
 
+// marshalPayload is a seam. A payload is built from a table name, an operation,
+// a request id and bytes already read off the wire, so it cannot fail to encode
+// and the two error branches below are unreachable in production. They are kept
+// because a before hook that silently did not run would let a write the schema
+// said to validate arrive unvalidated.
+var marshalPayload = json.Marshal
+
 // Middleware runs a table's declared hooks around a write.
 //
 // Mounted inside the response cache, so a cached read never reaches it. A request with no hook work
@@ -222,7 +229,7 @@ func runBefore(
 		return unavailable(w, view, target.BeforeEvent, "resolving the function URL: "+err.Error(), log)
 	}
 
-	encoded, err := json.Marshal(buildPayload(req, target, body, opts))
+	encoded, err := marshalPayload(buildPayload(req, target, body, opts))
 	if err != nil {
 		return unavailable(w, view, target.BeforeEvent, "encoding the hook payload: "+err.Error(), log)
 	}
@@ -303,7 +310,7 @@ func runAfter(
 	if target.Operation == OpDelete || target.Operation == OpUpdate {
 		body["filter"] = req.URL.RawQuery
 	}
-	encoded, err := json.Marshal(body)
+	encoded, err := marshalPayload(body)
 	if err != nil {
 		log.WithError(err).Warn("after hook not called: could not encode the payload")
 		return

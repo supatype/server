@@ -151,14 +151,20 @@ func readFileUnderParent(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// ParseRouteManifestJSON unmarshals JSON bytes into RouteManifest (same shape as manifest.json).
+// ParseRouteManifestJSON unmarshals JSON bytes into a RouteManifest (the same
+// shape as manifest.json).
+//
+// It does not apply the public-schema default, because the only caller is the
+// managed overlay: a tenant manifest that says nothing about the schema must
+// leave the layer below it alone. Defaulting here made every overlay claim
+// "public", so a tenant whose config set another schema had it silently reset
+// the moment it also had a manifest override — and every REST request then went
+// to the wrong schema. Load applies the default for the file, which is a whole
+// manifest rather than a layer.
 func ParseRouteManifestJSON(data []byte) (*RouteManifest, error) {
 	var m RouteManifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, err
-	}
-	if m.Schema == "" {
-		m.Schema = "public"
 	}
 	return &m, nil
 }

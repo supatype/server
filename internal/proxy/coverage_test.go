@@ -535,7 +535,8 @@ func TestLoadReadsAManifest(t *testing.T) {
 	}
 }
 
-// A manifest that names no schema gets the default, whichever way it was read.
+// A manifest read as a whole gets the default. An overlay does not: it is a
+// layer, and a layer that says nothing must change nothing.
 func TestTheSchemaDefaultsToPublic(t *testing.T) {
 	path := writeManifest(t, t.TempDir(), "manifest.json", `{"postgrest_url":"http://rest"}`)
 
@@ -543,12 +544,8 @@ func TestTheSchemaDefaultsToPublic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := ParseRouteManifestJSON([]byte(`{"postgrest_url":"http://rest"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Schema != "public" || parsed.Schema != "public" {
-		t.Errorf("schemas = %q and %q", loaded.Schema, parsed.Schema)
+	if loaded.Schema != "public" {
+		t.Errorf("the file's schema = %q", loaded.Schema)
 	}
 	if CloneRouteManifest(&RouteManifest{}).Schema != "public" {
 		t.Error("a cloned manifest lost the default")
@@ -1069,5 +1066,25 @@ func TestWebSocketProxyGivesUpWhenTheUpgradeCannotBeForwarded(t *testing.T) {
 	// hanging.
 	if _, err := server.Write([]byte("x")); err == nil {
 		t.Error("the hijacked connection was left open")
+	}
+}
+
+// An overlay that names no schema leaves the layer below it alone. Defaulting
+// it to public made every overlay claim a schema, so a tenant config that set
+// another one was silently reset and every REST request went to the wrong
+// schema.
+func TestAnOverlayDoesNotInventASchema(t *testing.T) {
+	overlay, err := ParseRouteManifestJSON([]byte(`{"postgrest_url":"http://rest"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overlay.Schema != "" {
+		t.Errorf("schema = %q, want it left unset", overlay.Schema)
+	}
+
+	base := &RouteManifest{Schema: "app"}
+	MergeRouteManifest(base, overlay)
+	if base.Schema != "app" {
+		t.Errorf("the overlay overwrote the schema with %q", base.Schema)
 	}
 }

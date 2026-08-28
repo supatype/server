@@ -8,7 +8,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/supatype/server/internal/dbpool"
+	"github.com/supatype/server/internal/data"
 )
 
 // ErrNoSchemaState means the project has never been pushed, so there is nothing
@@ -28,11 +28,11 @@ type Snapshot struct {
 }
 
 // LoadSnapshot reads the schema state written by the last push.
-func LoadSnapshot(ctx context.Context) (*Snapshot, error) {
+func LoadSnapshot(ctx context.Context, resources *data.Resources) (*Snapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := resources.AdminPool()
 	if err != nil {
 		return nil, err
 	}

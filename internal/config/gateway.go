@@ -260,8 +260,8 @@ func Load() (*Config, error) {
 //
 // The Supatype-specific variable wins so a deployment can point admin features
 // at a different role than the app's. This precedence used to live inside
-// internal/dbpool, which made that package a second, independent reader of a
-// connection string the auth service already loads.
+// a pool package that read them itself, which made it a second, independent
+// reader of a connection string the auth service already loads.
 func (c *Config) SQLDSN() string {
 	if dsn := strings.TrimSpace(c.SQLDatabaseURL); dsn != "" {
 		return dsn

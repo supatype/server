@@ -34,7 +34,7 @@ func SchemaHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		snapshot, err := studiobootstrap.LoadSnapshot(req.Context())
+		snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources)
 		if err != nil {
 			if errors.Is(err, studiobootstrap.ErrNoSchemaState) {
 				writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
@@ -111,7 +111,7 @@ func SessionHandler(c Config) http.HandlerFunc {
 
 		// Row-independent access per model, so Studio can grey out what is settled
 		// and only ask per row where the answer genuinely depends on one.
-		if snapshot, err := studiobootstrap.LoadSnapshot(req.Context()); err == nil {
+		if snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources); err == nil {
 			if models, err := studiobootstrap.FilterForCaller(snapshot, caller); err == nil {
 				access := make(map[string]map[string]studiobootstrap.Verdict, len(models))
 				for _, m := range models {

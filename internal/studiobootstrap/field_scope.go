@@ -3,6 +3,7 @@ package studiobootstrap
 import (
 	"context"
 	"encoding/json"
+	"github.com/supatype/server/internal/data"
 	"sync"
 	"time"
 )
@@ -105,7 +106,7 @@ var fieldScope struct {
 // The second result is false when the classification could not be read. Callers then send
 // no header at all — an absent header means "not stated", whereas a wrong one would be
 // taken as fact.
-func MaskedFields(ctx context.Context) (map[string][]FieldMask, bool) {
+func MaskedFields(ctx context.Context, resources *data.Resources) (map[string][]FieldMask, bool) {
 	fieldScope.Lock()
 	defer fieldScope.Unlock()
 
@@ -113,7 +114,7 @@ func MaskedFields(ctx context.Context) (map[string][]FieldMask, bool) {
 		return fieldScope.tables, true
 	}
 
-	snapshot, err := LoadSnapshot(ctx)
+	snapshot, err := LoadSnapshot(ctx, resources)
 	if err != nil {
 		// Keep serving a previous answer rather than flapping on a transient blip; the
 		// TTL still bounds how old it can be.

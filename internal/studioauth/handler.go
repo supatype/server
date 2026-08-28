@@ -8,6 +8,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/studiomembers"
 )
 
@@ -21,6 +22,13 @@ type Config struct {
 	AnonKey    string
 	AdminRoles []string
 	Mode       string
+	// Resources carries the process connections, for the endpoints that read the
+	// schema snapshot straight from the database.
+	Resources *data.Resources
+	// Members reads and writes Studio membership. It carries the process
+	// resources, so a deployment with no database still yields a usable value
+	// whose every call reports that and denies.
+	Members studiomembers.Store
 	// OpenDev opens Studio without authentication. It is only honoured in dev
 	// mode on a locally addressed deployment; see Config.DevBypass.
 	OpenDev bool
@@ -200,7 +208,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 			}
 			req2.Header.Set("Authorization", "Bearer "+sr)
 			req2.Header.Set("apikey", sr)
-			recordElevatedRequest(req, actor, req2.URL.Path)
+			recordElevatedRequest(c.Members, req, actor, req2.URL.Path)
 		} else {
 			// Leave the caller's own Authorization in place: PostgREST assumes
 			// their role and their own RLS policies apply. `apikey` still has to
@@ -223,7 +231,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 // Reads are logged only: Studio polls, and an audit row per read would bury the
 // membership trail in noise. Anything that could change data gets a durable row,
 // because "who edited this outside their own policies" must survive log rotation.
-func recordElevatedRequest(req *http.Request, actor, path string) {
+func recordElevatedRequest(members studiomembers.Store, req *http.Request, actor, path string) {
 	readOnly := req.Method == http.MethodGet ||
 		req.Method == http.MethodHead ||
 		req.Method == http.MethodOptions
@@ -238,7 +246,7 @@ func recordElevatedRequest(req *http.Request, actor, path string) {
 	if readOnly {
 		return
 	}
-	studiomembers.AuditElevated(req.Context(), actor, req.Method, path)
+	members.AuditElevated(req.Context(), actor, req.Method, path)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

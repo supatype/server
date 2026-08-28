@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/server/internal/dbpool"
 )
 
 // writeTimeout bounds membership mutations. Longer than a lookup — these run from
@@ -37,8 +36,8 @@ type Member struct {
 }
 
 // List returns every Studio membership for this project, project users first.
-func List(ctx context.Context) ([]Member, error) {
-	pool, err := dbpool.Pool(ctx)
+func (s Store) List(ctx context.Context) ([]Member, error) {
+	pool, err := s.pool()
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +76,7 @@ func List(ctx context.Context) ([]Member, error) {
 // self-promotion is the escalation this whole design exists to prevent — and the
 // last admin cannot be demoted, because there would then be nobody able to grant
 // access to anyone.
-func SetRole(ctx context.Context, actingUserID, targetUserID, role string) error {
+func (s Store) SetRole(ctx context.Context, actingUserID, targetUserID, role string) error {
 	actingUserID = strings.TrimSpace(actingUserID)
 	targetUserID = strings.TrimSpace(targetUserID)
 	role = strings.TrimSpace(role)
@@ -92,7 +91,7 @@ func SetRole(ctx context.Context, actingUserID, targetUserID, role string) error
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := s.pool()
 	if err != nil {
 		return err
 	}
@@ -132,7 +131,7 @@ func SetRole(ctx context.Context, actingUserID, targetUserID, role string) error
 }
 
 // Revoke removes a membership. Same self and last-admin protections as SetRole.
-func Revoke(ctx context.Context, actingUserID, targetUserID string) error {
+func (s Store) Revoke(ctx context.Context, actingUserID, targetUserID string) error {
 	actingUserID = strings.TrimSpace(actingUserID)
 	targetUserID = strings.TrimSpace(targetUserID)
 
@@ -146,7 +145,7 @@ func Revoke(ctx context.Context, actingUserID, targetUserID string) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := s.pool()
 	if err != nil {
 		return err
 	}
@@ -182,8 +181,8 @@ const RoleAdmin = "admin"
 // No target: the record is about what the actor did, not about someone else. The
 // method and path go in `detail` so the trail says *what* was reached, which is
 // the whole point of making elevation visible.
-func AuditElevated(ctx context.Context, actorID, method, path string) {
-	pool, err := dbpool.Pool(ctx)
+func (s Store) AuditElevated(ctx context.Context, actorID, method, path string) {
+	pool, err := s.pool()
 	if err != nil {
 		logrus.WithError(err).Error("studiomembers: elevated request not audited")
 		return
@@ -219,8 +218,8 @@ func AuditElevated(ctx context.Context, actorID, method, path string) {
 //
 // `actorID` is empty when the change came from a path with no signed-in actor
 // (the dev bypass, or the CLI against the database directly).
-func Audit(ctx context.Context, actorID, targetID, action, role string) {
-	pool, err := dbpool.Pool(ctx)
+func (s Store) Audit(ctx context.Context, actorID, targetID, action, role string) {
+	pool, err := s.pool()
 	if err != nil {
 		logrus.WithError(err).Error("studiomembers: membership change not audited")
 		return

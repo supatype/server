@@ -5,7 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/supatype/server/internal/dbpool"
+	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 )
 
 // End-to-end membership resolution against a real Postgres.
@@ -17,12 +18,16 @@ func TestLookupAgainstRealDatabase(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run membership lookups against Postgres")
 	}
-	dbpool.Configure(dsn)
+	resources, err := data.Open(context.Background(), &config.Config{SQLDatabaseURL: dsn})
+	if err != nil {
+		t.Fatalf("open resources: %v", err)
+	}
+	t.Cleanup(func() { _ = resources.Close() })
 
 	ctx := context.Background()
-	pool, err := dbpool.Pool(ctx)
+	pool, err := resources.AdminPool()
 	if err != nil {
-		t.Fatalf("open pool: %v", err)
+		t.Fatalf("admin pool: %v", err)
 	}
 
 	const member = "11111111-2222-3333-4444-555555555555"
@@ -46,17 +51,17 @@ func TestLookupAgainstRealDatabase(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS _supatype.studio_members`)
 	})
 
-	role, ok := Lookup(member)
+	role, ok := NewStore(resources).Lookup(member)
 	if !ok || role != "admin" {
 		t.Fatalf("expected (admin, true) for a member, got (%q, %v)", role, ok)
 	}
 
-	if role, ok := Lookup(stranger); ok || role != "" {
+	if role, ok := NewStore(resources).Lookup(stranger); ok || role != "" {
 		t.Fatalf("expected denial for a non-member, got (%q, %v)", role, ok)
 	}
 
 	// A malformed id must deny rather than error out of the request path.
-	if role, ok := Lookup("not-a-uuid"); ok || role != "" {
+	if role, ok := NewStore(resources).Lookup("not-a-uuid"); ok || role != "" {
 		t.Fatalf("expected denial for a malformed id, got (%q, %v)", role, ok)
 	}
 
@@ -64,7 +69,7 @@ func TestLookupAgainstRealDatabase(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TABLE _supatype.studio_members`); err != nil {
 		t.Fatalf("drop table: %v", err)
 	}
-	if role, ok := Lookup(member); ok || role != "" {
+	if role, ok := NewStore(resources).Lookup(member); ok || role != "" {
 		t.Fatalf("expected denial when the table is missing, got (%q, %v)", role, ok)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/studiobootstrap"
 )
 
@@ -39,9 +40,9 @@ const Header = "X-Supatype-Masked-Fields"
 // as misses. That is safe because the value is caller-independent — it describes the
 // schema's restrictions, not one caller's verdicts — so a shared cache entry carrying it
 // cannot disclose anything about the caller who happened to populate it.
-func Middleware(next http.Handler) http.Handler {
+func Middleware(resources *data.Resources, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if value, ok := headerFor(req); ok {
+		if value, ok := headerFor(req, resources); ok {
 			// Set before the proxy writes, since headers cannot be added afterwards.
 			w.Header().Set(Header, value)
 		}
@@ -49,13 +50,13 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-func headerFor(req *http.Request) (string, bool) {
+func headerFor(req *http.Request, resources *data.Resources) (string, bool) {
 	table := tableFromPath(req.URL.Path)
 	if table == "" {
 		return "", false
 	}
 
-	tables, ok := studiobootstrap.MaskedFields(req.Context())
+	tables, ok := studiobootstrap.MaskedFields(req.Context(), resources)
 	if !ok {
 		return "", false
 	}

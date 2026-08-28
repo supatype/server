@@ -15,7 +15,7 @@ import (
 	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/maskedfields"
@@ -43,8 +43,8 @@ const defaultUpstreamHTTPTimeout = 2 * time.Minute
 // request for baseline-only mounts: realtime, static app). healthProbes
 // should reflect file-layer manifest for /health (not per-tenant Valkey).
 //
-// sharedValkey, when non-nil, is used for the admin API Valkey client instead
-// of opening a second connection.
+// resources carries the process-wide connections. It is safe when nil: every
+// accessor then reports the resource as absent.
 //
 // Route layout:
 //
@@ -69,7 +69,7 @@ func buildOuterMux(
 	authHandler http.Handler,
 	denoManager *deno.Manager,
 	version string,
-	sharedValkey valkey.Client,
+	resources *data.Resources,
 	sendEmailHook http.Handler,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -88,12 +88,10 @@ func buildOuterMux(
 	// ── API config store ──────────────────────────────────────────────────────
 	apiStore := apiconfig.NewFileStore(cfg.ApiConfigPath)
 
-	// A nil interface has no methods, so a caller that passes nil would panic on
-	// the first Available() rather than behave as "no cache". Normalising here,
-	// once, is what lets every consumer below drop its own nil check.
-	if sharedValkey == nil {
-		sharedValkey = valkey.Unavailable()
-	}
+	// Never nil, whatever the caller passed: a nil interface has no methods, so
+	// the first Available() would panic rather than behave as "no cache". This is
+	// what lets every consumer below drop its own nil check.
+	sharedValkey := resources.Cache()
 
 	// ── Admin API ─────────────────────────────────────────────────────────────
 	r.Mount("/admin/v1", http.StripPrefix("/admin/v1", admin.Handler(apiStore, cfg, sharedValkey)))
@@ -104,11 +102,14 @@ func buildOuterMux(
 	// Resolve Studio capability from `_supatype.studio_members` rather than from
 	// the token's claims. Without a DSN there is nothing to read, so the legacy
 	// claim path stays in place instead of locking the deployment out of Studio.
-	if studiomembers.Available() {
-		studioCfg.StudioRole = studiomembers.Lookup
+	members := studiomembers.NewStore(resources)
+	studioCfg.Members = members
+	studioCfg.Resources = resources
+	if members.Available() {
+		studioCfg.StudioRole = members.Lookup
 		logrus.Info("mux: Studio capability resolved from _supatype.studio_members")
 	} else {
-		logrus.Warn("mux: no database DSN — Studio capability falls back to JWT claims")
+		logrus.Warn("mux: no database DSN, Studio capability falls back to JWT claims")
 	}
 	studioConfigInner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		data, err := studioauth.ReadAdminConfigFile(cfg.AdminConfigPath)
@@ -134,7 +135,7 @@ func buildOuterMux(
 	r.Handle("/admin/studio-members/*", membersAPI)
 	logrus.Info("mux: Studio membership API mounted at /admin/studio-members")
 
-	r.Post("/sql", sqlrunner.Handler(cfg).ServeHTTP)
+	r.Post("/sql", sqlrunner.Handler(cfg, resources).ServeHTTP)
 
 	r.Mount("/auth/v1", http.StripPrefix("/auth/v1", authHandler))
 
@@ -240,9 +241,9 @@ func buildOuterMux(
 	// The masked-field header sits outside the response cache so it is present on hits as
 	// well as misses. Safe there because it describes the schema's restrictions, not one
 	// caller's verdicts.
-	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", maskedfields.Middleware(
+	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", maskedfields.Middleware(resources,
 		restcache.Middleware(
-			apiStore, sharedValkey, cfg, restSchemaFor, restMaxRowsFor, hooks(restProxy),
+			apiStore, sharedValkey, resources, cfg, restSchemaFor, restMaxRowsFor, hooks(restProxy),
 		),
 	)))
 	logrus.Info("mux: PostgREST proxy mounted at /rest/v1")

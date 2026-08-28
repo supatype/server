@@ -15,7 +15,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/server/internal/dbpool"
 )
 
 // lookupTimeout bounds a single membership query. Studio access checks sit in
@@ -31,7 +30,7 @@ const lookupSQL = `SELECT role FROM _supatype.studio_members WHERE user_id = $1:
 // no membership row, no database, an unreadable table, a malformed id. Every
 // such case is a denial: an admin UI that opens up when its authority is
 // unreachable is worse than one that is briefly unavailable.
-func Lookup(userID string) (string, bool) {
+func (s Store) Lookup(userID string) (string, bool) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return "", false
@@ -40,7 +39,7 @@ func Lookup(userID string) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
 	defer cancel()
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := s.pool()
 	if err != nil {
 		logrus.WithError(err).Warn("studiomembers: no database available — denying Studio access")
 		return "", false
@@ -64,6 +63,7 @@ func Lookup(userID string) (string, bool) {
 // Available reports whether membership lookups can be performed at all. Used to
 // decide between the membership path and the legacy claim path, so a deployment
 // with no DSN configured is not locked out of its own Studio.
-func Available() bool {
-	return dbpool.DSN() != ""
+func (s Store) Available() bool {
+	_, err := s.pool()
+	return err == nil
 }

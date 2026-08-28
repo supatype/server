@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/studiobootstrap"
 )
@@ -18,6 +19,7 @@ import (
 func Middleware(
 	store apiconfig.Store,
 	vk valkey.Client,
+	resources *data.Resources,
 	cfg *config.Config,
 	schemaFor func(*http.Request) string,
 	maxRowsFor func(*http.Request) string,
@@ -71,7 +73,7 @@ func Middleware(
 		// Downgraded to per-identity scope rather than refused: the request still
 		// returns correct data, just with a less-shared cache entry. A
 		// misconfiguration should not become an outage.
-		if usePublic && !publicScopeSafe(req.Context(), table) {
+		if usePublic && !publicScopeSafe(req.Context(), resources, table) {
 			usePublic = false
 			logrus.WithField("table", table).
 				Warn("restcache: allow_public ignored — this table's read rule depends on the caller, " +
@@ -202,8 +204,8 @@ func storeEntry(ctx context.Context, vk valkey.Client, key string, entry Entry, 
 // Fails safe: when the schema classification cannot be read at all, no table is
 // treated as publicly cacheable. "We could not check" is not a reason to start
 // sharing responses between users.
-func publicScopeSafe(ctx context.Context, table string) bool {
-	tables, ok := studiobootstrap.IdentityScopedTables(ctx)
+func publicScopeSafe(ctx context.Context, resources *data.Resources, table string) bool {
+	tables, ok := studiobootstrap.IdentityScopedTables(ctx, resources)
 	if !ok {
 		return false
 	}

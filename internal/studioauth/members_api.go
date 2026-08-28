@@ -51,7 +51,7 @@ func MembersAPI(c Config) http.Handler {
 			if _, ok := requireMemberAdmin(w, req, c, false); !ok {
 				return
 			}
-			members, err := studiomembers.List(req.Context())
+			members, err := c.Members.List(req.Context())
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable,
 					errorBody("could not read Studio membership"))
@@ -83,11 +83,11 @@ func MembersAPI(c Config) http.Handler {
 				return
 			}
 
-			if err := studiomembers.SetRole(req.Context(), acting, target, role); err != nil {
+			if err := c.Members.SetRole(req.Context(), acting, target, role); err != nil {
 				writeMemberError(w, err)
 				return
 			}
-			studiomembers.Audit(req.Context(), acting, target, "set_role", role)
+			c.Members.Audit(req.Context(), acting, target, "set_role", role)
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"userId": target, "role": role,
 			})
@@ -101,11 +101,11 @@ func MembersAPI(c Config) http.Handler {
 				writeJSON(w, http.StatusBadRequest, errorBody("user id is required"))
 				return
 			}
-			if err := studiomembers.Revoke(req.Context(), acting, target); err != nil {
+			if err := c.Members.Revoke(req.Context(), acting, target); err != nil {
 				writeMemberError(w, err)
 				return
 			}
-			studiomembers.Audit(req.Context(), acting, target, "revoke", "")
+			c.Members.Audit(req.Context(), acting, target, "revoke", "")
 			writeJSON(w, http.StatusOK, map[string]interface{}{"userId": target, "role": nil})
 
 		default:

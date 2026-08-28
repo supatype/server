@@ -54,7 +54,6 @@
     "internal/auth/sms_provider": 55.63,
     "internal/apiconfig": 47.5,
     "internal/conf": 98.77,
-    "internal/dbpool": 78.45,
     "internal/deno": 24.92,
     "internal/e2e/e2ehooks": 95.65,
     "internal/functions": 17.09,
@@ -95,6 +94,7 @@
     "internal/utilities/siws": 98.57,
     "internal/data/valkey": 13.99,
     "internal/gateway": 35.38,
-    "internal/config": 68.25
+    "internal/config": 68.25,
+    "internal/data": 97.5
   }
 }

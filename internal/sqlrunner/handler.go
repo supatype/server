@@ -22,7 +22,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/dbpool"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/modes"
 )
 
@@ -34,7 +34,7 @@ const (
 )
 
 // Handler returns an http.Handler that serves the SQL runner endpoint.
-func Handler(cfg *config.Config) http.Handler {
+func Handler(cfg *config.Config, resources *data.Resources) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(os.Stderr, "[sqlrunner] %s %s\n", r.Method, r.URL.Path)
 
@@ -63,7 +63,7 @@ func Handler(cfg *config.Config) http.Handler {
 		schema := resolveSchema(cfg, r.Header.Get("Authorization"), body.Schema)
 		fmt.Fprintf(os.Stderr, "[sqlrunner] schema=%s\n", schema)
 
-		pool, err := dbpool.Pool(r.Context())
+		pool, err := resources.AdminPool()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[sqlrunner] pool error: %v\n", err)
 			logrus.WithError(err).Error("sqlrunner: database not available")

@@ -3,6 +3,7 @@ package studiobootstrap
 import (
 	"context"
 	"encoding/json"
+	"github.com/supatype/server/internal/data"
 	"sync"
 	"time"
 )
@@ -100,7 +101,7 @@ var identityScope struct {
 // The second result is false when the classification could not be determined — the
 // caller must then treat every table as identity-scoped, because "we could not
 // check" is not a reason to start sharing responses between users.
-func IdentityScopedTables(ctx context.Context) (map[string]bool, bool) {
+func IdentityScopedTables(ctx context.Context, resources *data.Resources) (map[string]bool, bool) {
 	identityScope.Lock()
 	defer identityScope.Unlock()
 
@@ -108,7 +109,7 @@ func IdentityScopedTables(ctx context.Context) (map[string]bool, bool) {
 		return identityScope.tables, true
 	}
 
-	snapshot, err := LoadSnapshot(ctx)
+	snapshot, err := LoadSnapshot(ctx, resources)
 	if err != nil {
 		// Keep serving a previous answer rather than flapping to "unknown" on a
 		// transient database blip; the TTL still bounds how old it can be.

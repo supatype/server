@@ -29,8 +29,8 @@ import (
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/dbpool"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/observability"
 	"github.com/supatype/server/internal/outerhealth"
@@ -92,13 +92,14 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		wg sync.WaitGroup
 		dm *deno.Manager
 	)
-	// Never nil, so every consumer and both shutdown paths can call it without
+	// Never nil, so every consumer and both shutdown paths can use it without
 	// asking whether a cache exists.
+	var resources *data.Resources
 	vkShared := valkey.Unavailable()
 
-	// fail closes resources opened so far and returns the bootstrap error.
+	// fail releases what has been acquired so far and returns the bootstrap error.
 	fail := func(err error) (http.Handler, func(), error) {
-		vkShared.Close()
+		_ = resources.Close()
 		_ = db.Close()
 		return nil, nil, err
 	}
@@ -132,9 +133,6 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// The structured logger used to read LOG_LEVEL at package initialisation.
 	// It is set from configuration here instead, before the listener opens.
 	observability.SetStructuredLevel(srvCfg.LogLevel)
-	// The Studio SQL runner and membership lookups share one pool. It used to
-	// read its own DSN variables; it is handed the resolved value here.
-	dbpool.Configure(srvCfg.SQLDSN())
 	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
 		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
 	}
@@ -148,24 +146,15 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	}
 
 	ref := strings.TrimSpace(srvCfg.ManagedProjectRef)
-	vkAddr := strings.TrimSpace(srvCfg.ValkeyAddr)
 	managed := strings.TrimSpace(srvCfg.Mode) == "managed"
 
-	// One Valkey client for the whole process. When none is configured, or when
-	// a non-managed deployment cannot reach the one it named, callers keep the
-	// unavailable client rather than a nil pointer they each have to remember to
-	// check.
-	if vkAddr != "" {
-		vc, vkErr := valkey.New(vkAddr)
-		if vkErr != nil {
-			if managed {
-				return fail(fmt.Errorf("serve: Valkey connect failed (managed mode): %w", vkErr))
-			}
-			logrus.WithError(vkErr).Warn("serve: Valkey connect failed, REST cache will bypass")
-		} else {
-			vkShared = vc
-		}
+	// Every connection this process holds, acquired and released in one place.
+	var resErr error
+	resources, resErr = data.Open(ctx, srvCfg)
+	if resErr != nil {
+		return fail(resErr)
 	}
+	vkShared = resources.Cache()
 
 	mergeFromValkey := managed && vkShared.Available() && ref != ""
 	perTenantManifest := managed && vkShared.Available() && ref == ""
@@ -301,7 +290,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		sendEmailHook = newSendEmailHookReceiver(ah, authCfg.Hook.SendEmail.HTTPHookSecrets)
 	}
 
-	outerMux := buildOuterMux(srvCfg, manifestFor, healthProbes, ah, dm, utilities.Version, vkShared, sendEmailHook)
+	outerMux := buildOuterMux(srvCfg, manifestFor, healthProbes, ah, dm, utilities.Version, resources, sendEmailHook)
 
 	// ── background workers (stop on ctx cancel; drained by the returned func) ──
 	wrkLog := logrus.WithField("component", "apiworker")
@@ -385,7 +374,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if dm != nil {
 			dm.Stop()
 		}
-		vkShared.Close()
+		_ = resources.Close()
 		_ = db.Close()
 	}
 

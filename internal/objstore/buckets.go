@@ -30,7 +30,7 @@ func (s *store) bucketsPath() string {
 }
 
 func (s *store) loadBuckets() ([]Bucket, error) {
-	data, err := os.ReadFile(s.bucketsPath())
+	data, err := readFile(s.bucketsPath())
 	if os.IsNotExist(err) {
 		return []Bucket{}, nil
 	}
@@ -42,11 +42,11 @@ func (s *store) loadBuckets() ([]Bucket, error) {
 }
 
 func (s *store) saveBuckets(buckets []Bucket) error {
-	data, err := json.MarshalIndent(buckets, "", "  ")
+	data, err := marshalIndent(buckets)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.bucketsPath(), data, 0o600)
+	return writeFile(s.bucketsPath(), data, 0o600)
 }
 
 // findBucket returns the index and pointer for a bucket with the given ID,
@@ -60,15 +60,43 @@ func (s *store) findBucket(buckets []Bucket, id string) (int, *Bucket) {
 	return -1, nil
 }
 
+// lookupBucket reads one bucket under the read lock.
+//
+// The error used to be dropped at three call sites — upload, public download
+// and empty — so a buckets.json that could not be read answered "bucket not
+// found". That tells the caller their bucket is gone when in fact the store is
+// broken, and it is the kind of 404 someone acts on by recreating things.
+func (s *store) lookupBucket(id string) (*Bucket, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	buckets, err := s.loadBuckets()
+	if err != nil {
+		return nil, err
+	}
+	_, bucket := s.findBucket(buckets, id)
+	return bucket, nil
+}
+
+// resolveBucket answers the request itself when the bucket cannot be read or
+// does not exist, and otherwise hands it back.
+func (s *store) resolveBucket(w http.ResponseWriter, id string) (*Bucket, bool) {
+	bucket, err := s.lookupBucket(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load buckets")
+		return nil, false
+	}
+	if bucket == nil {
+		writeError(w, http.StatusNotFound, "bucket not found")
+		return nil, false
+	}
+	return bucket, true
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 // listBuckets: GET /bucket
-// Requires service_role. Returns all buckets.
-func (s *store) listBuckets(w http.ResponseWriter, r *http.Request) {
-	if !isServiceRole(s.extractClaims(r)) {
-		writeError(w, http.StatusUnauthorized, "service role required")
-		return
-	}
+func (s *store) listBuckets(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
 	buckets, err := s.loadBuckets()
 	s.mu.RUnlock()
@@ -80,13 +108,8 @@ func (s *store) listBuckets(w http.ResponseWriter, r *http.Request) {
 }
 
 // createBucket: POST /bucket
-// Requires service_role. Body: { id?, name, public?, file_size_limit?, allowed_mime_types? }
+// Body: { id?, name, public?, file_size_limit?, allowed_mime_types? }
 func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
-	if !isServiceRole(s.extractClaims(r)) {
-		writeError(w, http.StatusUnauthorized, "service role required")
-		return
-	}
-
 	var body struct {
 		ID               string   `json:"id"`
 		Name             string   `json:"name"`
@@ -141,12 +164,8 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save bucket")
 		return
 	}
-	bucketDir, err := s.bucketDir(bucket.ID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := os.MkdirAll(bucketDir, 0o700); err != nil {
+	// bucket.ID came from cleanBucketID above, so it needs no second pass.
+	if err := mkdirAll(filepath.Join(s.root, bucket.ID), 0o700); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create bucket directory")
 		return
 	}
@@ -154,35 +173,17 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 }
 
 // getBucket: GET /bucket/{id}
-// Requires service_role.
 func (s *store) getBucket(w http.ResponseWriter, r *http.Request) {
-	if !isServiceRole(s.extractClaims(r)) {
-		writeError(w, http.StatusUnauthorized, "service role required")
+	bucket, ok := s.resolveBucket(w, chi.URLParam(r, "id"))
+	if !ok {
 		return
 	}
-	id := chi.URLParam(r, "id")
-	s.mu.RLock()
-	buckets, err := s.loadBuckets()
-	s.mu.RUnlock()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load buckets")
-		return
-	}
-	_, b := s.findBucket(buckets, id)
-	if b == nil {
-		writeError(w, http.StatusNotFound, "bucket not found")
-		return
-	}
-	utilities.WriteJSON(w, http.StatusOK, b)
+	utilities.WriteJSON(w, http.StatusOK, bucket)
 }
 
 // updateBucket: PUT /bucket/{id}
-// Requires service_role. Body: { public?, file_size_limit?, allowed_mime_types? }
+// Body: { public?, file_size_limit?, allowed_mime_types? }
 func (s *store) updateBucket(w http.ResponseWriter, r *http.Request) {
-	if !isServiceRole(s.extractClaims(r)) {
-		writeError(w, http.StatusUnauthorized, "service role required")
-		return
-	}
 	id := chi.URLParam(r, "id")
 
 	var body struct {
@@ -208,6 +209,8 @@ func (s *store) updateBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "bucket not found")
 		return
 	}
+	// Only what the body actually named: a PUT that mentions nothing changes
+	// nothing, rather than resetting the fields it omitted.
 	if body.Public != nil {
 		buckets[i].Public = *body.Public
 	}
@@ -227,12 +230,8 @@ func (s *store) updateBucket(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteBucket: DELETE /bucket/{id}
-// Requires service_role. Bucket must be empty.
+// The bucket must be empty.
 func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
-	if !isServiceRole(s.extractClaims(r)) {
-		writeError(w, http.StatusUnauthorized, "service role required")
-		return
-	}
 	id := chi.URLParam(r, "id")
 
 	s.mu.Lock()
@@ -249,17 +248,18 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refuse if non-empty (ignore .meta directory).
 	bucketDir, err := s.bucketDir(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	entries, err := os.ReadDir(bucketDir)
+	entries, err := readDir(bucketDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read bucket")
 		return
 	}
+	// The sidecar directory is this implementation's own bookkeeping, not the
+	// caller's data, so it does not make a bucket non-empty.
 	for _, e := range entries {
 		if e.Name() != ".meta" {
 			writeError(w, http.StatusBadRequest, "bucket must be empty before deletion")
@@ -272,7 +272,7 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save buckets")
 		return
 	}
-	if err := os.RemoveAll(bucketDir); err != nil { // #nosec G703 -- bucketDir is under storageRoot after bucket id validation above.
+	if err := removeAll(bucketDir); err != nil { // #nosec G703 -- bucketDir is under storageRoot after bucket id validation above.
 		writeError(w, http.StatusInternalServerError, "failed to delete bucket directory")
 		return
 	}
@@ -280,36 +280,29 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 }
 
 // emptyBucket: POST /bucket/{id}/empty
-// Requires service_role. Deletes all objects in the bucket.
+// Deletes everything in the bucket, including the sidecars.
 func (s *store) emptyBucket(w http.ResponseWriter, r *http.Request) {
-	if !isServiceRole(s.extractClaims(r)) {
-		writeError(w, http.StatusUnauthorized, "service role required")
+	id := chi.URLParam(r, "id")
+
+	if _, ok := s.resolveBucket(w, id); !ok {
 		return
 	}
-	id := chi.URLParam(r, "id")
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	buckets, _ := s.loadBuckets()
-	_, b := s.findBucket(buckets, id)
-	if b == nil {
-		writeError(w, http.StatusNotFound, "bucket not found")
-		return
-	}
 
 	bucketDir, err := s.bucketDir(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	entries, err := os.ReadDir(bucketDir)
+	entries, err := readDir(bucketDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read bucket")
 		return
 	}
 	for _, e := range entries {
-		if err := os.RemoveAll(filepath.Join(bucketDir, e.Name())); err != nil { // #nosec G703 -- bucketDir is validated and entry names come from os.ReadDir(bucketDir).
+		if err := removeAll(filepath.Join(bucketDir, e.Name())); err != nil { // #nosec G703 -- bucketDir is validated and entry names come from readDir(bucketDir).
 			writeError(w, http.StatusInternalServerError, "failed to remove bucket entry")
 			return
 		}

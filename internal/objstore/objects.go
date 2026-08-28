@@ -1,13 +1,13 @@
 package objstore
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"os"
@@ -38,14 +38,14 @@ type ObjectMeta struct {
 // It nests size and mimetype under "metadata" to match the shape expected by
 // @supatype/client's StorageObject and the Studio's StorageBrowser.
 type listItem struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	BucketID       string                 `json:"bucket_id"`
-	Owner          string                 `json:"owner,omitempty"`
-	CreatedAt      string                 `json:"created_at,omitempty"`
-	UpdatedAt      string                 `json:"updated_at,omitempty"`
-	LastAccessedAt string                 `json:"last_accessed_at,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	BucketID       string         `json:"bucket_id"`
+	Owner          string         `json:"owner,omitempty"`
+	CreatedAt      string         `json:"created_at,omitempty"`
+	UpdatedAt      string         `json:"updated_at,omitempty"`
+	LastAccessedAt string         `json:"last_accessed_at,omitempty"`
+	Metadata       map[string]any `json:"metadata"`
 }
 
 func metaToListItem(m ObjectMeta) listItem {
@@ -57,7 +57,7 @@ func metaToListItem(m ObjectMeta) listItem {
 		CreatedAt:      m.CreatedAt,
 		UpdatedAt:      m.UpdatedAt,
 		LastAccessedAt: m.LastAccessedAt,
-		Metadata: map[string]interface{}{
+		Metadata: map[string]any{
 			"size":     m.Size,
 			"mimetype": m.ContentType,
 		},
@@ -71,7 +71,7 @@ func (s *store) loadObjectMeta(bucket, objPath string) (*ObjectMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(s.root)
+	root, err := openRoot(s.root)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func (s *store) loadObjectMeta(bucket, objPath string) (*ObjectMeta, error) {
 		_ = f.Close()
 	}()
 
-	data, err := io.ReadAll(f)
+	data, err := readAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -100,14 +100,14 @@ func (s *store) saveObjectMeta(meta *ObjectMeta, bucket, objPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(s.root, filepath.Dir(metaRel)), 0o700); err != nil { // #nosec G703 -- metaRel is built from validated bucket and object paths under storageRoot.
+	if err := mkdirAll(filepath.Join(s.root, filepath.Dir(metaRel)), 0o700); err != nil { // #nosec G703 -- metaRel is built from validated bucket and object paths under storageRoot.
 		return err
 	}
-	data, err := json.MarshalIndent(meta, "", "  ")
+	data, err := marshalIndent(meta)
 	if err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(s.root)
+	root, err := openRoot(s.root)
 	if err != nil {
 		return err
 	}
@@ -115,24 +115,37 @@ func (s *store) saveObjectMeta(meta *ObjectMeta, bucket, objPath string) error {
 		_ = root.Close()
 	}()
 
-	f, err := root.OpenFile(metaRel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
+	_, err = writeTo(root, metaRel, bytes.NewReader(data))
+	return err
 }
 
 // newID generates a random UUID v4.
+//
+// crypto/rand.Read does not fail, so the error is not checked; a short read
+// would be a broken runtime rather than a condition to handle.
 func newID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	return formatUUID(b, 4)
+}
+
+// syntheticID derives a stable id for an object that has no sidecar.
+//
+// It used to be newID(), so listing the same directory twice returned a
+// different id for the same file. Anything keying on id — Studio's storage
+// browser does — saw every object replaced on each refresh.
+func syntheticID(bucket, objPath string) string {
+	sum := sha256.Sum256([]byte(bucket + "\x00" + objPath))
+	return formatUUID(sum[:16], 8)
+}
+
+// formatUUID renders 16 bytes as a UUID of the given version.
+func formatUUID(b []byte, version byte) string {
+	id := make([]byte, 16)
+	copy(id, b)
+	id[6] = (id[6] & 0x0f) | (version << 4)
+	id[8] = (id[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:])
 }
 
 // urlPath extracts the wildcard portion from a chi route (strips leading slash).
@@ -146,21 +159,12 @@ func urlPath(r *http.Request) string {
 // Requires a valid JWT. Stores the request body as a file on disk.
 // Header x-upsert: true allows overwriting existing objects.
 func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
-	claims := s.extractClaims(r)
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	claims := claimsFrom(r.Context())
 
 	bucket := chi.URLParam(r, "bucket")
 	objPath := urlPath(r)
 
-	s.mu.RLock()
-	buckets, _ := s.loadBuckets()
-	_, b := s.findBucket(buckets, bucket)
-	s.mu.RUnlock()
-	if b == nil {
-		writeError(w, http.StatusNotFound, "bucket not found")
+	if _, ok := s.resolveBucket(w, bucket); !ok {
 		return
 	}
 
@@ -171,7 +175,7 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filePath := filepath.Join(s.root, fileRel)
-	root, err := os.OpenRoot(s.root)
+	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
 		return
@@ -196,24 +200,14 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		contentType = mt
 	}
 
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil { // #nosec G703 -- filePath is built from validated bucket and object paths under storageRoot.
+	if err := mkdirAll(filepath.Dir(filePath), 0o700); err != nil { // #nosec G703 -- filePath is built from validated bucket and object paths under storageRoot.
 		writeError(w, http.StatusInternalServerError, "failed to create directory")
 		return
 	}
 
-	f, err := root.OpenFile(fileRel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	size, err := writeTo(root, fileRel, r.Body)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create file")
-		return
-	}
-	size, copyErr := io.Copy(f, r.Body)
-	closeErr := f.Close()
-	if copyErr != nil {
 		writeError(w, http.StatusInternalServerError, "failed to write file")
-		return
-	}
-	if closeErr != nil {
-		writeError(w, http.StatusInternalServerError, "failed to close file")
 		return
 	}
 
@@ -245,12 +239,8 @@ func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	objPath := urlPath(r)
 
-	s.mu.RLock()
-	buckets, _ := s.loadBuckets()
-	_, b := s.findBucket(buckets, bucket)
-	s.mu.RUnlock()
-	if b == nil {
-		writeError(w, http.StatusNotFound, "bucket not found")
+	b, ok := s.resolveBucket(w, bucket)
+	if !ok {
 		return
 	}
 	if !b.Public {
@@ -263,10 +253,6 @@ func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
 // downloadAuthenticated: GET /object/authenticated/{bucket}/*
 // Requires a valid JWT.
 func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
-	if s.extractClaims(r) == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
 	s.serveFile(w, r, chi.URLParam(r, "bucket"), urlPath(r))
 }
 
@@ -280,7 +266,7 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		return
 	}
 
-	root, err := os.OpenRoot(s.root)
+	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
 		return
@@ -302,7 +288,7 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		_ = f.Close()
 	}()
 
-	info, err := f.Stat()
+	info, err := statFile(f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to stat file")
 		return
@@ -328,11 +314,6 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 // Requires a valid JWT. Body: { prefixes: string[] }
 // Returns the list of deleted ObjectMeta records (mirrors the Node.js service).
 func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
-	if s.extractClaims(r) == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
 	bucket := chi.URLParam(r, "bucket")
 
 	var body struct {
@@ -344,7 +325,7 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var deleted []listItem
-	root, err := os.OpenRoot(s.root)
+	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
 		return
@@ -355,12 +336,7 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 
 	for _, prefix := range body.Prefixes {
 		meta, _ := s.loadObjectMeta(bucket, prefix)
-		fileRel, err := s.objectFileRel(bucket, prefix)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		metaRel, err := s.objectMetaRel(bucket, prefix)
+		fileRel, metaRel, err := s.objectPaths(bucket, prefix)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -383,11 +359,6 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 // listObjects: POST /object/list/{bucket}
 // Requires a valid JWT. Body: { prefix?, limit?, offset? }
 func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
-	if s.extractClaims(r) == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
 	bucket := chi.URLParam(r, "bucket")
 
 	var body struct {
@@ -442,7 +413,7 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Synthesise minimal metadata when the sidecar is missing.
 			results = append(results, ObjectMeta{
-				ID:       newID(),
+				ID:       syntheticID(bucket, objPath),
 				Name:     objPath,
 				BucketID: bucket,
 				Size:     info.Size(),
@@ -485,6 +456,7 @@ type signedPayload struct {
 // signToken encodes a payload and appends an HMAC-SHA256 signature.
 // Format: base64url(JSON(payload)) + "." + base64url(HMAC(payload))
 func (s *store) signToken(p signedPayload) string {
+	// signedPayload is three scalars, so it cannot fail to encode.
 	data, _ := json.Marshal(p)
 	encoded := base64.RawURLEncoding.EncodeToString(data)
 	mac := hmac.New(sha256.New, s.jwtSecret)
@@ -529,11 +501,6 @@ func (s *store) verifyToken(token string) (*signedPayload, bool) {
 // Requires a valid JWT. Body: { expiresIn: number (seconds) }
 // Returns: { signedURL: string }
 func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
-	if s.extractClaims(r) == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
 	bucket := chi.URLParam(r, "bucket")
 	objPath := urlPath(r)
 

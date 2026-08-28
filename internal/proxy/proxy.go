@@ -81,12 +81,11 @@ func addRFC7239ForwardedHop(req *http.Request, clientIP, clientFacingHost string
 	if clientIP != "" {
 		parts = append(parts, "for="+rfc7239ForParam(clientIP))
 	}
+	// Always present, so there is always a hop worth describing even when the
+	// client address and host are unknown.
 	parts = append(parts, "proto="+proto)
 	if clientFacingHost != "" {
 		parts = append(parts, "host="+rfc7239QuotedString(clientFacingHost))
-	}
-	if len(parts) == 0 {
-		return
 	}
 	req.Header.Add("Forwarded", strings.Join(parts, ";"))
 }

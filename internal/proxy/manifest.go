@@ -276,44 +276,65 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	}
 }
 
+// newWatcher is the fsnotify constructor, indirected so the failure to create
+// one — which needs an exhausted inotify budget to provoke — can be exercised.
+var newWatcher = fsnotify.NewWatcher
+
 // Watch starts a goroutine that calls fn whenever the manifest file at path
-// changes. The goroutine exits when ctx is done.
+// changes. The goroutine exits when the watcher is closed.
 func Watch(path string, fn func(*RouteManifest)) error {
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := newWatcher()
 	if err != nil {
 		return err
 	}
 
 	if err := watcher.Add(path); err != nil {
-		if closeErr := watcher.Close(); closeErr != nil {
-			logrus.WithError(closeErr).Warn("manifest watcher close failed")
-		}
+		// Whether the close also fails is not actionable and not the failure
+		// worth reporting: the caller is already being told the watch could not
+		// be set up.
+		_ = watcher.Close()
 		return err
 	}
 
 	go func() {
 		defer watcher.Close() //nolint:errcheck
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-					m, err := Load(path)
-					if err != nil {
-						logrus.WithError(err).Warn("manifest reload failed")
-						continue
-					}
-					fn(m)
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				logrus.WithError(err).Warn("manifest watcher error")
-			}
-		}
+		watchLoop(watcher.Events, watcher.Errors, path, fn)
 	}()
 	return nil
+}
+
+// watchLoop reloads the manifest on every write, until both channels close.
+//
+// Separated from Watch so it can be driven directly: the interesting cases are
+// a reload that fails to parse and a watcher that reports an error, and neither
+// can be arranged reliably through a real filesystem.
+func watchLoop(events <-chan fsnotify.Event, errs <-chan error, path string, fn func(*RouteManifest)) {
+	for events != nil || errs != nil {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) {
+				continue
+			}
+			m, err := Load(path)
+			if err != nil {
+				// A half-written file is the ordinary case here: an editor or a
+				// deploy writes in two syscalls and the first event catches it
+				// mid-write. Keep serving what is already loaded and wait for the
+				// event that completes it.
+				logrus.WithError(err).Warn("manifest reload failed")
+				continue
+			}
+			fn(m)
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			logrus.WithError(err).Warn("manifest watcher error")
+		}
+	}
 }

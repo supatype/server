@@ -3,9 +3,10 @@ package studiobootstrap
 import (
 	"context"
 	"encoding/json"
-	"github.com/supatype/server/internal/data"
 	"sync"
 	"time"
+
+	"github.com/supatype/server/internal/data"
 )
 
 // IsIdentityDependent reports whether a rule's outcome varies by *who* is asking.

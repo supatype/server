@@ -43,7 +43,7 @@ func NewGoogleProvider(ctx context.Context, ext conf.OAuthProviderConfiguration,
 	}
 
 	if ext.URL != "" {
-		logrus.Warn("Google OAuth provider has URL config set which is ignored (check GOTRUE_EXTERNAL_GOOGLE_URL)")
+		logrus.Warn("Google OAuth provider has URL config set which is ignored (check SUPATYPE_EXTERNAL_GOOGLE_URL)")
 	}
 
 	oauthScopes := []string{

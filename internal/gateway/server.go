@@ -26,6 +26,8 @@ import (
 	"github.com/supatype/server/internal/auth"
 	"github.com/supatype/server/internal/auth/apiworker"
 	"github.com/supatype/server/internal/auth/mailer/templatemailer"
+	"github.com/supatype/server/internal/auth/provider"
+	smsprovider "github.com/supatype/server/internal/auth/sms_provider"
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/config"
@@ -37,6 +39,7 @@ import (
 	"github.com/supatype/server/internal/platform"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/reloader"
+	"github.com/supatype/server/internal/security"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -116,7 +119,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		limiterOpts,
 		auth.WithMailer(templatemailer.FromConfig(authCfg, mrCache)),
 	)
-	logrus.WithField("version", initialAPI.Version()).Info("GoTrue API initialized")
+	logrus.WithField("version", initialAPI.Version()).Info("auth API initialised")
 
 	ah := reloader.NewAtomicHandler(initialAPI)
 
@@ -138,6 +141,18 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// The structured logger used to read LOG_LEVEL at package initialisation.
 	// It is set from configuration here instead, before the listener opens.
 	observability.SetStructuredLevel(srvCfg.LogLevel)
+	// Timeouts that used to be parsed from the environment in package inits,
+	// before configuration existed and with log.Fatalf as the error path.
+	provider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
+	smsprovider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
+	security.SetHTTPTimeout(authCfg.Security.Captcha.Timeout)
+	// Every address this deployment answers on, joined from both configs. Studio
+	// refuses to open without authentication unless all of them are local.
+	srvCfg.PublicURLs = []string{
+		strings.TrimSpace(authCfg.API.ExternalURL),
+		strings.TrimSpace(authCfg.SiteURL),
+		strings.TrimSpace(srvCfg.SupatypeURL),
+	}
 	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
 		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
 	}

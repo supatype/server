@@ -54,7 +54,7 @@ func (a *API) getSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
 	return &provider
 }
 
-// SAMLMetadata serves GoTrue's SAML Service Provider metadata file.
+// SAMLMetadata serves the SAML Service Provider metadata file.
 func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
 	serviceProvider := a.getSAMLServiceProvider(nil, true)
 

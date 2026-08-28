@@ -102,7 +102,7 @@ func TestAPIKeyMiddlewareExemptions(t *testing.T) {
 	}{
 		{"cors preflight", http.MethodOptions, "/rest/v1/posts"},
 		{"public storage object", http.MethodGet, "/storage/v1/object/public/media/logo.png"},
-		{"auth is gated by gotrue itself", http.MethodGet, "/auth/v1/health"},
+		{"auth is gated by the auth service itself", http.MethodGet, "/auth/v1/health"},
 		{"health probe", http.MethodGet, "/health"},
 	}
 	for _, tc := range cases {

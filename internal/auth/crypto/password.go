@@ -44,13 +44,13 @@ const (
 var PasswordHashCost = DefaultHashCost
 
 var (
-	generateFromPasswordSubmittedCounter = observability.ObtainMetricCounter("gotrue_generate_from_password_submitted", "Number of submitted GenerateFromPassword hashing attempts")
-	generateFromPasswordCompletedCounter = observability.ObtainMetricCounter("gotrue_generate_from_password_completed", "Number of completed GenerateFromPassword hashing attempts")
+	generateFromPasswordSubmittedCounter = observability.ObtainMetricCounter("supatype_auth_generate_from_password_submitted", "Number of submitted GenerateFromPassword hashing attempts")
+	generateFromPasswordCompletedCounter = observability.ObtainMetricCounter("supatype_auth_generate_from_password_completed", "Number of completed GenerateFromPassword hashing attempts")
 )
 
 var (
-	compareHashAndPasswordSubmittedCounter = observability.ObtainMetricCounter("gotrue_compare_hash_and_password_submitted", "Number of submitted CompareHashAndPassword hashing attempts")
-	compareHashAndPasswordCompletedCounter = observability.ObtainMetricCounter("gotrue_compare_hash_and_password_completed", "Number of completed CompareHashAndPassword hashing attempts")
+	compareHashAndPasswordSubmittedCounter = observability.ObtainMetricCounter("supatype_auth_compare_hash_and_password_submitted", "Number of submitted CompareHashAndPassword hashing attempts")
+	compareHashAndPasswordCompletedCounter = observability.ObtainMetricCounter("supatype_auth_compare_hash_and_password_completed", "Number of completed CompareHashAndPassword hashing attempts")
 )
 
 var ErrArgon2MismatchedHashAndPassword = errors.New("crypto: argon2 hash and password mismatch")

@@ -138,7 +138,7 @@ func TestWatchNotify(t *testing.T) {
 		require.False(t, isWatchable(invalidDir))
 
 		name := helpWriteEnvFile(t, dir, "05_example.env", map[string]string{
-			"GOTRUE_SMTP_PORT": "2222",
+			"SUPATYPE_SMTP_PORT": "2222",
 		})
 		require.False(t, isWatchable(name))
 
@@ -376,7 +376,7 @@ func TestWatchNotify(t *testing.T) {
 				case <-tr.C:
 					// write to the config
 					helpWriteEnvFile(t, dir, "01_conf.env", map[string]string{
-						"GOTRUE_SMTP_PORT": "11111",
+						"SUPATYPE_SMTP_PORT": "11111",
 					})
 				}
 			}
@@ -436,7 +436,7 @@ func TestWatchNotify(t *testing.T) {
 				case <-tr.C:
 					// write to the config
 					helpWriteEnvFile(t, dir, "01_conf.env", map[string]string{
-						"GOTRUE_SMTP_PORT": "11111",
+						"SUPATYPE_SMTP_PORT": "11111",
 					})
 				}
 			}
@@ -519,7 +519,7 @@ func TestWatchNotify(t *testing.T) {
 			drain(rr.reloadCh)
 
 			name := helpWriteEnvFile(t, dir, "02_example.env", map[string]string{
-				"GOTRUE_EXTERNAL_APPLE_ENABLED": "true",
+				"SUPATYPE_EXTERNAL_APPLE_ENABLED": "true",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -534,7 +534,7 @@ func TestWatchNotify(t *testing.T) {
 
 		{
 			name := helpWriteEnvFile(t, dir, "03_example.env.bak", map[string]string{
-				"GOTRUE_EXTERNAL_APPLE_ENABLED": "false",
+				"SUPATYPE_EXTERNAL_APPLE_ENABLED": "false",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -547,7 +547,7 @@ func TestWatchNotify(t *testing.T) {
 			drain(rr.reloadCh)
 
 			name := helpWriteEnvFile(t, dir, "04_example.env", map[string]string{
-				"GOTRUE_SMTP_PORT": "ABC",
+				"SUPATYPE_SMTP_PORT": "ABC",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -566,7 +566,7 @@ func TestWatchNotify(t *testing.T) {
 
 		{
 			name := helpWriteEnvFile(t, dir, "05_example.env", map[string]string{
-				"GOTRUE_SMTP_PORT": "2222",
+				"SUPATYPE_SMTP_PORT": "2222",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -586,7 +586,7 @@ func TestWatchNotify(t *testing.T) {
 			wr.setErr(sentinelErr)
 
 			name := helpWriteEnvFile(t, dir, "05_example.env", map[string]string{
-				"GOTRUE_SMTP_PORT": "2221",
+				"SUPATYPE_SMTP_PORT": "2221",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -626,7 +626,7 @@ func TestReloadConfig(t *testing.T) {
 	}
 
 	helpWriteEnvFile(t, dir, "02_example.env", map[string]string{
-		"GOTRUE_EXTERNAL_APPLE_ENABLED": "true",
+		"SUPATYPE_EXTERNAL_APPLE_ENABLED": "true",
 	})
 	{
 		cfg, err := rl.reload()
@@ -636,7 +636,7 @@ func TestReloadConfig(t *testing.T) {
 	}
 
 	helpWriteEnvFile(t, dir, "03_example.env.bak", map[string]string{
-		"GOTRUE_EXTERNAL_APPLE_ENABLED": "false",
+		"SUPATYPE_EXTERNAL_APPLE_ENABLED": "false",
 	})
 	{
 		cfg, err := rl.reload()
@@ -647,8 +647,8 @@ func TestReloadConfig(t *testing.T) {
 
 	// test cfg reload failure
 	helpWriteEnvFile(t, dir, "04_example.env", map[string]string{
-		"PORT":             "INVALIDPORT",
-		"GOTRUE_SMTP_PORT": "ABC",
+		"PORT":               "INVALIDPORT",
+		"SUPATYPE_SMTP_PORT": "ABC",
 	})
 	{
 		cfg, err := rl.reload()

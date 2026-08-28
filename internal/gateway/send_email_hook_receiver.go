@@ -1,8 +1,8 @@
 // Send-email hook receiver (POST /internal/v0hooks/send-email).
 //
-// GoTrue is configured with GOTRUE_HOOK_SEND_EMAIL_ENABLED=true, GOTRUE_HOOK_SEND_EMAIL_URI
-// pointing at this path (or any HTTPS URL for an Edge Function), and GOTRUE_HOOK_SEND_EMAIL_SECRETS
-// matching Standard Webhooks v1 symmetric secrets (same format as outbound hooks). GoTrue then
+// The auth service is configured with SUPATYPE_HOOK_SEND_EMAIL_ENABLED=true, SUPATYPE_HOOK_SEND_EMAIL_URI
+// pointing at this path (or any HTTPS URL for an Edge Function), and SUPATYPE_HOOK_SEND_EMAIL_SECRETS
+// matching Standard Webhooks v1 symmetric secrets (same format as outbound hooks). The auth service then
 // POSTs the payload to that URI instead of calling the mailer directly; this handler verifies the
 // signature and runs DeliverInboundSendEmailHook (same templated path as direct sends).
 //

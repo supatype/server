@@ -82,11 +82,11 @@ func (a *API) deprecationNotices() {
 	log := logrus.WithField("component", "api")
 
 	if config.JWT.AdminGroupName != "" {
-		log.Warn("DEPRECATION NOTICE: GOTRUE_JWT_ADMIN_GROUP_NAME not supported by Supatype's GoTrue, will be removed soon")
+		log.Warn("DEPRECATION NOTICE: SUPATYPE_JWT_ADMIN_GROUP_NAME not supported by this service, will be removed soon")
 	}
 
 	if config.JWT.DefaultGroupName != "" {
-		log.Warn("DEPRECATION NOTICE: GOTRUE_JWT_DEFAULT_GROUP_NAME not supported by Supatype's GoTrue, will be removed soon")
+		log.Warn("DEPRECATION NOTICE: SUPATYPE_JWT_DEFAULT_GROUP_NAME not supported by this service, will be removed soon")
 	}
 }
 
@@ -362,7 +362,7 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 				r.Get("/{template_type}", api.adminMailTemplateGet)
 				r.Put("/{template_type}", api.adminMailTemplatePut)
 			})
-			// Supabase/GoTrue also expose the plural segment in some tooling.
+			// Some upstream tooling also exposes the plural segment in some tooling.
 			r.Route("/templates", func(r *router) {
 				r.Get("/{template_type}", api.adminMailTemplateGet)
 				r.Put("/{template_type}", api.adminMailTemplatePut)
@@ -457,12 +457,16 @@ type HealthCheckResponse struct {
 	Description string `json:"description"`
 }
 
-// HealthCheck endpoint indicates if the gotrue api service is available
+// HealthCheck reports that the auth service is available.
+//
+// Name and Description are part of the response, so changing them is visible to
+// anything that reads /auth/v1/health. They are changed on purpose: the service
+// should introduce itself by a name a customer can find in the documentation.
 func (a *API) HealthCheck(w http.ResponseWriter, r *http.Request) error {
 	return sendJSON(w, http.StatusOK, HealthCheckResponse{
 		Version:     a.version,
-		Name:        "GoTrue",
-		Description: "GoTrue is a user registration and authentication API",
+		Name:        "Supatype Auth",
+		Description: "Supatype Auth is a user registration and authentication API",
 	})
 }
 

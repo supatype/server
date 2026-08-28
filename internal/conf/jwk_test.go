@@ -323,9 +323,9 @@ func TestJwtKeys(t *testing.T) {
 
 func TestDecode(t *testing.T) {
 	// array of JWKs containing 4 keys
-	gotrueJwtKeys := testJwtKey
+	authJwtKeys := testJwtKey
 	var decoder JwtKeysDecoder
-	require.NoError(t, decoder.Decode(gotrueJwtKeys))
+	require.NoError(t, decoder.Decode(authJwtKeys))
 	require.Len(t, decoder, 4)
 
 	for kid, key := range decoder {
@@ -338,9 +338,9 @@ func TestDecode(t *testing.T) {
 
 func TestJWTConfiguration(t *testing.T) {
 	// array of JWKs containing 4 keys
-	gotrueJwtKeys := testJwtKey
+	authJwtKeys := testJwtKey
 	var decoder JwtKeysDecoder
-	require.NoError(t, decoder.Decode(gotrueJwtKeys))
+	require.NoError(t, decoder.Decode(authJwtKeys))
 	require.Len(t, decoder, 4)
 
 	cases := []struct {
@@ -349,7 +349,7 @@ func TestJWTConfiguration(t *testing.T) {
 		expectedLength int
 	}{
 		{
-			desc: "GOTRUE_JWT_KEYS is nil",
+			desc: "SUPATYPE_JWT_KEYS is nil",
 			config: JWTConfiguration{
 				Secret: "testsecret",
 				KeyID:  "testkeyid",
@@ -357,7 +357,7 @@ func TestJWTConfiguration(t *testing.T) {
 			expectedLength: 1,
 		},
 		{
-			desc: "GOTRUE_JWT_KEYS is an empty map",
+			desc: "SUPATYPE_JWT_KEYS is an empty map",
 			config: JWTConfiguration{
 				Secret: "testsecret",
 				KeyID:  "testkeyid",
@@ -366,7 +366,7 @@ func TestJWTConfiguration(t *testing.T) {
 			expectedLength: 1,
 		},
 		{
-			desc: "Prefer GOTRUE_JWT_KEYS over GOTRUE_JWT_SECRET",
+			desc: "Prefer SUPATYPE_JWT_KEYS over SUPATYPE_JWT_SECRET",
 			config: JWTConfiguration{
 				Secret: "testsecret",
 				KeyID:  "testkeyid",

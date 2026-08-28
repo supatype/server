@@ -27,7 +27,7 @@ import (
 // object storage API backed by local disk at storageRoot.
 //
 // jwtSecret is the HS256 secret used to validate Bearer tokens — the same
-// value as GOTRUE_JWT_SECRET set by the CLI (local dev JWT secret).
+// value as SUPATYPE_JWT_SECRET set by the CLI (local dev JWT secret).
 //
 // The handler is designed to be mounted with http.StripPrefix("/storage/v1")
 // so all routes below are relative to that prefix.

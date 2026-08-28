@@ -1,6 +1,6 @@
 // Package admin provides HTTP handlers for the /admin/v1 API.
 //
-// All routes require a service-role Bearer JWT verified against GOTRUE_JWT_SECRET.
+// All routes require a service-role Bearer JWT verified against SUPATYPE_JWT_SECRET.
 // In SUPATYPE_MODE=dev, JWT verification is skipped.
 package admin
 

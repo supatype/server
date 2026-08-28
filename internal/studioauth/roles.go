@@ -28,15 +28,19 @@ func (c Config) DevBypass() bool {
 	// carry from a laptop to a server by copying a config, so also require the
 	// deployment to be locally addressed: convenience stays on localhost and
 	// cannot follow the config into production.
-	return isLocallyAddressed()
+	return locallyAddressed(c.PublicURLs)
 }
 
-// isLocallyAddressed reports whether this deployment's public URL is a local
-// address. Unset is treated as local so `supatype dev` keeps working before any
-// URL is configured.
-func isLocallyAddressed() bool {
-	for _, key := range []string{"API_EXTERNAL_URL", "GOTRUE_API_EXTERNAL_URL", "GOTRUE_SITE_URL"} {
-		raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+// locallyAddressed reports whether every public URL this deployment knows about
+// is a local address. Unset is treated as local so `supatype dev` keeps working
+// before any URL is configured.
+//
+// The URLs are passed in rather than read from the environment: this decides
+// whether an unauthenticated Studio that injects the service role key is
+// allowed, so what it reads should be visible to whoever wires it up.
+func locallyAddressed(urls []string) bool {
+	for _, raw := range urls {
+		raw = strings.TrimSpace(strings.ToLower(raw))
 		if raw == "" {
 			continue
 		}

@@ -65,7 +65,7 @@ func withIPAddress(r *http.Request) (*http.Request, error) {
 }
 
 // Middleware returns a middleware function that parses the Sb-Forwarded-For header
-// and adds the leftmost header value to the request context if GOTRUE_SECURITY_SB_FORWARDED_FOR_ENABLED
+// and adds the leftmost header value to the request context if SUPATYPE_SECURITY_SB_FORWARDED_FOR_ENABLED
 // is true and the value is a valid IP address.
 func Middleware(cfg *conf.SecurityConfiguration, errCallback func(*http.Request, error)) func(http.Handler) http.Handler {
 	out := func(next http.Handler) http.Handler {

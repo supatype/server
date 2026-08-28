@@ -29,6 +29,10 @@ type Config struct {
 	// resources, so a deployment with no database still yields a usable value
 	// whose every call reports that and denies.
 	Members studiomembers.Store
+	// PublicURLs are the addresses this deployment answers on. DevBypass refuses
+	// to open Studio unless every one of them is local, so convenience cannot
+	// follow a copied config into production.
+	PublicURLs []string
 	// OpenDev opens Studio without authentication. It is only honoured in dev
 	// mode on a locally addressed deployment; see Config.DevBypass.
 	OpenDev bool
@@ -54,6 +58,7 @@ func ConfigFromServer(cfg *config.Config) Config {
 		AdminRoles:     AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
 		Mode:           cfg.Mode,
 		OpenDev:        cfg.StudioOpenDev.Bool(),
+		PublicURLs:     cfg.PublicURLs,
 	}
 }
 

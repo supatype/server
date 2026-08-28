@@ -1,8 +1,5 @@
 .env*
 vendor/
-gotrue
-gotrue-arm64
-gotrue.exe
 auth
 auth-arm64
 auth-arm64-strip

@@ -31,7 +31,8 @@ type Member struct {
 	UpdatedAt string `json:"updatedAt"`
 	// PlatformAccount marks a grant held by a Supatype Cloud account rather than
 	// one of this project's own users. Those cannot sign in to a self-hosted
-	// GoTrue, so self-host lists them read-only rather than pretending otherwise.
+	// the auth service, so self-host lists them read-only rather than pretending
+	// otherwise.
 	PlatformAccount bool `json:"platformAccount"`
 }
 

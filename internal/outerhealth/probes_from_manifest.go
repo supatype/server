@@ -13,14 +13,14 @@ func ProbeConfigFrom(cfg *config.Config, m *proxy.RouteManifest, denoBaseURL str
 	if m == nil {
 		m = &proxy.RouteManifest{Schema: "public"}
 	}
-	postgRESTURL := firstNonEmptyStr(m.PostgRESTURL, cfg.PostgRESTURL, "http://localhost:3000")
-	graphQLProbeBase := firstNonEmptyStr(m.GraphQLURL, cfg.GraphQLURL, postgRESTURL)
+	postgRESTURL := firstNonEmpty(m.PostgRESTURL, cfg.PostgRESTURL, "http://localhost:3000")
+	graphQLProbeBase := firstNonEmpty(m.GraphQLURL, cfg.GraphQLURL, postgRESTURL)
 
 	var storageLocalPath, storageRemoteURL string
 	if cfg.StorageProvider == "local" && cfg.StoragePath != "" {
 		storageLocalPath = cfg.StoragePath
 	} else {
-		storageRemoteURL = firstNonEmptyStr(m.StorageURL, cfg.StorageURL)
+		storageRemoteURL = firstNonEmpty(m.StorageURL, cfg.StorageURL)
 	}
 
 	return ProbeConfig{
@@ -33,7 +33,10 @@ func ProbeConfigFrom(cfg *config.Config, m *proxy.RouteManifest, denoBaseURL str
 	}
 }
 
-func firstNonEmptyStr(vals ...string) string {
+// firstNonEmpty returns the first value that is not blank, which is the
+// resolution rule everywhere in this package: a manifest overrides
+// configuration, configuration overrides the built-in default.
+func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if strings.TrimSpace(v) != "" {
 			return v

@@ -143,10 +143,10 @@ func TestProbePostgREST(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if !probePostgREST(ts.URL, time.Second) {
+	if !probeHTTPGet(joinURL(ts.URL, "/"), time.Second) {
 		t.Fatal("expected probe success")
 	}
-	if probePostgREST("http://127.0.0.1:9", 100*time.Millisecond) {
+	if probeHTTPGet(joinURL("http://127.0.0.1:9", "/"), 100*time.Millisecond) {
 		t.Fatal("expected probe failure on closed port")
 	}
 }

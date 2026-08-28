@@ -150,13 +150,6 @@ func overallStatus(components map[string]any) string {
 	return "degraded"
 }
 
-func firstNonEmpty(a, b string) string {
-	if strings.TrimSpace(a) != "" {
-		return a
-	}
-	return b
-}
-
 func joinURL(base, path string) string {
 	b := strings.TrimRight(strings.TrimSpace(base), "/")
 	if b == "" {
@@ -196,12 +189,4 @@ func isDirReadable(path string) bool {
 		return false
 	}
 	return fi.IsDir()
-}
-
-// probePostgREST is kept for tests that exercised the old helper name.
-func probePostgREST(baseURL string, timeout time.Duration) bool {
-	if strings.TrimSpace(baseURL) == "" {
-		return false
-	}
-	return probeHTTPGet(joinURL(baseURL, "/"), timeout)
 }

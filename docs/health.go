@@ -1,7 +1,7 @@
 //lint:file-ignore U1000 ignore go-swagger template
 package docs
 
-import "github.com/supatype/server/internal/api"
+import "github.com/supatype/server/internal/auth"
 
 // swagger:route GET /health health health
 // The healthcheck endpoint for gotrue. Returns the current gotrue version.
@@ -11,5 +11,5 @@ import "github.com/supatype/server/internal/api"
 // swagger:response healthCheckResponse
 type healthCheckResponseWrapper struct {
 	// in:body
-	Body api.HealthCheckResponse
+	Body auth.HealthCheckResponse
 }

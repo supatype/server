@@ -570,8 +570,8 @@ GOTRUE_INDEX_WORKER_ENSURE_USER_SEARCH_INDEXES_EXIST
 GOTRUE_INDEX_WORKER_MAX_USERS_THRESHOLD
     struct internal/conf.GlobalConfiguration
 GOTRUE_INTERNAL_HTTP_TIMEOUT
-    call internal/api/provider/provider.go:20
-    call internal/api/sms_provider/sms_provider.go:21
+    call internal/auth/provider/provider.go:20
+    call internal/auth/sms_provider/sms_provider.go:21
 GOTRUE_JWT_ADMIN_GROUP_NAME
     struct internal/conf.GlobalConfiguration
 GOTRUE_JWT_ADMIN_ROLES
@@ -1179,7 +1179,7 @@ GOTRUE_WEBAUTHN_RP_ORIGINS
 LOG_LEVEL
     call internal/observability/logger.go:28
 MAU_EMAIL_SALT
-    call server/cloud_gateway.go:46
+    call internal/gateway/cloud_gateway.go:46
 OTEL_EXPORTER_OTLP_PROTOCOL
     struct internal/conf.GlobalConfiguration
 OTEL_EXPORTER_PROMETHEUS_HOST
@@ -1195,15 +1195,15 @@ POSTGRES_PASSWORD
 REQUEST_ID_HEADER
     struct internal/conf.GlobalConfiguration
 RESEND_API_KEY
-    call internal/mailer/templatemailer/template.go:59
+    call internal/auth/mailer/templatemailer/template.go:59
 RESEND_FROM
-    call internal/mailer/templatemailer/template.go:60
+    call internal/auth/mailer/templatemailer/template.go:60
 RP_ID
     struct internal/conf.GlobalConfiguration
 SECRETS
     struct internal/conf.GlobalConfiguration
 SES_FROM
-    call internal/mailer/templatemailer/template.go:70
+    call internal/auth/mailer/templatemailer/template.go:70
 STORAGE_PATH
     struct internal/serverconf.ServerConfig
 STORAGE_PROVIDER
@@ -1231,12 +1231,12 @@ SUPATYPE_APP_STATIC_DIR
 SUPATYPE_APP_UPSTREAM
     struct internal/serverconf.ServerConfig
 SUPATYPE_BLOCK_BOT_UA
-    call server/cloud_gateway.go:44
+    call internal/gateway/cloud_gateway.go:44
 SUPATYPE_CLOUD_ACTIVITY_ENABLED
-    call server/cloud_gateway.go:39
+    call internal/gateway/cloud_gateway.go:39
 SUPATYPE_CLOUD_ACTIVITY_URL
-    call server/cloud_gateway.go:40
-    call server/cloud_gateway.go:47
+    call internal/gateway/cloud_gateway.go:40
+    call internal/gateway/cloud_gateway.go:47
 SUPATYPE_CONTROL_PLANE_URL
     call internal/platformproxy/proxy.go:19
 SUPATYPE_CORS_ALLOW_ORIGINS
@@ -1260,9 +1260,9 @@ SUPATYPE_GRAPHQL_URL
 SUPATYPE_HEALTH_SELF_BASE_URL
     struct internal/serverconf.ServerConfig
 SUPATYPE_INTERNAL_HMAC_SECRET
-    call server/cloud_gateway.go:41
+    call internal/gateway/cloud_gateway.go:41
 SUPATYPE_MANAGED_PROJECT_REF
-    call server/cloud_gateway.go:42
+    call internal/gateway/cloud_gateway.go:42
     struct internal/serverconf.ServerConfig
 SUPATYPE_MANIFEST_PATH
     call internal/serverconf/dotenv.go:69
@@ -1274,7 +1274,7 @@ SUPATYPE_MODE
     call internal/studioauth/roles.go:16
     struct internal/serverconf.ServerConfig
 SUPATYPE_NONPROD
-    call server/cloud_gateway.go:43
+    call internal/gateway/cloud_gateway.go:43
 SUPATYPE_OUTER_LOG_LEVEL
     struct internal/serverconf.ServerConfig
 SUPATYPE_POSTGREST_URL
@@ -1307,9 +1307,9 @@ SUPATYPE_TLS_DOMAIN
 SUPATYPE_URL
     struct internal/serverconf.ServerConfig
 SUPATYPE_VALKEY_ADDR
-    call server/cloud_gateway.go:45
+    call internal/gateway/cloud_gateway.go:45
     struct internal/serverconf.ServerConfig
 SUPATYPE_VITE_DEV_URL
     struct internal/serverconf.ServerConfig
 VALKEY_ADDR
-    call server/cloud_gateway.go:45
+    call internal/gateway/cloud_gateway.go:45

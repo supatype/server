@@ -14,8 +14,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/serverconf"
-	"github.com/supatype/server/internal/valkey"
 )
 
 type dbCredMeta struct {

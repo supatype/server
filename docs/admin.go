@@ -2,7 +2,7 @@
 package docs
 
 import (
-	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/auth"
 )
 
 // swagger:route GET /admin/users admin admin-list-users
@@ -17,7 +17,7 @@ import (
 // swagger:response adminListUserResponse
 type adminListUserResponseWrapper struct {
 	// in:body
-	Body api.AdminListUsersResponse
+	Body auth.AdminListUsersResponse
 }
 
 // swagger:route POST /admin/users admin admin-create-user
@@ -32,7 +32,7 @@ type adminListUserResponseWrapper struct {
 // swagger:parameters admin-create-user
 type adminUserParamsWrapper struct {
 	// in:body
-	Body api.AdminUserParams
+	Body auth.AdminUserParams
 }
 
 // swagger:route GET /admin/user/{user_id} admin admin-get-user
@@ -95,12 +95,12 @@ type deleteUserResponseWrapper struct{}
 // swagger:parameters admin-generate-link
 type generateLinkParams struct {
 	// in:body
-	Body api.GenerateLinkParams
+	Body auth.GenerateLinkParams
 }
 
 // The response object for generate link.
 // swagger:response generateLinkResponse
 type generateLinkResponseWrapper struct {
 	// in:body
-	Body api.GenerateLinkResponse
+	Body auth.GenerateLinkResponse
 }

@@ -15,10 +15,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/gateway"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/utilities"
-	"github.com/supatype/server/server"
 )
 
 var serveCmd = cobra.Command{
@@ -30,18 +30,18 @@ var serveCmd = cobra.Command{
 }
 
 func serve(ctx context.Context) {
-	// Build the full server surface + background workers. server.New performs
+	// Build the full server surface + background workers. gateway.New performs
 	// the bootstrap (config, DB, API, manifest, Valkey, Deno, mux); this binary
 	// owns the listener/TLS/graceful-shutdown loop below.
-	server.ConfigFile = configFile
-	server.WatchDir = watchDir
-	handler, drain, err := server.New(ctx)
+	gateway.ConfigFile = configFile
+	gateway.WatchDir = watchDir
+	handler, drain, err := gateway.New(ctx)
 	if err != nil {
 		logrus.WithError(err).Fatal("unable to start server")
 	}
 	defer drain()
 
-	// Listener parameters. server.New has already loaded config files and
+	// Listener parameters. gateway.New has already loaded config files and
 	// `.env` into the process environment, so these reads are consistent.
 	config, err := conf.LoadGlobalFromEnv()
 	if err != nil {

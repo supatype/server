@@ -9,9 +9,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/studiobootstrap"
-	"github.com/supatype/server/internal/valkey"
 )
 
 // Middleware caches opt-in GET/HEAD /rest/v1 responses in Valkey.

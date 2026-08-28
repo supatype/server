@@ -2,8 +2,8 @@
 package docs
 
 import (
-	"github.com/supatype/server/internal/api"
-	"github.com/supatype/server/internal/models"
+	"github.com/supatype/server/internal/auth"
+	"github.com/supatype/server/internal/auth/models"
 )
 
 // swagger:route GET /user user user-get
@@ -33,5 +33,5 @@ type userResponseWrapper struct {
 // swagger:parameters user-put
 type userUpdateParams struct {
 	// in:body
-	Body api.UserUpdateParams
+	Body auth.UserUpdateParams
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/auth/storage"
 )
 
 var EmbeddedMigrations embed.FS

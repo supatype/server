@@ -2,7 +2,7 @@
 package docs
 
 import (
-	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/auth"
 )
 
 // swagger:route GET /verify verify verify-get
@@ -11,7 +11,7 @@ import (
 // swagger:parameters verify-get
 type verifyGetParamsWrapper struct {
 	// in:query
-	api.VerifyParams
+	auth.VerifyParams
 }
 
 // swagger:route POST /verify verify verify-post
@@ -20,5 +20,5 @@ type verifyGetParamsWrapper struct {
 // swagger:parameters verify-post
 type verifyPostParamsWrapper struct {
 	// in:body
-	Body api.VerifyParams
+	Body auth.VerifyParams
 }

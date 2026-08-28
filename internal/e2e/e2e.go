@@ -6,9 +6,9 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/supatype/server/internal/auth/storage"
+	"github.com/supatype/server/internal/auth/storage/test"
 	"github.com/supatype/server/internal/conf"
-	"github.com/supatype/server/internal/storage"
-	"github.com/supatype/server/internal/storage/test"
 )
 
 var (

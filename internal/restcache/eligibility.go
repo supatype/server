@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/serverconf"
-	"github.com/supatype/server/internal/valkey"
 )
 
 // ServerCacheOffered reports whether Valkey-backed REST caching is enabled for this

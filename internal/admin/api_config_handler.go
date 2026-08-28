@@ -12,9 +12,9 @@ import (
 	"strings"
 
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/serverconf"
-	"github.com/supatype/server/internal/valkey"
 )
 
 var validSchema = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$`)

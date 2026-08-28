@@ -1,7 +1,7 @@
 //lint:file-ignore U1000 ignore go-swagger template
 package docs
 
-import "github.com/supatype/server/internal/api"
+import "github.com/supatype/server/internal/auth"
 
 // swagger:route GET /settings settings settings
 // Returns the configuration settings for the gotrue server.
@@ -11,5 +11,5 @@ import "github.com/supatype/server/internal/api"
 // swagger:response settingsResponse
 type settingsResponseWrapper struct {
 	// in:body
-	Body api.Settings
+	Body auth.Settings
 }

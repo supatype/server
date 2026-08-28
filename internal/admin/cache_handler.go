@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/serverconf"
-	"github.com/supatype/server/internal/valkey"
 )
 
 const cacheBodyPreviewMax = 4096

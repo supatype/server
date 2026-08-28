@@ -2,7 +2,6 @@ package studioauth
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -188,21 +187,14 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 			}
 		}
 
+		// Clone already deep-copies the URL, so the three branches that copied it
+		// again — two of which could not run, because net/http never hands a
+		// server handler a request without one — are gone. An empty path is not
+		// a valid request-target, so that default stays.
 		req2 := req.Clone(req.Context())
-		if req2.URL != nil {
-			u := *req2.URL
-			req2.URL = &u
-		} else if req.URL != nil {
-			u := *req.URL
-			req2.URL = &u
-		} else {
-			req2.URL = &url.URL{}
+		if req2.URL.Path == "" {
+			req2.URL.Path = "/"
 		}
-		path := req2.URL.Path
-		if path == "" {
-			path = "/"
-		}
-		req2.URL.Path = path
 
 		if mode == ModeElevated {
 			sr := strings.TrimSpace(c.ServiceRoleKey)

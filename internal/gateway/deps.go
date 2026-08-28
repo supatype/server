@@ -10,6 +10,7 @@ import (
 	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/deno"
+	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
@@ -159,4 +160,18 @@ func (d *Deps) AdminPool() (sqlrunner.Pool, error) {
 // than reaching for a database of its own.
 func (d *Deps) IdentityScopedTables(ctx context.Context) (map[string]bool, bool) {
 	return studiobootstrap.IdentityScopedTables(ctx, d.Resources)
+}
+
+// FunctionLogs is the edge-function worker as a log source, or nothing when
+// edge functions are disabled.
+//
+// The conversion happens here, where the concrete type is still visible,
+// because a nil *deno.Manager placed in an interface is not a nil interface:
+// the receiving package's nil check would pass and the first method call would
+// panic. The same normalisation is why Cache and AdminPool exist.
+func (d *Deps) FunctionLogs() functions.LogSource {
+	if d.Deno == nil {
+		return nil
+	}
+	return d.Deno
 }

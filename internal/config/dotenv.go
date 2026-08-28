@@ -8,6 +8,14 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// absPath resolves a path against the working directory.
+//
+// A seam: filepath.Abs fails only when os.Getwd does, which means the directory
+// the process is running in has been removed underneath it. That is arrangeable
+// on Linux and not on Windows, and a test that only runs on one of them is
+// worse than one that states the case.
+var absPath = filepath.Abs
+
 // DefaultManifestRelPath is the default route manifest path when SUPATYPE_MANIFEST_PATH is unset.
 const DefaultManifestRelPath = ".supatype/manifest.json"
 
@@ -19,7 +27,7 @@ func ProjectRootFromManifestPath(manifestRelOrAbs string) (string, error) {
 	if p == "" {
 		p = DefaultManifestRelPath
 	}
-	abs, err := filepath.Abs(p)
+	abs, err := absPath(p)
 	if err != nil {
 		return "", err
 	}
@@ -42,7 +50,7 @@ func LoadDotEnvForServe(cwd, configFilePath string) error {
 		if dir == "" {
 			return nil
 		}
-		abs, err := filepath.Abs(filepath.Clean(dir))
+		abs, err := absPath(filepath.Clean(dir))
 		if err != nil {
 			return err
 		}
@@ -78,21 +86,16 @@ func LoadDotEnvForServe(cwd, configFilePath string) error {
 // values not already exported in the shell.
 // Call this before Load() so that SUPATYPE_* vars from files are visible.
 func LoadDotEnv(dir string) error {
-	localPath := filepath.Join(dir, ".env.local")
-	basePath := filepath.Join(dir, ".env")
-	var err error
 	// #nosec G703 -- the filename is a constant; only `dir` is tainted, and it comes from this
 	// process's own configuration (cwd, a config file's directory, or SUPATYPE_MANIFEST_PATH).
 	// Anyone who can set that already controls this process's environment, so there is no
 	// privilege boundary here to traverse.
-	if _, statErr := os.Stat(localPath); statErr == nil {
-		if err = godotenv.Load(localPath); err != nil {
-			return err
+	for _, name := range []string{".env.local", ".env"} {
+		path := filepath.Join(dir, name)
+		if _, statErr := os.Stat(path); statErr != nil {
+			continue
 		}
-	}
-	// #nosec G703 -- see above: constant filename, configuration-supplied directory.
-	if _, statErr := os.Stat(basePath); statErr == nil {
-		if err = godotenv.Load(basePath); err != nil {
+		if err := godotenv.Load(path); err != nil {
 			return err
 		}
 	}

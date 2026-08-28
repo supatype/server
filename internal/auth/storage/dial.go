@@ -47,6 +47,17 @@ func DialContext(
 	}
 
 	sqldb, ok := popConnToStd(db)
+	if ok {
+		// pop's Open builds the pool and stops there; lib/pq connects lazily, so
+		// until something asks for a connection nothing has contacted the
+		// database at all. Without this the server starts against a database
+		// that is not there and fails on its first query instead — which is the
+		// failure DialWithRetry exists to wait out, and it never saw one.
+		if err := sqldb.PingContext(ctx); err != nil {
+			_ = db.Close()
+			return nil, errors.Wrap(err, "checking database connection")
+		}
+	}
 	if ok && config.Metrics.Enabled {
 		registerOpenTelemetryDatabaseStats(config, sqldb)
 	}

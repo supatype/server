@@ -15,6 +15,7 @@ import (
 
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/utilities"
 )
 
 type dbCredMeta struct {
@@ -48,10 +49,10 @@ func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 		case "managed":
 			meta, err := loadMeta(r.Context(), vc, tenantRef(r))
 			if err != nil {
-				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, 200, statusResponse{
+			utilities.WriteJSON(w, 200, statusResponse{
 				Mode:              "cloud",
 				PasswordStatus:    meta.Status,
 				CanReveal:         meta.Status == "available_once",
@@ -60,7 +61,7 @@ func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 				FirstViewConsumed: meta.FirstViewConsumed,
 			})
 		case "standalone":
-			writeJSON(w, 200, statusResponse{
+			utilities.WriteJSON(w, 200, statusResponse{
 				Mode:           "self_host",
 				PasswordStatus: "operator_managed",
 				CanReveal:      cfg.AllowSecretReadback && cfg.PostgresPassword != "",
@@ -68,7 +69,7 @@ func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 				Message:        "Database password is managed by your deployment secrets.",
 			})
 		default:
-			writeJSON(w, 200, statusResponse{
+			utilities.WriteJSON(w, 200, statusResponse{
 				Mode:           "local",
 				PasswordStatus: "available",
 				CanReveal:      true,
@@ -86,43 +87,43 @@ func credentialFirstViewHandler(cfg *config.Config, vc valkey.Client) http.Handl
 			ref := tenantRef(r)
 			meta, err := loadMeta(r.Context(), vc, ref)
 			if err != nil {
-				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 				return
 			}
 			if meta.Status != "available_once" {
-				writeJSON(w, 409, map[string]string{"error": "password is not available for first-view"})
+				utilities.WriteJSON(w, 409, map[string]string{"error": "password is not available for first-view"})
 				return
 			}
 			pw, err := loadManagedSecret(r.Context(), vc, cfg.DBCredentialsKEK, ref, meta.Generation)
 			if err != nil {
-				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 				return
 			}
 			meta.Status = "hidden"
 			meta.FirstViewConsumed = time.Now().UTC().Format(time.RFC3339)
 			if err := saveMeta(r.Context(), vc, ref, meta); err != nil {
-				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 				return
 			}
 			_ = vc.Del(r.Context(), secretKey(ref, meta.Generation))
-			writeJSON(w, 200, map[string]string{"password": pw})
+			utilities.WriteJSON(w, 200, map[string]string{"password": pw})
 		case "standalone":
 			if !cfg.AllowSecretReadback {
-				writeJSON(w, 403, map[string]string{"error": "secret readback disabled"})
+				utilities.WriteJSON(w, 403, map[string]string{"error": "secret readback disabled"})
 				return
 			}
 			pw := cfg.PostgresPassword
 			if pw == "" {
-				writeJSON(w, 404, map[string]string{"error": "POSTGRES_PASSWORD is not set"})
+				utilities.WriteJSON(w, 404, map[string]string{"error": "POSTGRES_PASSWORD is not set"})
 				return
 			}
-			writeJSON(w, 200, map[string]string{"password": pw})
+			utilities.WriteJSON(w, 200, map[string]string{"password": pw})
 		default:
 			pw := cfg.PostgresPassword
 			if pw == "" {
 				pw = "postgres"
 			}
-			writeJSON(w, 200, map[string]string{"password": pw})
+			utilities.WriteJSON(w, 200, map[string]string{"password": pw})
 		}
 	}
 }
@@ -130,13 +131,13 @@ func credentialFirstViewHandler(cfg *config.Config, vc valkey.Client) http.Handl
 func credentialRotateHandler(cfg *config.Config, vc valkey.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Mode != "managed" {
-			writeJSON(w, 501, map[string]string{"error": "rotation is managed by your runtime/environment in this mode"})
+			utilities.WriteJSON(w, 501, map[string]string{"error": "rotation is managed by your runtime/environment in this mode"})
 			return
 		}
 		ref := tenantRef(r)
 		meta, err := loadMeta(r.Context(), vc, ref)
 		if err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
 		meta.Generation++
@@ -145,21 +146,21 @@ func credentialRotateHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 		}
 		newPassword, err := randomPassword(32)
 		if err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
 		if err := saveManagedSecret(r.Context(), vc, cfg.DBCredentialsKEK, ref, meta.Generation, newPassword); err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
 		meta.Status = "available_once"
 		meta.LastRotatedAt = time.Now().UTC().Format(time.RFC3339)
 		meta.FirstViewConsumed = ""
 		if err := saveMeta(r.Context(), vc, ref, meta); err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, 200, map[string]any{
+		utilities.WriteJSON(w, 200, map[string]any{
 			"password_status": "available_once",
 			"generation":      meta.Generation,
 			"last_rotated_at": meta.LastRotatedAt,

@@ -11,6 +11,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/restcache"
+	"github.com/supatype/server/internal/utilities"
 )
 
 const cacheBodyPreviewMax = 4096
@@ -54,7 +55,7 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc valkey.Client) 
 		case http.MethodDelete:
 			flushCache(w, r, vc, prefix, "")
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 	})
 
@@ -67,22 +68,22 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc valkey.Client) 
 		keyEnc := strings.TrimPrefix(r.URL.Path, "/cache/entries/")
 		keyEnc = strings.TrimSpace(keyEnc)
 		if keyEnc == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
 			return
 		}
 		keyEnc, err := url.PathUnescape(keyEnc)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key encoding"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key encoding"})
 			return
 		}
 		keyBytes, err := base64.RawURLEncoding.DecodeString(keyEnc)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key encoding"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key encoding"})
 			return
 		}
 		key := string(keyBytes)
 		if !strings.HasPrefix(key, prefix) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key out of tenant scope"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key out of tenant scope"})
 			return
 		}
 		switch r.Method {
@@ -90,22 +91,22 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc valkey.Client) 
 			getCacheEntry(w, r, vc, key)
 		case http.MethodDelete:
 			if err := vc.Del(r.Context(), key); err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]string{"deleted": key})
+			utilities.WriteJSON(w, http.StatusOK, map[string]string{"deleted": key})
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 	})
 }
 
 func cacheUnavailable(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "valkey not configured"})
+	utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "valkey not configured"})
 }
 
 func cacheNotOffered(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusForbidden, map[string]string{
+	utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 		"error":   "rest_cache_not_available",
 		"message": "Server-side REST caching is included on paid Cloud plans and self-host.",
 	})
@@ -136,7 +137,7 @@ func listCacheEntries(w http.ResponseWriter, r *http.Request, vc valkey.Client, 
 	for page := 0; page < maxScanPages && len(entries) < limit; page++ {
 		keys, nextCursor, err := vc.ScanPage(r.Context(), cursor, pattern, limit*2)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
 		cursor = nextCursor
@@ -144,7 +145,7 @@ func listCacheEntries(w http.ResponseWriter, r *http.Request, vc valkey.Client, 
 			scanned++
 			summary, ok, err := summarizeKey(r, vc, key, tableFilter)
 			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 				return
 			}
 			if !ok {
@@ -165,7 +166,7 @@ func listCacheEntries(w http.ResponseWriter, r *http.Request, vc valkey.Client, 
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"entries": entries,
 		"cursor":  strconv.FormatUint(next, 10),
 	})
@@ -206,16 +207,16 @@ func summarizeKey(r *http.Request, vc valkey.Client, key, tableFilter string) (c
 func getCacheEntry(w http.ResponseWriter, r *http.Request, vc valkey.Client, key string) {
 	raw, err := vc.GetBytes(r.Context(), key)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	if raw == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		utilities.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
 	entry, err := restcache.DecodeEntry(raw)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "corrupt entry"})
+		utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "corrupt entry"})
 		return
 	}
 	ttl, _ := vc.TTLSeconds(r.Context(), key)
@@ -242,7 +243,7 @@ func getCacheEntry(w http.ResponseWriter, r *http.Request, vc valkey.Client, key
 	if json.Valid(entry.Body) {
 		detail.BodyJSON = json.RawMessage(entry.Body)
 	}
-	writeJSON(w, http.StatusOK, detail)
+	utilities.WriteJSON(w, http.StatusOK, detail)
 }
 
 func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix, _ string) {
@@ -251,7 +252,7 @@ func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix
 	for {
 		keys, next, err := vc.ScanPage(r.Context(), cursor, prefix+"*", 100)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
 		var toDelete []string
@@ -274,7 +275,7 @@ func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix
 		}
 		if len(toDelete) > 0 {
 			if err := vc.Del(r.Context(), toDelete...); err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 				return
 			}
 		}
@@ -283,7 +284,7 @@ func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix
 		}
 		cursor = next
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"flushed": "ok"})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"flushed": "ok"})
 }
 
 func encodeCacheKey(key string) string {

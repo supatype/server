@@ -264,7 +264,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if workerURL != "" {
 			denoBaseStr = workerURL
 		} else if dm != nil {
-			denoBaseStr = "http://127.0.0.1:" + firstNonEmpty(srvCfg.DenoPort, "8001")
+			denoBaseStr = "http://127.0.0.1:" + utilities.FirstNonEmpty(srvCfg.DenoPort, "8001")
 		}
 	}
 

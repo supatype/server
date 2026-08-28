@@ -5,6 +5,7 @@ import (
 
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // ProbeConfigFrom builds probe targets from a route manifest plus server config
@@ -13,14 +14,14 @@ func ProbeConfigFrom(cfg *config.Config, m *proxy.RouteManifest, denoBaseURL str
 	if m == nil {
 		m = &proxy.RouteManifest{Schema: "public"}
 	}
-	postgRESTURL := firstNonEmpty(m.PostgRESTURL, cfg.PostgRESTURL, "http://localhost:3000")
-	graphQLProbeBase := firstNonEmpty(m.GraphQLURL, cfg.GraphQLURL, postgRESTURL)
+	postgRESTURL := utilities.FirstNonEmpty(m.PostgRESTURL, cfg.PostgRESTURL, "http://localhost:3000")
+	graphQLProbeBase := utilities.FirstNonEmpty(m.GraphQLURL, cfg.GraphQLURL, postgRESTURL)
 
 	var storageLocalPath, storageRemoteURL string
 	if cfg.StorageProvider == "local" && cfg.StoragePath != "" {
 		storageLocalPath = cfg.StoragePath
 	} else {
-		storageRemoteURL = firstNonEmpty(m.StorageURL, cfg.StorageURL)
+		storageRemoteURL = utilities.FirstNonEmpty(m.StorageURL, cfg.StorageURL)
 	}
 
 	return ProbeConfig{
@@ -31,16 +32,4 @@ func ProbeConfigFrom(cfg *config.Config, m *proxy.RouteManifest, denoBaseURL str
 		DenoBaseURL:      strings.TrimSpace(denoBaseURL),
 		RealtimeEnabled:  m.RealtimeEnabled,
 	}
-}
-
-// firstNonEmpty returns the first value that is not blank, which is the
-// resolution rule everywhere in this package: a manifest overrides
-// configuration, configuration overrides the built-in default.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // ─── Object metadata ──────────────────────────────────────────────────────────
@@ -233,7 +234,7 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save metadata")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"path": objPath})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"path": objPath})
 }
 
 // ─── Download ─────────────────────────────────────────────────────────────────
@@ -374,7 +375,7 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	if deleted == nil {
 		deleted = []listItem{}
 	}
-	writeJSON(w, http.StatusOK, deleted)
+	utilities.WriteJSON(w, http.StatusOK, deleted)
 }
 
 // ─── List objects ─────────────────────────────────────────────────────────────
@@ -469,7 +470,7 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 	for i, r := range results {
 		items[i] = metaToListItem(r)
 	}
-	writeJSON(w, http.StatusOK, items)
+	utilities.WriteJSON(w, http.StatusOK, items)
 }
 
 // ─── Signed URLs ──────────────────────────────────────────────────────────────
@@ -561,7 +562,7 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 	signedURL := fmt.Sprintf("%s://%s/storage/v1/object/sign/%s/%s?token=%s",
 		scheme, r.Host, bucket, objPath, token)
 
-	writeJSON(w, http.StatusOK, map[string]string{"signedURL": signedURL})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"signedURL": signedURL})
 }
 
 // serveSignedURL: GET /object/sign/{bucket}/*?token=...

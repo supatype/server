@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // processStart records when this process started (for uptime in /health).
@@ -72,7 +73,7 @@ func collectComponents(probes ProbeConfig, timeout time.Duration) map[string]any
 	prReady := prURL != "" && probeHTTPGet(joinURL(prURL, "/"), timeout)
 	out["postgrest"] = map[string]any{"url": prURL, "ready": prReady}
 
-	gqBase := strings.TrimSpace(firstNonEmpty(probes.GraphQLURL, probes.PostgRESTURL))
+	gqBase := strings.TrimSpace(utilities.FirstNonEmpty(probes.GraphQLURL, probes.PostgRESTURL))
 	gqURL := joinURL(gqBase, "/graphql/v1")
 	gqReady := gqBase != "" && probeHTTPGet(gqURL, timeout)
 	out["graphql"] = map[string]any{"url": gqURL, "ready": gqReady}

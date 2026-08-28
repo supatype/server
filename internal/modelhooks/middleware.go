@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // MaxBodyBytes caps what will be buffered to show a hook.
@@ -111,7 +112,7 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 				// Refused, not run without its hooks: a validation hook that stopped running must not
 				// let writes through. 508 is the honest status — the request is well formed and the
 				// server detected a loop while answering it.
-				writeJSON(w, http.StatusLoopDetected, map[string]string{
+				utilities.WriteJSON(w, http.StatusLoopDetected, map[string]string{
 					"message": "This write is too many hooks deep, so it was not applied",
 				})
 				return
@@ -189,12 +190,12 @@ func readBody(w http.ResponseWriter, req *http.Request, max int64, log *logrus.E
 	body, err := io.ReadAll(io.LimitReader(req.Body, max+1))
 	if err != nil {
 		log.WithError(err).Warn("could not read request body for a hooked write")
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "Could not read request body"})
+		utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"message": "Could not read request body"})
 		return nil, false
 	}
 	if int64(len(body)) > max {
 		log.WithField("limit", max).Warn("request body too large to show a hook")
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+		utilities.WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
 			"message": "Request body is larger than this table's hook can be shown",
 		})
 		return nil, false
@@ -258,7 +259,7 @@ func unavailable(
 		log.WithField("reason", reason).Error("hook unavailable; refusing the write")
 		// 503, not the hook's silence dressed as a validation failure: the caller's request was fine
 		// and retrying it later may work, which is exactly what this status says.
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"message": "A hook for this table could not be reached, so the write was not applied",
 		})
 		return Outcome{Kind: OutcomeUnavailable, Reason: reason}, false
@@ -382,12 +383,6 @@ func wantsRepresentation(req *http.Request) bool {
 		}
 	}
 	return false
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }
 
 // recorder passes the proxy's response through while noting its status, and its body only when an

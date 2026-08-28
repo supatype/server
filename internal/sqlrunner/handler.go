@@ -24,6 +24,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/modes"
+	"github.com/supatype/server/internal/utilities"
 )
 
 const (
@@ -87,7 +88,7 @@ func Handler(cfg *config.Config, pools Pools) http.Handler {
 			writeError(w, statusFor(err), err)
 			return
 		}
-		writeJSON(w, http.StatusOK, Response{Rows: rows, RowCount: len(rows), Schema: schema})
+		utilities.WriteJSON(w, http.StatusOK, Response{Rows: rows, RowCount: len(rows), Schema: schema})
 	})
 }
 
@@ -258,11 +259,5 @@ func checkServiceRole(cfg *config.Config, r *http.Request) bool {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 func writeError(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	utilities.WriteJSON(w, status, map[string]string{"error": err.Error()})
 }

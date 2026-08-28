@@ -1,6 +1,7 @@
 package modelhooks
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -163,4 +164,10 @@ func TestPreviousTokensDoNotSurviveARestart(t *testing.T) {
 	if rr := post(t, second.Handler(), "/"+token); rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want another process to refuse the token", rr.Code)
 	}
+}
+
+// encodeClaims is the token payload encoding, here rather than in previous.go
+// because only this file mints a token by hand.
+func encodeClaims(claims []byte) string {
+	return base64.RawURLEncoding.EncodeToString(claims)
 }

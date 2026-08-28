@@ -168,13 +168,3 @@ func functionsUpstreamURL(cfg *config.Config) (*url.URL, error) {
 		Host:   "127.0.0.1:" + cfg.DenoPort,
 	}, nil
 }
-
-// firstNonEmpty returns the first non-empty string from vals.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}

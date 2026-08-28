@@ -28,6 +28,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/modes"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // LogSource is the part of the edge-function worker this API reads.
@@ -81,11 +82,11 @@ func requireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 		}
 
 		if strings.TrimSpace(cfg.ServiceRoleKey) == "" {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key not configured"})
+			utilities.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key not configured"})
 			return
 		}
 		if !modes.ServiceRoleBearer(r, cfg.ServiceRoleKey) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
+			utilities.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -106,10 +107,10 @@ func listFunctions(dir string) http.HandlerFunc {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				writeJSON(w, http.StatusOK, []functionMeta{})
+				utilities.WriteJSON(w, http.StatusOK, []functionMeta{})
 				return
 			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -139,7 +140,7 @@ func listFunctions(dir string) http.HandlerFunc {
 			funcs = append(funcs, meta)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{"data": funcs})
+		utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": funcs})
 	}
 }
 
@@ -154,7 +155,7 @@ type logEntry struct {
 func functionLogs(manager LogSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if manager == nil {
-			writeJSON(w, http.StatusOK, map[string]any{"data": []logEntry{}})
+			utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": []logEntry{}})
 			return
 		}
 
@@ -169,7 +170,7 @@ func functionLogs(manager LogSource) http.HandlerFunc {
 				Message:   l.Message,
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": entries})
+		utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": entries})
 	}
 }
 
@@ -291,12 +292,12 @@ func sortedKeys(vars map[string]string) []string {
 func load(w http.ResponseWriter, r *http.Request, file envFile) (path string, vars map[string]string, ok bool) {
 	path, err := file(r)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return "", nil, false
 	}
 	vars, err = readEnvFile(path)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return "", nil, false
 	}
 	return path, vars, true
@@ -310,7 +311,7 @@ func listEnv(file envFile) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": sortedKeys(vars)})
+		utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": sortedKeys(vars)})
 	}
 }
 
@@ -318,10 +319,10 @@ func listEnv(file envFile) http.HandlerFunc {
 // a failed write the same way rather than in two places that can drift.
 func save(w http.ResponseWriter, path string, vars map[string]string, key, message string) {
 	if err := writeEnvFile(path, vars); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"key": key, "message": message}})
+	utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"key": key, "message": message}})
 }
 
 func setEnv(file envFile) http.HandlerFunc {
@@ -331,7 +332,7 @@ func setEnv(file envFile) http.HandlerFunc {
 			Value string `json:"value"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key and value required"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key and value required"})
 			return
 		}
 
@@ -348,7 +349,7 @@ func deleteEnv(file envFile) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := chi.URLParam(r, "key")
 		if key == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
 			return
 		}
 
@@ -357,7 +358,7 @@ func deleteEnv(file envFile) http.HandlerFunc {
 			return
 		}
 		if _, present := vars[key]; !present {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
+			utilities.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
 			return
 		}
 		delete(vars, key)
@@ -366,9 +367,3 @@ func deleteEnv(file envFile) http.HandlerFunc {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}

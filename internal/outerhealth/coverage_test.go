@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // What readiness is for is telling an orchestrator not to send traffic yet, so
@@ -454,7 +455,7 @@ func TestFirstNonEmpty(t *testing.T) {
 		"no values at all":        {nil, ""},
 		"padding is not stripped": {[]string{" a "}, " a "},
 	} {
-		if got := firstNonEmpty(tc.values...); got != tc.want {
+		if got := utilities.FirstNonEmpty(tc.values...); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/supatype/server/internal/utilities"
 	"io"
 	"net/http"
 	"net/url"
@@ -135,20 +136,20 @@ type previousResponse struct {
 func (c *Callback) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"message": "POST only"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"message": "POST only"})
 			return
 		}
 		token := strings.TrimPrefix(req.URL.Path, "/")
 		claims, err := c.verify(token)
 		if err != nil {
 			// No detail: a caller poking at this endpoint learns only that the token was not good.
-			writeJSON(w, http.StatusForbidden, map[string]string{"message": "Invalid hook callback token"})
+			utilities.WriteJSON(w, http.StatusForbidden, map[string]string{"message": "Invalid hook callback token"})
 			return
 		}
 
 		rows, truncated, err := c.fetch(req, claims)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"message": "Could not read the affected rows"})
+			utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"message": "Could not read the affected rows"})
 			return
 		}
 
@@ -234,9 +235,4 @@ func (c *Callback) fetch(req *http.Request, claims previousClaims) (json.RawMess
 		return nil, false, err
 	}
 	return trimmed, truncated, nil
-}
-
-// encodeClaims is the token payload encoding, exposed for tests that need to mint by hand.
-func encodeClaims(claims []byte) string {
-	return base64.RawURLEncoding.EncodeToString(claims)
 }

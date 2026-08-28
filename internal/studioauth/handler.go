@@ -1,7 +1,6 @@
 package studioauth
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/studiomembers"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Config holds studio auth handler dependencies.
@@ -66,12 +66,12 @@ func ConfigFromServer(cfg *config.Config) Config {
 func VerifyHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 
 		if c.DevBypass() {
-			writeJSON(w, http.StatusOK, verifyOKResponse(Result{
+			utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(Result{
 				Role: "dev-bypass",
 				Sub:  "dev-bypass",
 			}))
@@ -84,7 +84,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			if result.Sub == "" && result.Message == "Authentication required" {
 				status = http.StatusUnauthorized
 			}
-			writeJSON(w, status, map[string]interface{}{
+			utilities.WriteJSON(w, status, map[string]interface{}{
 				"error":   "forbidden",
 				"message": result.Message,
 				"allowed": false,
@@ -92,7 +92,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, verifyOKResponse(result))
+		utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(result))
 	}
 }
 
@@ -139,7 +139,7 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 			if result.Message == "Authentication required" {
 				status = http.StatusUnauthorized
 			}
-			writeJSON(w, status, map[string]string{"error": result.Message})
+			utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
 			return
 		}
 		next.ServeHTTP(w, req)
@@ -160,7 +160,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 				if result.Message == "Authentication required" {
 					status = http.StatusUnauthorized
 				}
-				writeJSON(w, status, map[string]string{"error": result.Message})
+				utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
 				return
 			}
 			actor = result.Sub
@@ -172,7 +172,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 				perms = *result.Permissions
 			}
 			if !AllowsRequest(perms, req.Method, req.URL.Path) {
-				writeJSON(w, http.StatusForbidden, map[string]string{
+				utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 					"error": "Studio role \"" + result.Role + "\" cannot perform this request",
 				})
 				return
@@ -181,7 +181,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 			var ok bool
 			mode, ok = resolveActingMode(req, perms)
 			if !ok {
-				writeJSON(w, http.StatusForbidden, map[string]string{
+				utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 					"error": "Studio role \"" + result.Role + "\" cannot act with elevated access",
 				})
 				return
@@ -207,7 +207,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 		if mode == ModeElevated {
 			sr := strings.TrimSpace(c.ServiceRoleKey)
 			if sr == "" {
-				writeJSON(w, http.StatusServiceUnavailable,
+				utilities.WriteJSON(w, http.StatusServiceUnavailable,
 					map[string]string{"error": "service role key not configured"})
 				return
 			}
@@ -252,10 +252,4 @@ func recordElevatedRequest(members studiomembers.Store, req *http.Request, actor
 		return
 	}
 	members.AuditElevated(req.Context(), actor, req.Method, path)
-}
-
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }

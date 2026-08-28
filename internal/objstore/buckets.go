@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // ─── Bucket metadata ──────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ func (s *store) listBuckets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load buckets")
 		return
 	}
-	writeJSON(w, http.StatusOK, buckets)
+	utilities.WriteJSON(w, http.StatusOK, buckets)
 }
 
 // createBucket: POST /bucket
@@ -149,7 +150,7 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create bucket directory")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"name": bucket.Name})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"name": bucket.Name})
 }
 
 // getBucket: GET /bucket/{id}
@@ -172,7 +173,7 @@ func (s *store) getBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "bucket not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, b)
+	utilities.WriteJSON(w, http.StatusOK, b)
 }
 
 // updateBucket: PUT /bucket/{id}
@@ -222,7 +223,7 @@ func (s *store) updateBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save bucket")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Successfully updated"})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"message": "Successfully updated"})
 }
 
 // deleteBucket: DELETE /bucket/{id}
@@ -275,7 +276,7 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete bucket directory")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Successfully deleted"})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"message": "Successfully deleted"})
 }
 
 // emptyBucket: POST /bucket/{id}/empty
@@ -313,5 +314,5 @@ func (s *store) emptyBucket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Successfully emptied"})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"message": "Successfully emptied"})
 }

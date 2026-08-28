@@ -15,6 +15,7 @@ import (
 	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/restcache"
+	"github.com/supatype/server/internal/utilities"
 )
 
 var validSchema = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$`)
@@ -29,10 +30,10 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 		case http.MethodGet:
 			cfg, err := store.Get(r.Context())
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, cfg.Rest)
+			utilities.WriteJSON(w, http.StatusOK, cfg.Rest)
 
 		case http.MethodPatch:
 			var body struct {
@@ -42,12 +43,12 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 				CacheTables *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+				utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 				return
 			}
 			if (body.CacheMaxTTL != nil || body.CacheTables != nil) &&
 				!restcache.ServerCacheOffered(r.Context(), cfg, vc, r) {
-				writeJSON(w, http.StatusForbidden, map[string]string{
+				utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 					"error":   "rest_cache_not_available",
 					"message": "Server-side REST caching is included on paid Cloud plans and self-host.",
 				})
@@ -55,26 +56,26 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 			}
 			cfg, err := store.Get(r.Context())
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
 			if body.Schema != nil {
 				if !validSchema.MatchString(*body.Schema) {
-					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schema name"})
+					utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schema name"})
 					return
 				}
 				cfg.Rest.Schema = *body.Schema
 			}
 			if body.MaxRows != nil {
 				if *body.MaxRows < 1 || *body.MaxRows > 100_000 {
-					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "max_rows must be 1–100000"})
+					utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "max_rows must be 1–100000"})
 					return
 				}
 				cfg.Rest.MaxRows = *body.MaxRows
 			}
 			if body.CacheMaxTTL != nil {
 				if *body.CacheMaxTTL < 0 || *body.CacheMaxTTL > 86_400 {
-					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cache_max_ttl must be 0–86400"})
+					utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "cache_max_ttl must be 0–86400"})
 					return
 				}
 				cfg.Rest.CacheMaxTTL = *body.CacheMaxTTL
@@ -83,13 +84,13 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 				cfg.Rest.CacheTables = *body.CacheTables
 			}
 			if err := store.Set(r.Context(), cfg); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, cfg.Rest)
+			utilities.WriteJSON(w, http.StatusOK, cfg.Rest)
 
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 	})
 
@@ -98,10 +99,10 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 		case http.MethodGet:
 			cfg, err := store.Get(r.Context())
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, cfg.GraphQL)
+			utilities.WriteJSON(w, http.StatusOK, cfg.GraphQL)
 
 		case http.MethodPatch:
 			var body struct {
@@ -110,12 +111,12 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 				MaxRows       *int  `json:"max_rows"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+				utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 				return
 			}
 			cfg, err := store.Get(r.Context())
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
 			if body.Introspection != nil {
@@ -123,46 +124,46 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 			}
 			if body.MaxQueryDepth != nil {
 				if *body.MaxQueryDepth < 1 || *body.MaxQueryDepth > 50 {
-					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "max_query_depth must be 1–50"})
+					utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "max_query_depth must be 1–50"})
 					return
 				}
 				cfg.GraphQL.MaxQueryDepth = *body.MaxQueryDepth
 			}
 			if body.MaxRows != nil {
 				if *body.MaxRows < 1 || *body.MaxRows > 100_000 {
-					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "max_rows must be 1–100000"})
+					utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "max_rows must be 1–100000"})
 					return
 				}
 				cfg.GraphQL.MaxRows = *body.MaxRows
 			}
 			if err := store.Set(r.Context(), cfg); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, cfg.GraphQL)
+			utilities.WriteJSON(w, http.StatusOK, cfg.GraphQL)
 
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 	})
 
 	mux.HandleFunc("/database/credentials/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		credentialStatusHandler(cfg, vc).ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/database/credentials/first-view", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		credentialFirstViewHandler(cfg, vc).ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/database/credentials/rotate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		credentialRotateHandler(cfg, vc).ServeHTTP(w, r)
@@ -187,19 +188,13 @@ func RequireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 			return
 		}
 		if strings.TrimSpace(cfg.ServiceRoleKey) == "" {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key not configured"})
+			utilities.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "service role key not configured"})
 			return
 		}
 		if !modes.ServiceRoleBearer(r, cfg.ServiceRoleKey) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key required"})
+			utilities.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "service role key required"})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }

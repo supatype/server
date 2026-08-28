@@ -9,13 +9,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/config"
 	vkgo "github.com/valkey-io/valkey-go"
 )
 
@@ -34,17 +34,32 @@ type cloudGatewayCfg struct {
 	controlPlaneURL string
 }
 
-func loadCloudGatewayCfg() cloudGatewayCfg {
+// cloudGatewayCfgFrom derives the metering configuration from the service
+// configuration. It used to read nine environment variables directly.
+//
+// activityBaseURL and controlPlaneURL were two fields filled from the same
+// variable, which read as though they addressed different services. They do
+// address the same one, and it is not the /platform/v1 control plane in
+// Config.ControlPlaneURL despite the name; the two are kept apart deliberately.
+func cloudGatewayCfgFrom(cfg *config.Config) cloudGatewayCfg {
+	activity := strings.TrimRight(strings.TrimSpace(cfg.CloudActivityURL), "/")
+	if activity == "" {
+		activity = strings.TrimRight(config.DefaultCloudActivityURL, "/")
+	}
+	valkeyAddr := strings.TrimSpace(cfg.ValkeyAddr)
+	if valkeyAddr == "" {
+		valkeyAddr = strings.TrimSpace(cfg.ValkeyAddrLegacy)
+	}
 	return cloudGatewayCfg{
-		enabled:         strings.EqualFold(os.Getenv("SUPATYPE_CLOUD_ACTIVITY_ENABLED"), "true"),
-		activityBaseURL: strings.TrimRight(firstNonEmpty(os.Getenv("SUPATYPE_CLOUD_ACTIVITY_URL"), "http://control-plane:4001"), "/"),
-		internalSecret:  os.Getenv("SUPATYPE_INTERNAL_HMAC_SECRET"),
-		tenantID:        strings.TrimSpace(os.Getenv("SUPATYPE_MANAGED_PROJECT_REF")),
-		nonprod:         strings.EqualFold(os.Getenv("SUPATYPE_NONPROD"), "true"),
-		blockBots:       strings.EqualFold(os.Getenv("SUPATYPE_BLOCK_BOT_UA"), "true"),
-		valkeyAddr:      firstNonEmpty(os.Getenv("SUPATYPE_VALKEY_ADDR"), os.Getenv("VALKEY_ADDR")),
-		emailSalt:       os.Getenv("MAU_EMAIL_SALT"),
-		controlPlaneURL: strings.TrimRight(firstNonEmpty(os.Getenv("SUPATYPE_CLOUD_ACTIVITY_URL"), "http://control-plane:4001"), "/"),
+		enabled:         cfg.CloudActivityEnabled.Bool(),
+		activityBaseURL: activity,
+		internalSecret:  cfg.InternalHMACSecret,
+		tenantID:        strings.TrimSpace(cfg.ManagedProjectRef),
+		nonprod:         cfg.NonProd.Bool(),
+		blockBots:       cfg.BlockBotUA.Bool(),
+		valkeyAddr:      valkeyAddr,
+		emailSalt:       cfg.MAUEmailSalt,
+		controlPlaneURL: activity,
 	}
 }
 
@@ -69,8 +84,8 @@ func isPrefetch(r *http.Request) bool {
 		strings.EqualFold(r.Header.Get("Purpose"), "prefetch")
 }
 
-func wrapCloudGateway(next http.Handler) http.Handler {
-	cfg := loadCloudGatewayCfg()
+func wrapCloudGateway(serviceCfg *config.Config, next http.Handler) http.Handler {
+	cfg := cloudGatewayCfgFrom(serviceCfg)
 	if !cfg.enabled {
 		return next
 	}

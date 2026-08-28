@@ -21,17 +21,20 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/dbpool"
+	"github.com/supatype/server/internal/modes"
 )
 
 const (
 	queryTimeout = 30 * time.Second
 	maxRows      = 10_000
-	insecureEnv  = "SUPATYPE_SQLRUNNER_INSECURE"
+	// fallbackSchema is used when neither configuration nor the request names one.
+	fallbackSchema = "public"
 )
 
 // Handler returns an http.Handler that serves the SQL runner endpoint.
-func Handler() http.Handler {
+func Handler(cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(os.Stderr, "[sqlrunner] %s %s\n", r.Method, r.URL.Path)
 
@@ -40,7 +43,7 @@ func Handler() http.Handler {
 			return
 		}
 
-		if !checkServiceRole(r) {
+		if !checkServiceRole(cfg, r) {
 			fmt.Fprintf(os.Stderr, "[sqlrunner] auth rejected\n")
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
 			return
@@ -57,7 +60,7 @@ func Handler() http.Handler {
 
 		// Resolve schema server-side. The JWT role determines what is allowed;
 		// the client-supplied schema is only used when the role is service_role.
-		schema := resolveSchema(r.Header.Get("Authorization"), body.Schema)
+		schema := resolveSchema(cfg, r.Header.Get("Authorization"), body.Schema)
 		fmt.Fprintf(os.Stderr, "[sqlrunner] schema=%s\n", schema)
 
 		pool, err := dbpool.Pool(r.Context())
@@ -150,14 +153,14 @@ var validIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 //   - In dev mode any requested schema is accepted (no JWT needed).
 //   - For service_role JWTs the client may request an override schema.
 //   - All other roles are locked to SUPATYPE_DB_SCHEMA (default: "public").
-func resolveSchema(authHeader, requestedSchema string) string {
-	defaultSchema := os.Getenv("SUPATYPE_DB_SCHEMA")
+func resolveSchema(cfg *config.Config, authHeader, requestedSchema string) string {
+	defaultSchema := strings.TrimSpace(cfg.SQLSchema)
 	if defaultSchema == "" {
-		defaultSchema = "public"
+		defaultSchema = fallbackSchema
 	}
 
 	// Explicit insecure mode: trust the requested schema if valid, else use default.
-	if sqlRunnerInsecure() {
+	if cfg.SQLRunnerInsecure.Bool() {
 		if requestedSchema != "" && validIdentifier.MatchString(requestedSchema) {
 			return requestedSchema
 		}
@@ -203,30 +206,16 @@ func jwtRole(authHeader string) string {
 
 // ─── Service role auth ────────────────────────────────────────────────────────
 
-func checkServiceRole(r *http.Request) bool {
-	if sqlRunnerInsecure() {
+// checkServiceRole gates the SQL runner.
+//
+// Unlike the functions and admin APIs, it has no dev-mode bypass: dev mode alone
+// must not open arbitrary SQL execution. The only bypass is the explicit
+// insecure switch, and it fails closed when no key is configured.
+func checkServiceRole(cfg *config.Config, r *http.Request) bool {
+	if cfg.SQLRunnerInsecure.Bool() {
 		return true // explicit bypass for debugging only
 	}
-
-	key := strings.TrimSpace(os.Getenv("SUPATYPE_SERVICE_ROLE_KEY"))
-	if key == "" {
-		return false // fail closed when key is missing
-	}
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	token, ok := strings.CutPrefix(auth, "Bearer ")
-	if !ok {
-		return false
-	}
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return false
-	}
-	return token == key
-}
-
-func sqlRunnerInsecure() bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(insecureEnv)))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
+	return modes.ServiceRoleBearer(r, cfg.ServiceRoleKey)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

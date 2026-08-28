@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 // processStart records when this process started (for uptime in /health).
@@ -31,7 +31,7 @@ type ProbeConfig struct {
 
 // Attach mounts GET /health and GET /health/ready on r (supatype-server outer mux).
 // probes is called on each scrape so health reflects dynamic route manifests.
-func Attach(r chi.Router, cfg *serverconf.ServerConfig, version string, probes func() ProbeConfig) {
+func Attach(r chi.Router, cfg *config.Config, version string, probes func() ProbeConfig) {
 	timeout := 2 * time.Second
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {

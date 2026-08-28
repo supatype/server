@@ -12,13 +12,15 @@ import (
 var DefaultAdminRoles = []string{"admin", "supatype_admin"}
 
 // DevBypass is true when local open Studio is explicitly enabled (supatype dev docker only).
-func DevBypass() bool {
-	mode := strings.TrimSpace(strings.ToLower(os.Getenv("SUPATYPE_MODE")))
-	if mode != "dev" {
+//
+// Mode and OpenDev come from configuration rather than the environment. The
+// locality check below still reads the deployment's public URL directly; those
+// are auth-service variables and move with the rename.
+func (c Config) DevBypass() bool {
+	if strings.TrimSpace(strings.ToLower(c.Mode)) != "dev" {
 		return false
 	}
-	v := strings.TrimSpace(strings.ToLower(os.Getenv("STUDIO_OPEN_DEV")))
-	if !(v == "1" || v == "true" || v == "yes" || v == "on") {
+	if !c.OpenDev {
 		return false
 	}
 	// An open Studio proxy answers unauthenticated requests *and* injects the
@@ -57,9 +59,11 @@ func isLocallyAddressed() bool {
 	return true
 }
 
-// AdminRolesFromEnv reads STUDIO_ADMIN_ROLES (comma-separated) or returns defaults.
-func AdminRolesFromEnv() []string {
-	raw := strings.TrimSpace(os.Getenv("STUDIO_ADMIN_ROLES"))
+// AdminRolesFromOverride parses a comma-separated role override, or returns the
+// defaults when it is empty. The value comes from configuration; this used to
+// read STUDIO_ADMIN_ROLES itself.
+func AdminRolesFromOverride(raw string) []string {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return append([]string(nil), DefaultAdminRoles...)
 	}
@@ -102,9 +106,10 @@ func ReadAdminConfigFile(path string) ([]byte, error) {
 	return root.ReadFile(clean)
 }
 
-// AdminRolesFromConfigFile merges adminRoles from admin-config.json when present.
-func AdminRolesFromConfigFile(path string) []string {
-	roles := AdminRolesFromEnv()
+// AdminRolesFromConfigFile merges adminRoles from admin-config.json when present,
+// over any comma-separated override supplied by configuration.
+func AdminRolesFromConfigFile(path, override string) []string {
+	roles := AdminRolesFromOverride(override)
 	if strings.TrimSpace(path) == "" {
 		return roles
 	}

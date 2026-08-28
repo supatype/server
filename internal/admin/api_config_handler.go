@@ -7,21 +7,21 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/restcache"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 var validSchema = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$`)
 
 // Handler returns a mux covering all /admin/v1 routes.
 // Mount it with r.Mount("/admin/v1", Handler(store)).
-func Handler(store apiconfig.Store, cfg *serverconf.ServerConfig, vc *valkey.Client) http.Handler {
+func Handler(store apiconfig.Store, cfg *config.Config, vc *valkey.Client) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/config/rest", func(w http.ResponseWriter, r *http.Request) {
@@ -170,30 +170,27 @@ func Handler(store apiconfig.Store, cfg *serverconf.ServerConfig, vc *valkey.Cli
 
 	mountCacheRoutes(mux, cfg, vc)
 
-	return RequireServiceRole(mux)
+	return RequireServiceRole(cfg, mux)
 }
 
-// RequireServiceRole wraps next with service-role JWT enforcement.
-// In SUPATYPE_MODE=dev, all requests pass through without a token.
-func RequireServiceRole(next http.Handler) http.Handler {
+// RequireServiceRole wraps next with service-role enforcement. In dev mode all
+// requests pass through without a token.
+//
+// This answers 403 where the functions admin API answers 401 for the same
+// condition. The difference is preserved rather than tidied away: a client may
+// already distinguish them, and changing a status code is a behaviour change
+// that does not belong in a configuration refactor.
+func RequireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimSpace(os.Getenv("SUPATYPE_MODE")) == "dev" {
+		if strings.TrimSpace(cfg.Mode) == "dev" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		key := strings.TrimSpace(os.Getenv("SUPATYPE_SERVICE_ROLE_KEY"))
-		if key == "" {
+		if strings.TrimSpace(cfg.ServiceRoleKey) == "" {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key not configured"})
 			return
 		}
-		auth := strings.TrimSpace(r.Header.Get("Authorization"))
-		token, ok := strings.CutPrefix(auth, "Bearer ")
-		if !ok {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key required"})
-			return
-		}
-		token = strings.TrimSpace(token)
-		if token != key {
+		if !modes.ServiceRoleBearer(r, cfg.ServiceRoleKey) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "service role key required"})
 			return
 		}

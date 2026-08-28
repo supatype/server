@@ -22,15 +22,17 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/deno"
+	"github.com/supatype/server/internal/modes"
 )
 
 // Handler returns a chi.Router that serves the functions admin API.
 // manager may be nil when edge functions are disabled; all routes return 404.
-func Handler(functionsDir string, manager *deno.Manager) http.Handler {
+func Handler(cfg *config.Config, functionsDir string, manager *deno.Manager) http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(RequireServiceRoleMiddleware)
+	r.Use(RequireServiceRoleMiddleware(cfg))
 
 	r.Get("/list", listFunctions(functionsDir))
 	r.Get("/{name}/logs", functionLogs(manager))
@@ -47,34 +49,28 @@ func Handler(functionsDir string, manager *deno.Manager) http.Handler {
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
 // RequireServiceRoleMiddleware rejects requests that don't carry the service-role key.
-func RequireServiceRoleMiddleware(next http.Handler) http.Handler {
-	return requireServiceRole(next)
+func RequireServiceRoleMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return requireServiceRole(cfg, next) }
 }
 
 // requireServiceRole rejects requests that don't carry the service-role key.
-// The service-role key is read from the SUPATYPE_SERVICE_ROLE_KEY env var at
-// request time so it works even if the key rotates without a restart.
-func requireServiceRole(next http.Handler) http.Handler {
+//
+// The key comes from configuration rather than being read per request. That
+// read was justified as supporting rotation without a restart, but nothing
+// rotates it in place: the deployment sets it in the environment and a change
+// replaces the pod. Reading it once keeps the whole surface in one place.
+func requireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimSpace(os.Getenv("SUPATYPE_MODE")) == "dev" {
+		if strings.TrimSpace(cfg.Mode) == "dev" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		serviceRoleKey := strings.TrimSpace(os.Getenv("SUPATYPE_SERVICE_ROLE_KEY"))
-		if serviceRoleKey == "" {
+		if strings.TrimSpace(cfg.ServiceRoleKey) == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key not configured"})
 			return
 		}
-
-		auth := strings.TrimSpace(r.Header.Get("Authorization"))
-		token, ok := strings.CutPrefix(auth, "Bearer ")
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
-			return
-		}
-		token = strings.TrimSpace(token)
-		if token != serviceRoleKey {
+		if !modes.ServiceRoleBearer(r, cfg.ServiceRoleKey) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
 			return
 		}

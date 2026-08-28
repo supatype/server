@@ -3,12 +3,12 @@ package outerhealth
 import (
 	"testing"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestProbeConfigFrom(t *testing.T) {
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		PostgRESTURL: "http://env-pg:3000",
 		GraphQLURL:   "http://env-gq:3000",
 		StorageURL:   "http://env-st:5000",

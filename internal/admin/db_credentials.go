@@ -11,11 +11,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 type dbCredMeta struct {
@@ -42,7 +41,7 @@ type statusResponse struct {
 	Message           string `json:"message,omitempty"`
 }
 
-func credentialStatusHandler(cfg *serverconf.ServerConfig, vc *valkey.Client) http.HandlerFunc {
+func credentialStatusHandler(cfg *config.Config, vc *valkey.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mode := cfg.Mode
 		switch mode {
@@ -64,7 +63,7 @@ func credentialStatusHandler(cfg *serverconf.ServerConfig, vc *valkey.Client) ht
 			writeJSON(w, 200, statusResponse{
 				Mode:           "self_host",
 				PasswordStatus: "operator_managed",
-				CanReveal:      cfg.AllowSecretReadback && os.Getenv("POSTGRES_PASSWORD") != "",
+				CanReveal:      cfg.AllowSecretReadback && cfg.PostgresPassword != "",
 				Generation:     1,
 				Message:        "Database password is managed by your deployment secrets.",
 			})
@@ -80,7 +79,7 @@ func credentialStatusHandler(cfg *serverconf.ServerConfig, vc *valkey.Client) ht
 	}
 }
 
-func credentialFirstViewHandler(cfg *serverconf.ServerConfig, vc *valkey.Client) http.HandlerFunc {
+func credentialFirstViewHandler(cfg *config.Config, vc *valkey.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch cfg.Mode {
 		case "managed":
@@ -112,14 +111,14 @@ func credentialFirstViewHandler(cfg *serverconf.ServerConfig, vc *valkey.Client)
 				writeJSON(w, 403, map[string]string{"error": "secret readback disabled"})
 				return
 			}
-			pw := os.Getenv("POSTGRES_PASSWORD")
+			pw := cfg.PostgresPassword
 			if pw == "" {
 				writeJSON(w, 404, map[string]string{"error": "POSTGRES_PASSWORD is not set"})
 				return
 			}
 			writeJSON(w, 200, map[string]string{"password": pw})
 		default:
-			pw := os.Getenv("POSTGRES_PASSWORD")
+			pw := cfg.PostgresPassword
 			if pw == "" {
 				pw = "postgres"
 			}
@@ -128,7 +127,7 @@ func credentialFirstViewHandler(cfg *serverconf.ServerConfig, vc *valkey.Client)
 	}
 }
 
-func credentialRotateHandler(cfg *serverconf.ServerConfig, vc *valkey.Client) http.HandlerFunc {
+func credentialRotateHandler(cfg *config.Config, vc *valkey.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Mode != "managed" {
 			writeJSON(w, 501, map[string]string{"error": "rotation is managed by your runtime/environment in this mode"})

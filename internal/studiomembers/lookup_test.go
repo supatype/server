@@ -1,28 +1,38 @@
 package studiomembers
 
-import "testing"
+import (
+	"testing"
 
+	"github.com/supatype/server/internal/dbpool"
+)
+
+// clearDSN removes any connection string a sibling test configured. The pool is
+// process-global, so this has to be explicit rather than scoped by t.Setenv.
+// Phase 3 replaces the global with an owned resource and this goes away.
 func clearDSN(t *testing.T) {
 	t.Helper()
-	t.Setenv("SUPATYPE_SQL_DATABASE_URL", "")
-	t.Setenv("DATABASE_URL", "")
+	previous := dbpool.DSN()
+	dbpool.Configure("")
+	t.Cleanup(func() { dbpool.Configure(previous) })
 }
 
+// Which variable supplies the DSN is config.Config.SQLDSN's decision now. What
+// this package promises is narrower: no DSN means Studio membership cannot be
+// resolved, and it must say so rather than guess.
 func TestAvailableFollowsDSN(t *testing.T) {
 	clearDSN(t)
 	if Available() {
 		t.Fatal("expected unavailable with no DSN configured")
 	}
 
-	t.Setenv("DATABASE_URL", "postgres://user@localhost:5432/db")
+	dbpool.Configure("postgres://user@localhost:5432/db")
 	if !Available() {
 		t.Fatal("expected available once a DSN is configured")
 	}
 
-	t.Setenv("DATABASE_URL", "")
-	t.Setenv("SUPATYPE_SQL_DATABASE_URL", "postgres://user@localhost:5432/db")
-	if !Available() {
-		t.Fatal("expected the Supatype-specific DSN to be honoured")
+	dbpool.Configure("")
+	if Available() {
+		t.Fatal("expected unavailable again once the DSN is cleared")
 	}
 }
 

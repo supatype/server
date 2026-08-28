@@ -20,11 +20,11 @@
 # total: 638 names
 
 API_EXTERNAL_URL
-    call internal/studioauth/roles.go:37
+    call internal/studioauth/roles.go:39
     struct internal/conf.GlobalConfiguration
 DATABASE_URL
-    call internal/dbpool/pool.go:44
     struct internal/conf.GlobalConfiguration
+    struct internal/config.Config
 DB_NAMESPACE
     struct internal/conf.GlobalConfiguration
 GOTRUE_API_API_EXTERNAL_URL
@@ -32,7 +32,7 @@ GOTRUE_API_API_EXTERNAL_URL
 GOTRUE_API_ENDPOINT
     struct internal/conf.GlobalConfiguration
 GOTRUE_API_EXTERNAL_URL
-    call internal/studioauth/roles.go:37
+    call internal/studioauth/roles.go:39
 GOTRUE_API_HOST
     struct internal/conf.GlobalConfiguration
 GOTRUE_API_MAX_REQUEST_DURATION
@@ -590,7 +590,7 @@ GOTRUE_JWT_KEY_ID
     struct internal/conf.GlobalConfiguration
 GOTRUE_JWT_SECRET
     struct internal/conf.GlobalConfiguration
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 GOTRUE_JWT_VALID_METHODS
     struct internal/conf.GlobalConfiguration
 GOTRUE_LOG_DISABLE_COLORS
@@ -1074,7 +1074,7 @@ GOTRUE_SESSIONS_TAGS
 GOTRUE_SESSIONS_TIMEBOX
     struct internal/conf.GlobalConfiguration
 GOTRUE_SITE_URL
-    call internal/studioauth/roles.go:37
+    call internal/studioauth/roles.go:39
     struct internal/conf.GlobalConfiguration
 GOTRUE_SMS_AUTOCONFIRM
     struct internal/conf.GlobalConfiguration
@@ -1177,9 +1177,9 @@ GOTRUE_WEBAUTHN_RP_ID
 GOTRUE_WEBAUTHN_RP_ORIGINS
     struct internal/conf.GlobalConfiguration
 LOG_LEVEL
-    call internal/observability/logger.go:28
+    struct internal/config.Config
 MAU_EMAIL_SALT
-    call internal/gateway/cloud_gateway.go:46
+    struct internal/config.Config
 OTEL_EXPORTER_OTLP_PROTOCOL
     struct internal/conf.GlobalConfiguration
 OTEL_EXPORTER_PROMETHEUS_HOST
@@ -1189,9 +1189,7 @@ OTEL_EXPORTER_PROMETHEUS_PORT
 PORT
     struct internal/conf.GlobalConfiguration
 POSTGRES_PASSWORD
-    call internal/admin/db_credentials.go:115
-    call internal/admin/db_credentials.go:122
-    call internal/admin/db_credentials.go:67
+    struct internal/config.Config
 REQUEST_ID_HEADER
     struct internal/conf.GlobalConfiguration
 RESEND_API_KEY
@@ -1205,111 +1203,101 @@ SECRETS
 SES_FROM
     call internal/auth/mailer/templatemailer/template.go:70
 STORAGE_PATH
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 STORAGE_PROVIDER
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 STUDIO_ADMIN_ROLES
-    call internal/studioauth/roles.go:62
+    struct internal/config.Config
 STUDIO_OPEN_DEV
-    call internal/studioauth/roles.go:20
+    struct internal/config.Config
 SUPATYPE_ACME_HTTP_ADDR
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_ADMIN_CONFIG_PATH
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_ALLOW_SECRET_READBACK
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_ANON_KEY
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_API_CONFIG_PATH
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_APP_MODE
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_APP_SPA_FALLBACK
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_APP_STATIC_DIR
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_APP_UPSTREAM
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_BLOCK_BOT_UA
-    call internal/gateway/cloud_gateway.go:44
+    struct internal/config.Config
 SUPATYPE_CLOUD_ACTIVITY_ENABLED
-    call internal/gateway/cloud_gateway.go:39
+    struct internal/config.Config
 SUPATYPE_CLOUD_ACTIVITY_URL
-    call internal/gateway/cloud_gateway.go:40
-    call internal/gateway/cloud_gateway.go:47
+    struct internal/config.Config
 SUPATYPE_CONTROL_PLANE_URL
-    call internal/platformproxy/proxy.go:19
+    struct internal/config.Config
 SUPATYPE_CORS_ALLOW_ORIGINS
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_DB_CREDENTIALS_KEK
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_DB_SCHEMA
-    call internal/sqlrunner/handler.go:154
+    struct internal/config.Config
 SUPATYPE_DENO_FUNCTIONS_DIR
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_DENO_PATH
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_DENO_PORT
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_DENO_SERVE_SCRIPT
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_FUNCTIONS_WORKER_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_GRAPHQL_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_HEALTH_SELF_BASE_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_INTERNAL_HMAC_SECRET
-    call internal/gateway/cloud_gateway.go:41
+    struct internal/config.Config
 SUPATYPE_MANAGED_PROJECT_REF
-    call internal/gateway/cloud_gateway.go:42
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_MANIFEST_PATH
-    call internal/serverconf/dotenv.go:69
-    struct internal/serverconf.ServerConfig
+    call internal/config/dotenv.go:69
+    struct internal/config.Config
 SUPATYPE_MODE
-    call cmd/serve_cmd.go:138
-    call internal/admin/api_config_handler.go:180
-    call internal/functions/admin.go:59
-    call internal/studioauth/roles.go:16
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_NONPROD
-    call internal/gateway/cloud_gateway.go:43
+    struct internal/config.Config
 SUPATYPE_OUTER_LOG_LEVEL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_POSTGREST_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_REALTIME_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_SERVICE_ROLE_KEY
-    call internal/admin/api_config_handler.go:184
-    call internal/functions/admin.go:64
-    call internal/sqlrunner/handler.go:211
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_SQLRUNNER_INSECURE
-    call internal/sqlrunner/handler.go:228
+    struct internal/config.Config
 SUPATYPE_SQL_DATABASE_URL
-    call internal/dbpool/pool.go:41
+    struct internal/config.Config
 SUPATYPE_STATIC_CACHE_HASHED_ASSETS
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_STATIC_CACHE_HTML
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_STATIC_CACHE_PREFIXES_JSON
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_STORAGE_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_TENANT_HMAC_SECRET
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_TLS_ACME_CACHE_DIR
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_TLS_DOMAIN
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_VALKEY_ADDR
-    call internal/gateway/cloud_gateway.go:45
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 SUPATYPE_VITE_DEV_URL
-    struct internal/serverconf.ServerConfig
+    struct internal/config.Config
 VALKEY_ADDR
-    call internal/gateway/cloud_gateway.go:45
+    struct internal/config.Config

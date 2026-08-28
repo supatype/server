@@ -4,13 +4,13 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 func TestEdgeSubprocessEnv_coreAndPassThrough(t *testing.T) {
 	t.Setenv("SUPATYPE_EDGE_CUSTOM", "hello")
 
-	srv := &serverconf.ServerConfig{
+	srv := &config.Config{
 		SupatypeURL:    "",
 		AnonKey:        "anon-jwt",
 		ServiceRoleKey: "service-jwt",
@@ -32,7 +32,7 @@ func TestEdgeSubprocessEnv_coreAndPassThrough(t *testing.T) {
 }
 
 func TestEdgeSubprocessEnv_supatypeURLWinsOverFallback(t *testing.T) {
-	srv := &serverconf.ServerConfig{
+	srv := &config.Config{
 		SupatypeURL:    "https://api.example",
 		ServiceRoleKey: "x",
 	}

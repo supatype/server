@@ -1,4 +1,4 @@
-package serverconf
+package config
 
 import (
 	"os"

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/studiomembers"
 )
 
@@ -21,6 +21,9 @@ type Config struct {
 	AnonKey    string
 	AdminRoles []string
 	Mode       string
+	// OpenDev opens Studio without authentication. It is only honoured in dev
+	// mode on a locally addressed deployment; see Config.DevBypass.
+	OpenDev bool
 	// StudioRole resolves a verified user id to their Studio role from
 	// `_supatype.studio_members`. Studio capability deliberately does not come
 	// from a JWT claim: `app_metadata` is the developer's namespace for their own
@@ -35,13 +38,14 @@ type Config struct {
 type StudioRoleLookup func(userID string) (string, bool)
 
 // ConfigFromServer builds handler config from ServerConfig and admin-config path.
-func ConfigFromServer(cfg *serverconf.ServerConfig) Config {
+func ConfigFromServer(cfg *config.Config) Config {
 	return Config{
 		JWTSecret:      cfg.JWTSecret,
 		ServiceRoleKey: cfg.ServiceRoleKey,
 		AnonKey:        cfg.AnonKey,
-		AdminRoles:     AdminRolesFromConfigFile(cfg.AdminConfigPath),
+		AdminRoles:     AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
 		Mode:           cfg.Mode,
+		OpenDev:        cfg.StudioOpenDev.Bool(),
 	}
 }
 
@@ -53,7 +57,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		if DevBypass() {
+		if c.DevBypass() {
 			writeJSON(w, http.StatusOK, verifyOKResponse(Result{
 				Role: "dev-bypass",
 				Sub:  "dev-bypass",
@@ -112,7 +116,7 @@ func verifyOKResponse(result Result) map[string]interface{} {
 // RequireAdmin wraps a handler with studio admin JWT checks (skipped when DevBypass).
 func RequireAdmin(c Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if DevBypass() {
+		if c.DevBypass() {
 			next.ServeHTTP(w, req)
 			return
 		}
@@ -136,7 +140,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 		mode := ModeElevated
 		actor := ""
 
-		if !DevBypass() {
+		if !c.DevBypass() {
 			result := ResolveAccess(req, c)
 			if !result.Allowed {
 				status := http.StatusForbidden

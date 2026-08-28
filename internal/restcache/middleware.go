@@ -9,8 +9,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/studiobootstrap"
 )
 
@@ -18,7 +18,7 @@ import (
 func Middleware(
 	store apiconfig.Store,
 	vk *valkey.Client,
-	cfg *serverconf.ServerConfig,
+	cfg *config.Config,
 	schemaFor func(*http.Request) string,
 	maxRowsFor func(*http.Request) string,
 	next http.Handler,

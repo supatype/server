@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/restcache"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 const cacheBodyPreviewMax = 4096
@@ -35,7 +35,7 @@ type cacheEntryDetail struct {
 	BodyJSON    json.RawMessage `json:"body_json,omitempty"`
 }
 
-func mountCacheRoutes(mux *http.ServeMux, cfg *serverconf.ServerConfig, vc *valkey.Client) {
+func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc *valkey.Client) {
 	if vc == nil {
 		mux.HandleFunc("/cache", cacheUnavailable)
 		mux.HandleFunc("/cache/", cacheUnavailable)
@@ -111,7 +111,7 @@ func cacheNotOffered(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func tenantCachePrefix(cfg *serverconf.ServerConfig, r *http.Request) string {
+func tenantCachePrefix(cfg *config.Config, r *http.Request) string {
 	ref := restcache.TenantRef(r, cfg.ManagedProjectRef)
 	if ref == "" {
 		ref = "local"

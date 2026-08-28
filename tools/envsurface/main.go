@@ -17,7 +17,7 @@ import (
 	"os"
 
 	"github.com/supatype/server/internal/conf"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 // goldenPath is the checked-in surface, relative to the repository root.
@@ -59,7 +59,7 @@ func Collect(root string) (string, error) {
 	}
 	vars = append(vars, global...)
 
-	server, err := StructNames("", &serverconf.ServerConfig{}, "internal/serverconf.ServerConfig")
+	server, err := StructNames("", &config.Config{}, "internal/config.Config")
 	if err != nil {
 		return "", fmt.Errorf("gather server config: %w", err)
 	}

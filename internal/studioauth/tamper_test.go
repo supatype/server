@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/supatype/server/internal/config"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -249,37 +251,65 @@ func TestDevBypassNeedsBothSwitchesAndNeverInProduction(t *testing.T) {
 	cases := []struct {
 		name string
 		mode string
-		open string
+		open bool
 		want bool
 	}{
-		{"nothing set", "", "", false},
-		{"dev mode alone", "dev", "", false},
-		{"open flag alone", "", "true", false},
-		{"open flag in production", "production", "true", false},
-		{"open flag with no mode", "", "1", false},
-		{"both, explicitly", "dev", "true", true},
+		{"nothing set", "", false, false},
+		{"dev mode alone", "dev", false, false},
+		{"open flag alone", "", true, false},
+		{"open flag in production", "production", true, false},
+		{"open flag in managed", "managed", true, false},
+		{"open flag in standalone", "standalone", true, false},
+		{"both, explicitly", "dev", true, true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("SUPATYPE_MODE", tc.mode)
-			t.Setenv("STUDIO_OPEN_DEV", tc.open)
-			if got := DevBypass(); got != tc.want {
-				t.Errorf("DevBypass()=%v, want %v (SUPATYPE_MODE=%q STUDIO_OPEN_DEV=%q)",
-					got, tc.want, tc.mode, tc.open)
+			c := Config{Mode: tc.mode, OpenDev: tc.open}
+			if got := c.DevBypass(); got != tc.want {
+				t.Errorf("DevBypass()=%v, want %v (mode=%q openDev=%v)", got, tc.want, tc.mode, tc.open)
 			}
 		})
 	}
 }
 
+// "maybe" is not consent. A switch this dangerous must read only explicit
+// affirmatives, and the check runs through the real configuration path rather
+// than a reimplementation of it: the value is parsed by config.Load exactly as a
+// deployment's environment would be, then carried into Studio's own config.
 func TestDevBypassIgnoresAmbiguousFlagValues(t *testing.T) {
-	// "maybe" is not consent. A flag this dangerous should read only explicit affirmatives.
-	for _, v := range []string{"maybe", "0", "false", "no", "off", " ", "yolo"} {
-		t.Setenv("SUPATYPE_MODE", "dev")
-		t.Setenv("STUDIO_OPEN_DEV", v)
-		if DevBypass() {
-			t.Errorf("STUDIO_OPEN_DEV=%q enabled the open-Studio bypass", v)
-		}
+	for _, v := range []string{"maybe", "0", "false", "no", "off", " ", "yolo", "t", "TRUE-ish"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("SUPATYPE_MODE", "dev")
+			t.Setenv("STUDIO_OPEN_DEV", v)
+
+			loaded, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ConfigFromServer(loaded).DevBypass() {
+				t.Errorf("STUDIO_OPEN_DEV=%q enabled the open-Studio bypass", v)
+			}
+		})
+	}
+}
+
+// The affirmatives that must keep working, through the same real path.
+func TestDevBypassAcceptsExplicitAffirmatives(t *testing.T) {
+	for _, v := range []string{"1", "true", "TRUE", "yes", "on"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("SUPATYPE_MODE", "dev")
+			t.Setenv("STUDIO_OPEN_DEV", v)
+			t.Setenv("API_EXTERNAL_URL", "http://localhost:18473")
+
+			loaded, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ConfigFromServer(loaded).DevBypass() {
+				t.Errorf("STUDIO_OPEN_DEV=%q should enable the bypass on a local deployment", v)
+			}
+		})
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/functions"
@@ -25,7 +26,6 @@ import (
 	"github.com/supatype/server/internal/platformproxy"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
-	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/studioauth"
@@ -63,7 +63,7 @@ const defaultUpstreamHTTPTimeout = 2 * time.Minute
 // In managed mode the mux is wrapped in ManagedCORSMiddleware (when configured) outside
 // TenantMiddleware (HMAC), then TenantMiddleware, so OPTIONS preflight is not blocked.
 func buildOuterMux(
-	cfg *serverconf.ServerConfig,
+	cfg *config.Config,
 	manifestFor func(*http.Request) *proxy.RouteManifest,
 	healthProbes func() outerhealth.ProbeConfig,
 	authHandler http.Handler,
@@ -135,7 +135,7 @@ func buildOuterMux(
 	r.Handle("/admin/studio-members/*", membersAPI)
 	logrus.Info("mux: Studio membership API mounted at /admin/studio-members")
 
-	r.Post("/sql", sqlrunner.Handler().ServeHTTP)
+	r.Post("/sql", sqlrunner.Handler(cfg).ServeHTTP)
 
 	r.Mount("/auth/v1", http.StripPrefix("/auth/v1", authHandler))
 
@@ -316,7 +316,7 @@ func buildOuterMux(
 	}
 
 	if cfg.DenoFunctionsDir != "" {
-		r.Mount("/functions/v1/admin", functions.Handler(cfg.DenoFunctionsDir, denoManager))
+		r.Mount("/functions/v1/admin", functions.Handler(cfg, cfg.DenoFunctionsDir, denoManager))
 		logrus.WithField("dir", cfg.DenoFunctionsDir).Info("mux: Functions admin handler mounted at /functions/v1/admin")
 	}
 
@@ -327,8 +327,15 @@ func buildOuterMux(
 		logrus.Info("mux: Functions invocation proxy mounted at /functions/v1")
 	}
 
-	r.Mount("/platform/v1", http.StripPrefix("/platform/v1", platformproxy.Handler()))
-	logrus.Info("mux: Platform control plane proxy mounted at /platform/v1")
+	// Skipped rather than fatal because this builder cannot report an error yet;
+	// Phase 4 propagates it. Either way it no longer panics the process, and the
+	// configured default always parses, so this only fires on a mistyped value.
+	if platformHandler, perr := platformproxy.Handler(cfg); perr != nil {
+		logrus.WithError(perr).Error("mux: Platform control plane proxy not mounted")
+	} else {
+		r.Mount("/platform/v1", http.StripPrefix("/platform/v1", platformHandler))
+		logrus.Info("mux: Platform control plane proxy mounted at /platform/v1")
+	}
 
 	baseM := manifestFor(nil)
 	if baseM.RealtimeEnabled || strings.TrimSpace(cfg.RealtimeURL) != "" {
@@ -411,7 +418,7 @@ func buildOuterMux(
 	return handler
 }
 
-func staticCacheOpts(cfg *serverconf.ServerConfig, m *proxy.RouteManifest) static.CacheOpts {
+func staticCacheOpts(cfg *config.Config, m *proxy.RouteManifest) static.CacheOpts {
 	html := cfg.StaticCacheHTML
 	hashed := cfg.StaticCacheHashedAssets
 	prefixes := parseStaticPrefixesJSON(cfg.StaticCachePrefixesJSON)
@@ -453,7 +460,7 @@ func parseStaticPrefixesJSON(raw string) map[string]string {
 
 // functionsInvocationProxy forwards to per-tenant / per-function workers or in-process Deno.
 func functionsInvocationProxy(
-	cfg *serverconf.ServerConfig,
+	cfg *config.Config,
 	manifestFor func(*http.Request) *proxy.RouteManifest,
 	inProcessDeno bool,
 ) http.Handler {
@@ -484,7 +491,7 @@ func functionsInvocationProxy(
 
 // realtimeInvocationProxy forwards /realtime/v1 to the external realtime service.
 func realtimeInvocationProxy(
-	cfg *serverconf.ServerConfig,
+	cfg *config.Config,
 	manifestFor func(*http.Request) *proxy.RouteManifest,
 ) http.Handler {
 	opts := proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}
@@ -505,7 +512,7 @@ func realtimeInvocationProxy(
 }
 
 func resolveRealtimeUpstreamURL(
-	cfg *serverconf.ServerConfig,
+	cfg *config.Config,
 	m *proxy.RouteManifest,
 ) (*url.URL, error) {
 	if m != nil {
@@ -535,7 +542,7 @@ func firstURLSegment(path string) string {
 // Extracted from the mount so the rule can be tested without building a mux: which worker serves a
 // hook is the difference between a hooked table working and every write to it answering 503.
 func hookUpstreamURL(
-	cfg *serverconf.ServerConfig,
+	cfg *config.Config,
 	m *proxy.RouteManifest,
 	function string,
 	inProcessDeno bool,
@@ -562,7 +569,7 @@ func hookUpstreamURL(
 }
 
 func resolveFunctionsUpstreamURL(
-	cfg *serverconf.ServerConfig,
+	cfg *config.Config,
 	m *proxy.RouteManifest,
 	fnName string,
 	inProcessDeno bool,
@@ -587,7 +594,7 @@ func resolveFunctionsUpstreamURL(
 }
 
 // functionsUpstreamURL resolves the in-process Deno subprocess target.
-func functionsUpstreamURL(cfg *serverconf.ServerConfig) (*url.URL, error) {
+func functionsUpstreamURL(cfg *config.Config) (*url.URL, error) {
 	if u := strings.TrimSpace(cfg.FunctionsWorkerURL); u != "" {
 		parsed, err := url.Parse(u)
 		if err != nil {

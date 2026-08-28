@@ -45,7 +45,7 @@
     "internal/studiomembers"
   ],
   "packages": {
-    "internal/admin": 15.51,
+    "internal/admin": 14.04,
     "internal/auth": 66.4,
     "internal/auth/apiworker": 0,
     "internal/auth/oauthserver": 40.07,
@@ -57,7 +57,7 @@
     "internal/dbpool": 78.45,
     "internal/deno": 24.92,
     "internal/e2e/e2ehooks": 95.65,
-    "internal/functions": 19.5,
+    "internal/functions": 17.09,
     "internal/auth/hooks/hookshttp": 94.6,
     "internal/auth/hooks/hookspgfunc": 94.62,
     "internal/auth/hooks/v0hooks": 96.87,
@@ -83,7 +83,6 @@
     "internal/proxy": 61.04,
     "internal/restcache": 43.41,
     "internal/security": 77.28,
-    "internal/serverconf": 68.25,
     "internal/sqlrunner": 0.43,
     "internal/static": 82.72,
     "internal/auth/storage": 82.9,
@@ -95,6 +94,7 @@
     "internal/utilities/siwe": 95.73,
     "internal/utilities/siws": 98.57,
     "internal/data/valkey": 13.99,
-    "internal/gateway": 35.38
+    "internal/gateway": 35.38,
+    "internal/config": 68.25
   }
 }

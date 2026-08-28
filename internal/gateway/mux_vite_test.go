@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestBuildOuterMux_ViteDevProxyStripPrefix(t *testing.T) {
@@ -26,7 +26,7 @@ func TestBuildOuterMux_ViteDevProxyStripPrefix(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		Mode:           "dev",
 		ServiceRoleKey: "x",
 		ViteDevURL:     upstream.URL,

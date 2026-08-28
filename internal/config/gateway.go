@@ -1,13 +1,29 @@
-package serverconf
+package config
 
 import (
+	"strings"
+
 	"github.com/kelseyhightower/envconfig"
 )
 
-// ServerConfig holds configuration for the supatype-server outer layer.
+// Defaults that callers need by name as well as by tag.
+//
+// envconfig applies a `default` tag only through Load, so a zero-value Config
+// built directly (a test, an embedder) would otherwise silently lose the
+// behaviour the tag describes. Declaring them here lets the consumer fall back
+// to the same value, and TestTagDefaultsMatchConstants stops the two drifting.
+const (
+	// DefaultControlPlaneURL is the self-host control plane behind /platform/v1.
+	DefaultControlPlaneURL = "http://control-plane:8080"
+	// DefaultCloudActivityURL is the control plane that receives activity
+	// touches and answers project-to-org lookups.
+	DefaultCloudActivityURL = "http://control-plane:4001"
+)
+
+// Config holds configuration for the supatype-server outer layer.
 // It is loaded from environment variables (SUPATYPE_* prefix) and `.env` files
 // loaded by LoadDotEnvForServe (or LoadDotEnv) before this is parsed.
-type ServerConfig struct {
+type Config struct {
 	// Mode controls TLS and tenant resolution behaviour.
 	// "dev" = no TLS, permissive CORS, Vite HMR proxy
 	// "standalone" = ACME TLS, configurable CORS
@@ -147,14 +163,108 @@ type ServerConfig struct {
 	// HealthSelfBaseURL overrides the outer base URL used to probe GET /realtime/v1/health from /health/ready
 	// (e.g. https://public.example.com when the process cannot infer a correct URL).
 	HealthSelfBaseURL string `envconfig:"SUPATYPE_HEALTH_SELF_BASE_URL"`
+
+	// The fields below were read directly with os.Getenv from inside twelve
+	// packages that took no configuration at all. They are declared here so the
+	// whole surface is in one greppable place and every reader is handed a value
+	// instead of reaching for the process environment.
+	//
+	// The struct is flat on purpose. Nesting would make envconfig derive a
+	// prefixed key per field (CLOUD_SUPATYPE_CLOUD_ACTIVITY_URL and the like),
+	// which adds names to the environment surface that nothing sets.
+
+	// ── Platform control plane and cloud metering ────────────────────────────
+
+	// CloudActivityEnabled turns on per-request activity reporting and auth MAU
+	// metering. Tenant gateway pods set it; nothing else should.
+	CloudActivityEnabled StrictBool `envconfig:"SUPATYPE_CLOUD_ACTIVITY_ENABLED"`
+
+	// CloudActivityURL is the control plane that receives activity touches and
+	// answers project-to-org lookups.
+	CloudActivityURL string `envconfig:"SUPATYPE_CLOUD_ACTIVITY_URL" default:"http://control-plane:4001"`
+
+	// ControlPlaneURL is the self-host control plane behind /platform/v1. It is
+	// a different service from CloudActivityURL despite the similar name.
+	ControlPlaneURL string `envconfig:"SUPATYPE_CONTROL_PLANE_URL" default:"http://control-plane:8080"`
+
+	// InternalHMACSecret signs server-to-control-plane calls.
+	InternalHMACSecret string `envconfig:"SUPATYPE_INTERNAL_HMAC_SECRET"`
+
+	// NonProd marks a staging or preview deployment: robots are told to stay out.
+	NonProd StrictBool `envconfig:"SUPATYPE_NONPROD"`
+
+	// BlockBotUA refuses crawler user agents outright. Only consulted in NonProd.
+	BlockBotUA StrictBool `envconfig:"SUPATYPE_BLOCK_BOT_UA"`
+
+	// MAUEmailSalt salts the hashed email used to deduplicate monthly active
+	// users. Without it the dedupe key falls back to the local user id.
+	MAUEmailSalt string `envconfig:"MAU_EMAIL_SALT"`
+
+	// ValkeyAddrLegacy is the unprefixed spelling the cloud gateway accepted as
+	// a fallback to ValkeyAddr. Kept so the surface does not change here; the
+	// rename removes it.
+	ValkeyAddrLegacy string `envconfig:"VALKEY_ADDR"`
+
+	// ── Database access for server-side features ─────────────────────────────
+
+	// SQLDatabaseURL is the DSN for the Studio SQL runner and Studio membership
+	// lookups, preferred over DatabaseURL so a deployment can point admin
+	// features at a different role than the app's.
+	SQLDatabaseURL string `envconfig:"SUPATYPE_SQL_DATABASE_URL"`
+
+	// DatabaseURL is the generic DSN fallback. The auth service reads the same
+	// variable through its own configuration, which is one of the connection
+	// paths this refactor collapses.
+	DatabaseURL string `envconfig:"DATABASE_URL"`
+
+	// SQLSchema is the default schema the SQL runner resolves against.
+	SQLSchema string `envconfig:"SUPATYPE_DB_SCHEMA"`
+
+	// SQLRunnerInsecure disables the SQL runner's service-role requirement. It
+	// is a development affordance and must never be set in a deployment.
+	SQLRunnerInsecure SwitchBool `envconfig:"SUPATYPE_SQLRUNNER_INSECURE"`
+
+	// PostgresPassword is the managed database password the admin API may reveal
+	// when AllowSecretReadback permits it.
+	PostgresPassword string `envconfig:"POSTGRES_PASSWORD"`
+
+	// ── Studio ───────────────────────────────────────────────────────────────
+
+	// StudioOpenDev opens Studio without authentication. Guarded further by dev
+	// mode and a locally addressed deployment; see internal/studioauth.
+	StudioOpenDev SwitchBool `envconfig:"STUDIO_OPEN_DEV"`
+
+	// StudioAdminRoles overrides the roles treated as Studio admins,
+	// comma-separated.
+	StudioAdminRoles string `envconfig:"STUDIO_ADMIN_ROLES"`
+
+	// ── Logging ──────────────────────────────────────────────────────────────
+
+	// LogLevel is the logrus level for the auth service's own logger. The outer
+	// access log has its own level in OuterLogLevel.
+	LogLevel string `envconfig:"LOG_LEVEL"`
 }
 
-// Load parses ServerConfig from environment variables (SUPATYPE_* prefix).
+// Load parses Config from environment variables (SUPATYPE_* prefix).
 // Call LoadDotEnvForServe (or LoadDotEnv) before this to populate the environment from .env.
-func Load() (*ServerConfig, error) {
-	var cfg ServerConfig
+func Load() (*Config, error) {
+	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// SQLDSN is the connection string for the server-side features that read the
+// project database directly: the Studio SQL runner and Studio membership.
+//
+// The Supatype-specific variable wins so a deployment can point admin features
+// at a different role than the app's. This precedence used to live inside
+// internal/dbpool, which made that package a second, independent reader of a
+// connection string the auth service already loads.
+func (c *Config) SQLDSN() string {
+	if dsn := strings.TrimSpace(c.SQLDatabaseURL); dsn != "" {
+		return dsn
+	}
+	return strings.TrimSpace(c.DatabaseURL)
 }

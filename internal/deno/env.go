@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 const edgeEnvPrefix = "SUPATYPE_EDGE_"
@@ -19,7 +19,7 @@ const edgeEnvPrefix = "SUPATYPE_EDGE_"
 //
 // Additionally, any process env key starting with SUPATYPE_EDGE_ is passed with that
 // prefix stripped (e.g. SUPATYPE_EDGE_FOO=1 → FOO=1) for user-defined function env.
-func EdgeSubprocessEnv(srv *serverconf.ServerConfig, apiExternalURLFallback string) []string {
+func EdgeSubprocessEnv(srv *config.Config, apiExternalURLFallback string) []string {
 	if srv == nil {
 		return nil
 	}

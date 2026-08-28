@@ -124,7 +124,7 @@ func requireMemberAdmin(
 	c Config,
 	mutating bool,
 ) (string, bool) {
-	if DevBypass() {
+	if c.DevBypass() {
 		return "", true
 	}
 

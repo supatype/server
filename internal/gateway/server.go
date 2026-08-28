@@ -7,7 +7,7 @@
 // New performs the same bootstrap that `supatype-server serve` does, minus the
 // listener/TLS/graceful-shutdown loop (which the caller owns). Stock binary
 // behaviour is preserved: cmd/serve_cmd.go calls New and then runs the
-// unchanged listen loop, so routes and config handling are identical.
+// unchanged listen loop, so routes and authCfg handling are identical.
 package gateway
 
 import (
@@ -28,12 +28,14 @@ import (
 	"github.com/supatype/server/internal/auth/mailer/templatemailer"
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/dbpool"
 	"github.com/supatype/server/internal/deno"
+	"github.com/supatype/server/internal/observability"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/reloader"
-	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -46,7 +48,7 @@ var (
 )
 
 // New builds the full supatype-server outer handler and starts its background
-// workers (apiworker + optional config reloader), which stop when ctx is
+// workers (apiworker + optional authCfg reloader), which stop when ctx is
 // cancelled. The returned drain func waits for those workers and releases
 // resources (Deno subprocess, Valkey, database); call it after cancelling ctx.
 //
@@ -55,16 +57,16 @@ var (
 // the metering gateway on :9999).
 func New(ctx context.Context) (http.Handler, func(), error) {
 	if err := conf.LoadFile(ConfigFile); err != nil {
-		return nil, nil, fmt.Errorf("unable to load config: %w", err)
+		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
 	}
 
 	if err := conf.LoadDirectory(WatchDir); err != nil {
-		logrus.WithError(err).Error("unable to load config from watch dir")
+		logrus.WithError(err).Error("unable to load authCfg from watch dir")
 	}
 
-	config, err := conf.LoadGlobalFromEnv()
+	authCfg, err := conf.LoadGlobalFromEnv()
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to load config: %w", err)
+		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
 	}
 
 	// Include serve ctx which carries cancelation signals so DialContext does
@@ -76,7 +78,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// healthcheck ever covered a database that restarts later. A wrong password or a missing database
 	// still fails immediately; see internal/auth/storage/dial_retry.go for where that line sits.
 	db, err := storage.DialWithRetry(ctx, func(ctx context.Context) (*storage.Connection, error) {
-		return storage.DialContext(ctx, config)
+		return storage.DialContext(ctx, authCfg)
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("error opening database: %w", err)
@@ -102,31 +104,37 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	}
 
 	mrCache := templatemailer.NewCache()
-	limiterOpts := auth.NewLimiterOptions(config)
+	limiterOpts := auth.NewLimiterOptions(authCfg)
 	initialAPI := auth.NewAPIWithVersion(
-		config, db, utilities.Version,
+		authCfg, db, utilities.Version,
 		limiterOpts,
-		auth.WithMailer(templatemailer.FromConfig(config, mrCache)),
+		auth.WithMailer(templatemailer.FromConfig(authCfg, mrCache)),
 	)
 	logrus.WithField("version", initialAPI.Version()).Info("GoTrue API initialized")
 
 	ah := reloader.NewAtomicHandler(initialAPI)
 
 	// ── supatype-server outer layer ───────────────────────────────────────────
-	// Load `.env` / `.env.local` from --config dir, cwd, then manifest project root (A22).
+	// Load `.env` / `.env.local` from --authCfg dir, cwd, then manifest project root (A22).
 	if cwd, err := os.Getwd(); err == nil {
-		if err := serverconf.LoadDotEnvForServe(cwd, ConfigFile); err != nil {
+		if err := config.LoadDotEnvForServe(cwd, ConfigFile); err != nil {
 			logrus.WithError(err).Warn("serve: .env load failed")
 		}
 	} else {
 		logrus.WithError(err).Debug("serve: getwd failed; skipping .env")
 	}
 
-	srvCfg, err := serverconf.Load()
+	srvCfg, err := config.Load()
 	if err != nil {
-		return fail(fmt.Errorf("serve: failed to load server config: %w", err))
+		return fail(fmt.Errorf("serve: failed to load server authCfg: %w", err))
 	}
 	configureOuterAccessLogging(srvCfg.OuterLogLevel)
+	// The structured logger used to read LOG_LEVEL at package initialisation.
+	// It is set from configuration here instead, before the listener opens.
+	observability.SetStructuredLevel(srvCfg.LogLevel)
+	// The Studio SQL runner and membership lookups share one pool. It used to
+	// read its own DSN variables; it is handed the resolved value here.
+	dbpool.Configure(srvCfg.SQLDSN())
 	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
 		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
 	}
@@ -230,7 +238,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 					srvCfg.DenoPath,
 					serveEntry,
 					denoPortInt,
-					deno.EdgeSubprocessEnv(srvCfg, strings.TrimSpace(config.API.ExternalURL)),
+					deno.EdgeSubprocessEnv(srvCfg, strings.TrimSpace(authCfg.API.ExternalURL)),
 					strings.TrimSpace(srvCfg.Mode) == "dev",
 				)
 				dm.Start(ctx)
@@ -259,8 +267,8 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 			srvCfg.HealthSelfBaseURL,
 			srvCfg.Mode,
 			srvCfg.TLSDomain,
-			config.API.Host,
-			config.API.Port,
+			authCfg.API.Host,
+			authCfg.API.Port,
 		)
 		return pc
 	}
@@ -285,15 +293,15 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	}
 
 	var sendEmailHook http.Handler
-	if config.Hook.SendEmail.Enabled && len(config.Hook.SendEmail.HTTPHookSecrets) > 0 {
-		sendEmailHook = newSendEmailHookReceiver(ah, config.Hook.SendEmail.HTTPHookSecrets)
+	if authCfg.Hook.SendEmail.Enabled && len(authCfg.Hook.SendEmail.HTTPHookSecrets) > 0 {
+		sendEmailHook = newSendEmailHookReceiver(ah, authCfg.Hook.SendEmail.HTTPHookSecrets)
 	}
 
 	outerMux := buildOuterMux(srvCfg, manifestFor, healthProbes, ah, dm, utilities.Version, vkShared, sendEmailHook)
 
 	// ── background workers (stop on ctx cancel; drained by the returned func) ──
 	wrkLog := logrus.WithField("component", "apiworker")
-	wrk := apiworker.New(config, mrCache, db, wrkLog)
+	wrk := apiworker.New(authCfg, mrCache, db, wrkLog)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -317,7 +325,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		go func() {
 			defer wg.Done()
 
-			rc := config.Reloading
+			rc := authCfg.Reloading
 			le := logrus.WithFields(logrus.Fields{
 				"component":             "reloader",
 				"notify_enabled":        rc.NotifyEnabled,
@@ -335,16 +343,16 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 				if err != nil {
 					exitFn = le.WithError(err).Error
 				}
-				exitFn("config reloader is exiting")
+				exitFn("authCfg reloader is exiting")
 			}()
 
 			fn := func(latestCfg *conf.GlobalConfiguration) {
 				le.Info("reloading api with new configuration")
 
-				// When config is updated we notify the apiworker.
+				// When authCfg is updated we notify the apiworker.
 				wrk.ReloadConfig(latestCfg)
 
-				// Create a new API version with the updated config.
+				// Create a new API version with the updated authCfg.
 				latestAPI := auth.NewAPIWithVersion(
 					latestCfg, db, utilities.Version,
 
@@ -361,7 +369,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 
 			rl := reloader.NewReloader(rc, WatchDir)
 			if err = rl.Watch(ctx, fn); err != nil {
-				le.WithError(err).Error("config reloader is exiting")
+				le.WithError(err).Error("authCfg reloader is exiting")
 			}
 		}()
 	}
@@ -379,6 +387,6 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		_ = db.Close()
 	}
 
-	handler := wrapCloudGateway(outerMux)
+	handler := wrapCloudGateway(srvCfg, outerMux)
 	return handler, drain, nil
 }

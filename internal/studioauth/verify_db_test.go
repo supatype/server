@@ -25,9 +25,7 @@ func TestVerifyHandlerUsesMembershipNotClaims(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run Studio verification against Postgres")
 	}
-	t.Setenv("SUPATYPE_SQL_DATABASE_URL", dsn)
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
+	dbpool.Configure(dsn)
 
 	const member = "11111111-2222-3333-4444-555555555555"
 	const claimant = "99999999-8888-7777-6666-555555555555"

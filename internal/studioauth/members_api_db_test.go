@@ -29,9 +29,7 @@ func TestMembersAPI(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run the membership API against Postgres")
 	}
-	t.Setenv("SUPATYPE_SQL_DATABASE_URL", dsn)
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
+	dbpool.Configure(dsn)
 
 	ctx := context.Background()
 	pool, err := dbpool.Pool(ctx)

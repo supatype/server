@@ -58,7 +58,7 @@ func TestAdminRolesFromConfigFile_mergesRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	roles := AdminRolesFromConfigFile(".supatype/admin-config.json")
+	roles := AdminRolesFromConfigFile(".supatype/admin-config.json", "")
 	if len(roles) != 2 || roles[0] != "editor" || roles[1] != "ops" {
 		t.Fatalf("unexpected roles: %#v", roles)
 	}
@@ -83,12 +83,11 @@ func TestDevBypassRequiresLocalAddress(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("SUPATYPE_MODE", "dev")
-			t.Setenv("STUDIO_OPEN_DEV", "1")
 			t.Setenv("API_EXTERNAL_URL", tc.externalURL)
 			t.Setenv("GOTRUE_API_EXTERNAL_URL", "")
 			t.Setenv("GOTRUE_SITE_URL", "")
-			if got := DevBypass(); got != tc.want {
+			c := Config{Mode: "dev", OpenDev: true}
+			if got := c.DevBypass(); got != tc.want {
 				t.Fatalf("DevBypass() with %q = %v, want %v", tc.externalURL, got, tc.want)
 			}
 		})
@@ -98,15 +97,13 @@ func TestDevBypassRequiresLocalAddress(t *testing.T) {
 func TestDevBypassStillRequiresBothFlags(t *testing.T) {
 	t.Setenv("API_EXTERNAL_URL", "http://localhost:18473")
 
-	t.Setenv("SUPATYPE_MODE", "standalone")
-	t.Setenv("STUDIO_OPEN_DEV", "1")
-	if DevBypass() {
+	if (Config{Mode: "standalone", OpenDev: true}).DevBypass() {
 		t.Fatal("bypass must never apply outside dev mode")
 	}
-
-	t.Setenv("SUPATYPE_MODE", "dev")
-	t.Setenv("STUDIO_OPEN_DEV", "")
-	if DevBypass() {
+	if (Config{Mode: "dev", OpenDev: false}).DevBypass() {
 		t.Fatal("bypass must require the explicit opt-in flag")
+	}
+	if !(Config{Mode: "dev", OpenDev: true}).DevBypass() {
+		t.Fatal("both flags plus a local URL should enable the bypass")
 	}
 }

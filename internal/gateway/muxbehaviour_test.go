@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 // This is the behaviour lock that matters most.
@@ -63,13 +63,13 @@ func (r *rig) lastHit() (hit, bool) {
 }
 
 // rigOption adjusts the configuration a rig is built with.
-type rigOption func(*serverconf.ServerConfig)
+type rigOption func(*config.Config)
 
 // withCORSOrigins sets the managed-mode CORS allowlist. It matters because the
 // managed CORS layer only answers a preflight for an origin it recognises;
 // otherwise it passes the request down to the gates below.
 func withCORSOrigins(origins string) rigOption {
-	return func(cfg *serverconf.ServerConfig) { cfg.CorsAllowOrigins = origins }
+	return func(cfg *config.Config) { cfg.CorsAllowOrigins = origins }
 }
 
 // newRig builds the mux for a mode with every service pointed at a fake that
@@ -109,7 +109,7 @@ func newRig(t *testing.T, mode string, opts ...rigOption) *rig {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		Mode:               mode,
 		PostgRESTURL:       postgrest.URL,
 		GraphQLURL:         graphql.URL,

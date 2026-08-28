@@ -141,7 +141,7 @@ func bootstrapCaller(
 	req *http.Request,
 	c Config,
 ) (studiobootstrap.Caller, Result, bool) {
-	if DevBypass() {
+	if c.DevBypass() {
 		return studiobootstrap.Caller{AppRole: "service_role"},
 			Result{Allowed: true, Role: "dev-bypass", Sub: "dev-bypass"}, true
 	}

@@ -6,12 +6,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestRealtimeProxy_DisabledReturns404(t *testing.T) {
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		Mode:        "dev",
 		RealtimeURL: "http://127.0.0.1:4000",
 	}
@@ -37,7 +37,7 @@ func TestRealtimeProxy_ForwardsHTTPToUpstream(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	cfg := &serverconf.ServerConfig{Mode: "dev"}
+	cfg := &config.Config{Mode: "dev"}
 	manifest := &proxy.RouteManifest{
 		RealtimeEnabled: true,
 		RealtimeURL:     upstream.URL,
@@ -58,7 +58,7 @@ func TestRealtimeProxy_ForwardsHTTPToUpstream(t *testing.T) {
 }
 
 func TestResolveRealtimeUpstreamURL_prefersManifest(t *testing.T) {
-	cfg := &serverconf.ServerConfig{RealtimeURL: "http://env:4000"}
+	cfg := &config.Config{RealtimeURL: "http://env:4000"}
 	m := &proxy.RouteManifest{RealtimeURL: "http://manifest:4000"}
 	u, err := resolveRealtimeUpstreamURL(cfg, m)
 	if err != nil {

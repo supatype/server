@@ -3,8 +3,8 @@ package gateway
 import (
 	"testing"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/proxy"
-	serverconf "github.com/supatype/server/internal/serverconf"
 )
 
 // Which worker serves a hook is the difference between a hooked table working and every write to it
@@ -15,7 +15,7 @@ func TestAHookGoesToItsOwnDeploymentWhenOneIsRegistered(t *testing.T) {
 		FunctionsWorkerURL: "http://functions-worker.p.svc:8001",
 	}
 
-	got, err := hookUpstreamURL(&serverconf.ServerConfig{}, m, "moderate-post", false)
+	got, err := hookUpstreamURL(&config.Config{}, m, "moderate-post", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestAHookNeverResolvesToAFunctionOfTheSameName(t *testing.T) {
 		FunctionsWorkerURL: "http://functions-worker.p.svc:8001",
 	}
 
-	got, err := hookUpstreamURL(&serverconf.ServerConfig{}, m, "moderate-post", false)
+	got, err := hookUpstreamURL(&config.Config{}, m, "moderate-post", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestAHookNeverResolvesToAFunctionOfTheSameName(t *testing.T) {
 func TestAHookFallsBackToTheProjectWorker(t *testing.T) {
 	m := &proxy.RouteManifest{FunctionsWorkerURL: "http://functions-worker.p.svc:8001/"}
 
-	got, err := hookUpstreamURL(&serverconf.ServerConfig{}, m, "moderate-post", false)
+	got, err := hookUpstreamURL(&config.Config{}, m, "moderate-post", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestAHookFallsBackToTheProjectWorker(t *testing.T) {
 func TestNoWorkerAtAllIsAnError(t *testing.T) {
 	// Reported rather than guessed: the middleware turns this into "hook unavailable", which for a
 	// before-hook refuses the write. Inventing a URL here would make it a silent skip instead.
-	if _, err := hookUpstreamURL(&serverconf.ServerConfig{}, &proxy.RouteManifest{}, "moderate-post", false); err == nil {
+	if _, err := hookUpstreamURL(&config.Config{}, &proxy.RouteManifest{}, "moderate-post", false); err == nil {
 		t.Fatal("resolving with no worker configured returned no error")
 	}
 }
@@ -66,7 +66,7 @@ func TestNoWorkerAtAllIsAnError(t *testing.T) {
 func TestATenantManifestBeatsTheServerConfig(t *testing.T) {
 	// The bug this pins: the resolver was passed a nil request, so a managed server used the platform's
 	// file manifest for every tenant.
-	cfg := &serverconf.ServerConfig{FunctionsWorkerURL: "http://platform-worker:8001"}
+	cfg := &config.Config{FunctionsWorkerURL: "http://platform-worker:8001"}
 	m := &proxy.RouteManifest{FunctionsWorkerURL: "http://functions-worker.tenant-a.svc:8001"}
 
 	got, err := hookUpstreamURL(cfg, m, "moderate-post", false)

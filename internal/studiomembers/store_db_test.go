@@ -29,7 +29,7 @@ func setupMembership(t *testing.T, seed string) context.Context {
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run membership mutations against Postgres")
 	}
-	t.Setenv("SUPATYPE_SQL_DATABASE_URL", dsn)
+	dbpool.Configure(dsn)
 
 	ctx := context.Background()
 	pool, err := dbpool.Pool(ctx)

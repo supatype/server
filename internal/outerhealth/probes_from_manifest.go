@@ -3,13 +3,13 @@ package outerhealth
 import (
 	"strings"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 // ProbeConfigFrom builds probe targets from a route manifest plus server config
 // (same resolution rules as cmd/mux.go for static startup).
-func ProbeConfigFrom(cfg *serverconf.ServerConfig, m *proxy.RouteManifest, denoBaseURL string) ProbeConfig {
+func ProbeConfigFrom(cfg *config.Config, m *proxy.RouteManifest, denoBaseURL string) ProbeConfig {
 	if m == nil {
 		m = &proxy.RouteManifest{Schema: "public"}
 	}

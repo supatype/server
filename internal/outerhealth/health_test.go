@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 func TestAttachHealthJSON(t *testing.T) {
 	r := chi.NewRouter()
-	cfg := &serverconf.ServerConfig{Mode: "dev"}
+	cfg := &config.Config{Mode: "dev"}
 	Attach(r, cfg, "test-version", func() ProbeConfig { return ProbeConfig{PostgRESTURL: ""} })
 
 	t.Run("health", func(t *testing.T) {
@@ -61,7 +61,7 @@ func TestAttachHealth_allProbesGreen(t *testing.T) {
 	defer ts.Close()
 
 	r := chi.NewRouter()
-	cfg := &serverconf.ServerConfig{Mode: "dev"}
+	cfg := &config.Config{Mode: "dev"}
 	Attach(r, cfg, "v1", func() ProbeConfig {
 		return ProbeConfig{
 			PostgRESTURL:     ts.URL,

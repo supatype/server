@@ -335,3 +335,43 @@ func writeFile(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// directReadBudget is the number of `call`-provenance entries the surface may
+// still record: variables read with os.Getenv from inside a package rather than
+// handed to it as configuration.
+//
+// It only ever goes down. Every remaining one is an auth-service variable that
+// moves when the GOTRUE_ prefix does, so this reaches zero in the rename phase.
+// Until then this is what stops a new direct read appearing unnoticed, which is
+// exactly how twelve packages came to read their own configuration.
+const directReadBudget = 9
+
+func TestDirectEnvReadsOnlyShrink(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot, goldenPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reads []string
+	for _, line := range strings.Split(string(body), "\n") {
+		read := strings.TrimSpace(line)
+		if !strings.HasPrefix(read, "call ") {
+			continue
+		}
+		// internal/config is the one package allowed to read the environment;
+		// that is its job. The budget counts everywhere else.
+		if strings.Contains(read, "internal/config/") {
+			continue
+		}
+		reads = append(reads, read)
+	}
+	if len(reads) > directReadBudget {
+		t.Errorf("%d direct env reads, budget is %d. Take the variable through "+
+			"internal/config instead of reading it where it is used:\n  %s",
+			len(reads), directReadBudget, strings.Join(reads, "\n  "))
+	}
+	if len(reads) < directReadBudget {
+		t.Errorf("only %d direct env reads remain but the budget is still %d. "+
+			"Lower directReadBudget to %d so the ground gained is held.",
+			len(reads), directReadBudget, len(reads))
+	}
+}

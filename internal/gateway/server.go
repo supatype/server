@@ -34,6 +34,7 @@ import (
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/observability"
 	"github.com/supatype/server/internal/outerhealth"
+	"github.com/supatype/server/internal/platform"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/reloader"
 	"github.com/supatype/server/internal/utilities"
@@ -95,6 +96,10 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// Never nil, so every consumer and both shutdown paths can use it without
 	// asking whether a cache exists.
 	var resources *data.Resources
+	// Nil everywhere except a hosted tenant pod. Declared here because the drain
+	// closure below is built before it is assigned, and a nil Gateway closes and
+	// wraps as a no-op.
+	var tenantGateway *platform.Gateway
 	vkShared := valkey.Unavailable()
 
 	// fail releases what has been acquired so far and returns the bootstrap error.
@@ -374,10 +379,12 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if dm != nil {
 			dm.Stop()
 		}
+		tenantGateway.Close()
 		_ = resources.Close()
 		_ = db.Close()
 	}
 
-	handler := wrapCloudGateway(srvCfg, vkShared, outerMux)
+	tenantGateway = platform.New(srvCfg, vkShared)
+	handler := tenantGateway.Wrap(outerMux)
 	return handler, drain, nil
 }

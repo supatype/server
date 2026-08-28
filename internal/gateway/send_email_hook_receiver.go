@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/server/internal/auth"
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/hooks/v0hooks"
 	"github.com/supatype/server/internal/conf"
@@ -28,6 +27,12 @@ import (
 )
 
 const sendEmailHookMaxBody = 200 * 1024
+
+// sendEmailDeliverer is as much of the auth service as this receiver uses: it
+// templates the mail and sends it, the same path a direct send takes.
+type sendEmailDeliverer interface {
+	DeliverInboundSendEmailHook(r *http.Request, in *v0hooks.SendEmailInput) error
+}
 
 func newSendEmailHookReceiver(ah *reloader.AtomicHandler, secrets conf.HTTPHookSecrets) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,10 +63,9 @@ func newSendEmailHookReceiver(ah *reloader.AtomicHandler, secrets conf.HTTPHookS
 			return
 		}
 
-		h := ah.LoadHandler()
-		a, ok := h.(*auth.API)
-		if !ok || a == nil {
-			logrus.Error("send-email hook: atomic handler does not wrap *auth.API")
+		a, ok := ah.LoadHandler().(sendEmailDeliverer)
+		if !ok {
+			logrus.Error("send-email hook: the served handler cannot deliver mail")
 			http.Error(w, "misconfigured server", http.StatusInternalServerError)
 			return
 		}
@@ -103,8 +107,7 @@ func verifySendEmailHookSignature(payload []byte, headers http.Header, secrets c
 		}
 		lastErr = verr
 	}
-	if lastErr == nil {
-		return errors.New("no valid webhook secret")
-	}
+	// Every iteration either returned or recorded why it could not, so by here
+	// there is always something to say.
 	return lastErr
 }

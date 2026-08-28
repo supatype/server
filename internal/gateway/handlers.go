@@ -155,13 +155,9 @@ func buildGraphQL(d *Deps) http.Handler {
 
 // rewriteToGraphQLRPC points a copy of the request at the RPC endpoint.
 func rewriteToGraphQLRPC(req *http.Request) *http.Request {
+	// Clone already deep-copies the URL, so copying it again — and handling a
+	// nil one that net/http never hands a server handler — bought nothing.
 	rpc := req.Clone(req.Context())
-	if rpc.URL == nil {
-		rpc.URL = &url.URL{}
-	} else {
-		cloned := *rpc.URL
-		rpc.URL = &cloned
-	}
 	rpc.URL.Path = "/rpc/graphql"
 	rpc.URL.RawPath = ""
 	rpc.Header.Set("Content-Profile", "graphql_public")
@@ -287,17 +283,12 @@ func buildApp(d *Deps) http.Handler {
 // is about to change as the service role. See internal/modelhooks/previous.go
 // for why that is the right privilege and what the token pins.
 func newHookCallback(d *Deps) *modelhooks.Callback {
-	callback, err := modelhooks.NewCallback(
+	return modelhooks.NewCallback(
 		func(req *http.Request) string { return PostgRESTUpstream(d.ManifestFor(req), d.Config) },
 		d.RestSchema,
 		d.Config.ServiceRoleKey,
 		nil,
 	)
-	if err != nil {
-		logrus.WithError(err).Warn("mux: hook previous() callback unavailable")
-		return nil
-	}
-	return callback
 }
 
 // newHookMiddleware runs a project's schema-declared hooks and validators.

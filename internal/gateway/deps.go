@@ -115,7 +115,14 @@ func (d *Deps) RestSchema(req *http.Request) string {
 	if schema == "" {
 		schema = "public"
 	}
-	if restCfg, err := d.APIStore.Get(req.Context()); err == nil && restCfg.Rest.Schema != "" {
+	// Compared against the default, not merely against empty: the stored
+	// configuration is DefaultApiConfig when a project has never touched the
+	// admin API, and its schema is "public". Testing for non-empty therefore
+	// made that default beat the tenant's own manifest, so a managed tenant
+	// whose manifest said "app" had every REST request sent to public. This is
+	// the same rule RestMaxRows already applies.
+	if restCfg, err := d.APIStore.Get(req.Context()); err == nil &&
+		restCfg.Rest.Schema != "" && restCfg.Rest.Schema != apiconfig.DefaultApiConfig().Rest.Schema {
 		return restCfg.Rest.Schema
 	}
 	return schema

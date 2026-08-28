@@ -597,16 +597,12 @@ func TestTheRequestIDFallsBackToTheHeader(t *testing.T) {
 
 func testCallback(t *testing.T, base string, client Doer) *Callback {
 	t.Helper()
-	callback, err := NewCallback(
+	return NewCallback(
 		func(*http.Request) string { return base },
 		func(*http.Request) string { return "public" },
 		"service-role-key",
 		client,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return callback
 }
 
 // An update carries a path the hook can call to read the rows as they stand. An

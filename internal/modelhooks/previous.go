@@ -63,10 +63,9 @@ func NewCallback(
 	schemaFor func(*http.Request) string,
 	serviceRoleKey string,
 	client Doer,
-) (*Callback, error) {
+) *Callback {
 	// crypto/rand.Read does not fail; a short read would be a broken runtime
-	// rather than a condition to handle. NewCallback keeps its error result
-	// because it is a constructor a caller already checks.
+	// rather than a condition to handle.
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	if client == nil {
@@ -79,7 +78,7 @@ func NewCallback(
 		serviceRoleKey: serviceRoleKey,
 		limit:          DefaultPreviousLimit,
 		client:         client,
-	}, nil
+	}
 }
 
 // Path returns the callback path for one request's table and filter, or "" when there is nothing to

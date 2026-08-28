@@ -28,15 +28,12 @@ func callbackFor(t *testing.T, rows int) (*Callback, func() string) {
 	}))
 	t.Cleanup(rest.Close)
 
-	cb, err := NewCallback(
+	cb := NewCallback(
 		func(*http.Request) string { return rest.URL },
 		func(*http.Request) string { return "public" },
 		"service-role-key",
 		rest.Client(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return cb, func() string { return lastURL + " auth=" + lastAuth }
 }
 

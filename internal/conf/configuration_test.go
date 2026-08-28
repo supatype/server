@@ -1229,8 +1229,9 @@ func TestLoading(t *testing.T) {
 		os.Clearenv()
 		err := LoadDirectory("__invalid__")
 		require.Error(t, err)
-		require.Contains(t, err.Error(),
-			`open __invalid__: no such file or directory`)
+		// The directory it could not open, not the operating system's wording
+		// for why: Windows says "The system cannot find the file specified."
+		require.Contains(t, err.Error(), "__invalid__")
 	}
 
 	{

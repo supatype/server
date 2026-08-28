@@ -179,7 +179,7 @@ func summarizeKey(r *http.Request, vc valkey.Client, key, tableFilter string) (c
 	if raw == nil {
 		return cacheEntrySummary{}, false, nil
 	}
-	entry, err := restcache.DecodeEntryForAdmin(raw)
+	entry, err := restcache.DecodeEntry(raw)
 	if err != nil {
 		return cacheEntrySummary{}, false, nil
 	}
@@ -213,7 +213,7 @@ func getCacheEntry(w http.ResponseWriter, r *http.Request, vc valkey.Client, key
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	entry, err := restcache.DecodeEntryForAdmin(raw)
+	entry, err := restcache.DecodeEntry(raw)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "corrupt entry"})
 		return
@@ -264,7 +264,7 @@ func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix
 			if err != nil || raw == nil {
 				continue
 			}
-			entry, err := restcache.DecodeEntryForAdmin(raw)
+			entry, err := restcache.DecodeEntry(raw)
 			if err != nil {
 				continue
 			}

@@ -153,3 +153,10 @@ func (d *Deps) AdminPool() (sqlrunner.Pool, error) {
 	}
 	return pool, nil
 }
+
+// IdentityScopedTables binds the caller-dependence classification to this
+// gateway's resources, so the REST cache takes the answer as a value rather
+// than reaching for a database of its own.
+func (d *Deps) IdentityScopedTables(ctx context.Context) (map[string]bool, bool) {
+	return studiobootstrap.IdentityScopedTables(ctx, d.Resources)
+}

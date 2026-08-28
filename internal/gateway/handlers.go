@@ -100,8 +100,14 @@ func buildStudioConfig(d *Deps) http.Handler {
 func buildREST(d *Deps) http.Handler {
 	return maskedfields.Middleware(d.MaskedFields,
 		restcache.Middleware(
-			d.APIStore, d.Cache, d.Resources, d.Config,
-			d.RestSchema, d.RestMaxRows,
+			restcache.Deps{
+				Store:          d.APIStore,
+				Cache:          d.Cache,
+				Config:         d.Config,
+				SchemaFor:      d.RestSchema,
+				MaxRowsFor:     d.RestMaxRows,
+				IdentityScoped: d.IdentityScopedTables,
+			},
 			d.Hooks(restProxyHandler(d)),
 		),
 	)

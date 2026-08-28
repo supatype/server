@@ -74,11 +74,11 @@ const (
 	cbOpenDuration  = 30 * time.Second
 )
 
-// Client wraps a valkey-go client with a simple circuit breaker.
+// conn wraps a valkey-go client with a simple circuit breaker.
 // After cbFailThreshold consecutive errors the circuit opens and all
 // requests return ErrCircuitOpen immediately. After cbOpenDuration the
 // circuit enters half-open state: one probe request is allowed through.
-type Client struct {
+type conn struct {
 	vc vkgo.Client
 
 	mu          sync.Mutex
@@ -91,15 +91,18 @@ type Client struct {
 }
 
 // New creates a Client connected to addr (e.g. "127.0.0.1:6379").
-func New(addr string) (*Client, error) {
+func New(addr string) (Client, error) {
 	vc, err := vkgo.NewClient(vkgo.ClientOption{
 		InitAddress: []string{addr},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("valkey: connect %s: %w", addr, err)
 	}
-	return &Client{vc: vc}, nil
+	return &conn{vc: vc}, nil
 }
+
+// Available reports that this client talks to a real Valkey.
+func (c *conn) Available() bool { return true }
 
 // GetTenantConfig fetches the TenantConfig for ref from Valkey.
 // Key pattern: tenant:{ref}:config
@@ -107,7 +110,7 @@ func New(addr string) (*Client, error) {
 // Returns ErrCircuitOpen if the circuit breaker is open.
 // Returns (nil, nil) when the key is absent (cache miss).
 // Returns (nil, err) if the value cannot be decoded.
-func (c *Client) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, error) {
+func (c *conn) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, error) {
 	if err := c.checkCircuit(); err != nil {
 		return nil, err
 	}
@@ -144,7 +147,7 @@ func (c *Client) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig
 }
 
 // GetBytes fetches a raw byte value by key.
-func (c *Client) GetBytes(ctx context.Context, key string) ([]byte, error) {
+func (c *conn) GetBytes(ctx context.Context, key string) ([]byte, error) {
 	if err := c.checkCircuit(); err != nil {
 		return nil, err
 	}
@@ -169,7 +172,7 @@ func (c *Client) GetBytes(ctx context.Context, key string) ([]byte, error) {
 }
 
 // SetBytes stores raw bytes with an optional TTL (seconds). ttlSeconds <= 0 means no expiry.
-func (c *Client) SetBytes(ctx context.Context, key string, value []byte, ttlSeconds int) error {
+func (c *conn) SetBytes(ctx context.Context, key string, value []byte, ttlSeconds int) error {
 	if err := c.checkCircuit(); err != nil {
 		return err
 	}
@@ -190,7 +193,7 @@ func (c *Client) SetBytes(ctx context.Context, key string, value []byte, ttlSeco
 }
 
 // Del deletes one or more keys.
-func (c *Client) Del(ctx context.Context, keys ...string) error {
+func (c *conn) Del(ctx context.Context, keys ...string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -208,8 +211,36 @@ func (c *Client) Del(ctx context.Context, keys ...string) error {
 	return nil
 }
 
+// AddToExpiringSet adds member to the set at key and sets the set to expire at
+// expireAt.
+//
+// This is the monthly-active-user tally: one set per organisation per day, whose
+// members are dedupe keys. The cloud gateway used to hold its own valkey-go
+// client to issue SADD and EXPIREAT directly, which made it a third connection
+// with no circuit breaker; naming the operation lets it share this one.
+//
+// The expiry is reapplied on every add. Setting it once on creation would risk a
+// set that never expires if the process died between the two commands.
+func (c *conn) AddToExpiringSet(ctx context.Context, key, member string, expireAt time.Time) error {
+	if err := c.checkCircuit(); err != nil {
+		return err
+	}
+	rctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+	if err := c.vc.Do(rctx, c.vc.B().Sadd().Key(key).Member(member).Build()).Error(); err != nil {
+		c.recordFailure()
+		return fmt.Errorf("valkey: SADD %s: %w", key, err)
+	}
+	if err := c.vc.Do(rctx, c.vc.B().Expireat().Key(key).Timestamp(expireAt.Unix()).Build()).Error(); err != nil {
+		c.recordFailure()
+		return fmt.Errorf("valkey: EXPIREAT %s: %w", key, err)
+	}
+	c.recordSuccess()
+	return nil
+}
+
 // ScanPage scans keys matching pattern starting at cursor. count is a hint per page.
-func (c *Client) ScanPage(ctx context.Context, cursor uint64, pattern string, count int) (keys []string, next uint64, err error) {
+func (c *conn) ScanPage(ctx context.Context, cursor uint64, pattern string, count int) (keys []string, next uint64, err error) {
 	if err := c.checkCircuit(); err != nil {
 		return nil, 0, err
 	}
@@ -233,7 +264,7 @@ func (c *Client) ScanPage(ctx context.Context, cursor uint64, pattern string, co
 }
 
 // TTLSeconds returns remaining TTL for key, or -1 when no expiry, -2 when missing.
-func (c *Client) TTLSeconds(ctx context.Context, key string) (int, error) {
+func (c *conn) TTLSeconds(ctx context.Context, key string) (int, error) {
 	if err := c.checkCircuit(); err != nil {
 		return 0, err
 	}
@@ -254,11 +285,11 @@ func (c *Client) TTLSeconds(ctx context.Context, key string) (int, error) {
 }
 
 // Close shuts down the underlying Valkey client.
-func (c *Client) Close() {
+func (c *conn) Close() {
 	c.vc.Close()
 }
 
-func (c *Client) checkCircuit() error {
+func (c *conn) checkCircuit() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -277,7 +308,7 @@ func (c *Client) checkCircuit() error {
 	return ErrCircuitOpen
 }
 
-func (c *Client) recordFailure() {
+func (c *conn) recordFailure() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -289,7 +320,7 @@ func (c *Client) recordFailure() {
 	}
 }
 
-func (c *Client) recordSuccess() {
+func (c *conn) recordSuccess() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

@@ -89,16 +89,16 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	db = db.WithContext(ctx)
 
 	var (
-		wg       sync.WaitGroup
-		vkShared *valkey.Client
-		dm       *deno.Manager
+		wg sync.WaitGroup
+		dm *deno.Manager
 	)
+	// Never nil, so every consumer and both shutdown paths can call it without
+	// asking whether a cache exists.
+	vkShared := valkey.Unavailable()
 
 	// fail closes resources opened so far and returns the bootstrap error.
 	fail := func(err error) (http.Handler, func(), error) {
-		if vkShared != nil {
-			vkShared.Close()
-		}
+		vkShared.Close()
 		_ = db.Close()
 		return nil, nil, err
 	}
@@ -151,20 +151,24 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	vkAddr := strings.TrimSpace(srvCfg.ValkeyAddr)
 	managed := strings.TrimSpace(srvCfg.Mode) == "managed"
 
+	// One Valkey client for the whole process. When none is configured, or when
+	// a non-managed deployment cannot reach the one it named, callers keep the
+	// unavailable client rather than a nil pointer they each have to remember to
+	// check.
 	if vkAddr != "" {
 		vc, vkErr := valkey.New(vkAddr)
 		if vkErr != nil {
 			if managed {
 				return fail(fmt.Errorf("serve: Valkey connect failed (managed mode): %w", vkErr))
 			}
-			logrus.WithError(vkErr).Warn("serve: Valkey connect failed — REST cache will bypass")
+			logrus.WithError(vkErr).Warn("serve: Valkey connect failed, REST cache will bypass")
 		} else {
 			vkShared = vc
 		}
 	}
 
-	mergeFromValkey := managed && vkShared != nil && ref != ""
-	perTenantManifest := managed && vkShared != nil && ref == ""
+	mergeFromValkey := managed && vkShared.Available() && ref != ""
+	perTenantManifest := managed && vkShared.Available() && ref == ""
 
 	var fileManifestAt atomic.Value
 	fileManifestAt.Store(manifest)
@@ -381,12 +385,10 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if dm != nil {
 			dm.Stop()
 		}
-		if vkShared != nil {
-			vkShared.Close()
-		}
+		vkShared.Close()
 		_ = db.Close()
 	}
 
-	handler := wrapCloudGateway(srvCfg, outerMux)
+	handler := wrapCloudGateway(srvCfg, vkShared, outerMux)
 	return handler, drain, nil
 }

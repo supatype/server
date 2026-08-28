@@ -21,7 +21,7 @@ var validSchema = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$`)
 
 // Handler returns a mux covering all /admin/v1 routes.
 // Mount it with r.Mount("/admin/v1", Handler(store)).
-func Handler(store apiconfig.Store, cfg *config.Config, vc *valkey.Client) http.Handler {
+func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/config/rest", func(w http.ResponseWriter, r *http.Request) {

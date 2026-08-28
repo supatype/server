@@ -69,7 +69,7 @@ func buildOuterMux(
 	authHandler http.Handler,
 	denoManager *deno.Manager,
 	version string,
-	sharedValkey *valkey.Client,
+	sharedValkey valkey.Client,
 	sendEmailHook http.Handler,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -87,17 +87,16 @@ func buildOuterMux(
 
 	// ── API config store ──────────────────────────────────────────────────────
 	apiStore := apiconfig.NewFileStore(cfg.ApiConfigPath)
-	valkeyClient := sharedValkey
-	if valkeyClient == nil && strings.TrimSpace(cfg.ValkeyAddr) != "" {
-		if client, err := valkey.New(cfg.ValkeyAddr); err != nil {
-			logrus.WithError(err).Warn("mux: failed to init valkey client")
-		} else {
-			valkeyClient = client
-		}
+
+	// A nil interface has no methods, so a caller that passes nil would panic on
+	// the first Available() rather than behave as "no cache". Normalising here,
+	// once, is what lets every consumer below drop its own nil check.
+	if sharedValkey == nil {
+		sharedValkey = valkey.Unavailable()
 	}
 
 	// ── Admin API ─────────────────────────────────────────────────────────────
-	r.Mount("/admin/v1", http.StripPrefix("/admin/v1", admin.Handler(apiStore, cfg, valkeyClient)))
+	r.Mount("/admin/v1", http.StripPrefix("/admin/v1", admin.Handler(apiStore, cfg, sharedValkey)))
 	logrus.Info("mux: admin API mounted at /admin/v1")
 
 	// ── Studio config ─────────────────────────────────────────────────────────
@@ -243,7 +242,7 @@ func buildOuterMux(
 	// caller's verdicts.
 	r.Mount("/rest/v1", http.StripPrefix("/rest/v1", maskedfields.Middleware(
 		restcache.Middleware(
-			apiStore, valkeyClient, cfg, restSchemaFor, restMaxRowsFor, hooks(restProxy),
+			apiStore, sharedValkey, cfg, restSchemaFor, restMaxRowsFor, hooks(restProxy),
 		),
 	)))
 	logrus.Info("mux: PostgREST proxy mounted at /rest/v1")

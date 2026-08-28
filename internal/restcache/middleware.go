@@ -17,7 +17,7 @@ import (
 // Middleware caches opt-in GET/HEAD /rest/v1 responses in Valkey.
 func Middleware(
 	store apiconfig.Store,
-	vk *valkey.Client,
+	vk valkey.Client,
 	cfg *config.Config,
 	schemaFor func(*http.Request) string,
 	maxRowsFor func(*http.Request) string,
@@ -156,7 +156,7 @@ func Middleware(
 	})
 }
 
-func tryServeHit(ctx context.Context, vk *valkey.Client, w http.ResponseWriter, req *http.Request, key string, ttl int) (served bool, ok bool) {
+func tryServeHit(ctx context.Context, vk valkey.Client, w http.ResponseWriter, req *http.Request, key string, ttl int) (served bool, ok bool) {
 	raw, err := vk.GetBytes(ctx, key)
 	if err != nil {
 		logrus.WithError(err).Warn("restcache: valkey GET failed")
@@ -188,7 +188,7 @@ func tryServeHit(ctx context.Context, vk *valkey.Client, w http.ResponseWriter, 
 	return true, true
 }
 
-func storeEntry(ctx context.Context, vk *valkey.Client, key string, entry Entry, ttl int) error {
+func storeEntry(ctx context.Context, vk valkey.Client, key string, entry Entry, ttl int) error {
 	raw, err := encodeEntry(entry)
 	if err != nil {
 		return err

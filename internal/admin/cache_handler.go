@@ -35,8 +35,8 @@ type cacheEntryDetail struct {
 	BodyJSON    json.RawMessage `json:"body_json,omitempty"`
 }
 
-func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc *valkey.Client) {
-	if vc == nil {
+func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc valkey.Client) {
+	if !vc.Available() {
 		mux.HandleFunc("/cache", cacheUnavailable)
 		mux.HandleFunc("/cache/", cacheUnavailable)
 		return
@@ -119,7 +119,7 @@ func tenantCachePrefix(cfg *config.Config, r *http.Request) string {
 	return restcache.RestKeyPrefix(ref)
 }
 
-func listCacheEntries(w http.ResponseWriter, r *http.Request, vc *valkey.Client, prefix string) {
+func listCacheEntries(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix string) {
 	tableFilter := strings.TrimSpace(r.URL.Query().Get("table"))
 	cursor, _ := strconv.ParseUint(r.URL.Query().Get("cursor"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -171,7 +171,7 @@ func listCacheEntries(w http.ResponseWriter, r *http.Request, vc *valkey.Client,
 	})
 }
 
-func summarizeKey(r *http.Request, vc *valkey.Client, key, tableFilter string) (cacheEntrySummary, bool, error) {
+func summarizeKey(r *http.Request, vc valkey.Client, key, tableFilter string) (cacheEntrySummary, bool, error) {
 	raw, err := vc.GetBytes(r.Context(), key)
 	if err != nil {
 		return cacheEntrySummary{}, false, err
@@ -203,7 +203,7 @@ func summarizeKey(r *http.Request, vc *valkey.Client, key, tableFilter string) (
 	}, true, nil
 }
 
-func getCacheEntry(w http.ResponseWriter, r *http.Request, vc *valkey.Client, key string) {
+func getCacheEntry(w http.ResponseWriter, r *http.Request, vc valkey.Client, key string) {
 	raw, err := vc.GetBytes(r.Context(), key)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -245,7 +245,7 @@ func getCacheEntry(w http.ResponseWriter, r *http.Request, vc *valkey.Client, ke
 	writeJSON(w, http.StatusOK, detail)
 }
 
-func flushCache(w http.ResponseWriter, r *http.Request, vc *valkey.Client, prefix, _ string) {
+func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix, _ string) {
 	tableFilter := strings.TrimSpace(r.URL.Query().Get("table"))
 	var cursor uint64
 	for {

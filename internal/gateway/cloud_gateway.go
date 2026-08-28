@@ -16,7 +16,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
-	vkgo "github.com/valkey-io/valkey-go"
+	"github.com/supatype/server/internal/data/valkey"
 )
 
 // Cloud gateway wrap: every-request activity + auth MAU + non-prod robots.
@@ -84,29 +84,10 @@ func isPrefetch(r *http.Request) bool {
 		strings.EqualFold(r.Header.Get("Purpose"), "prefetch")
 }
 
-func wrapCloudGateway(serviceCfg *config.Config, next http.Handler) http.Handler {
+func wrapCloudGateway(serviceCfg *config.Config, vk valkey.Client, next http.Handler) http.Handler {
 	cfg := cloudGatewayCfgFrom(serviceCfg)
 	if !cfg.enabled {
 		return next
-	}
-
-	var (
-		vk     vkgo.Client
-		vkOnce sync.Once
-	)
-	getVK := func() vkgo.Client {
-		vkOnce.Do(func() {
-			if cfg.valkeyAddr == "" {
-				return
-			}
-			c, err := vkgo.NewClient(vkgo.ClientOption{InitAddress: []string{cfg.valkeyAddr}})
-			if err != nil {
-				logrus.WithError(err).Warn("cloud-gateway: valkey client failed")
-				return
-			}
-			vk = c
-		})
-		return vk
 	}
 
 	orgCache := newCloudOrgCache(cfg)
@@ -154,7 +135,7 @@ func wrapCloudGateway(serviceCfg *config.Config, next http.Handler) http.Handler
 		if user == nil {
 			return
 		}
-		go emitMAU(cfg, getVK, orgCache, cfg.tenantID, user)
+		go emitMAU(cfg, vk, orgCache, cfg.tenantID, user)
 	})
 }
 
@@ -248,7 +229,7 @@ func mauDedupeKey(emailSalt, projectRef string, user map[string]any) string {
 	return "local:" + projectRef + ":" + id
 }
 
-func emitMAU(cfg cloudGatewayCfg, getVK func() vkgo.Client, org *cloudOrgCache, tenantID string, user map[string]any) {
+func emitMAU(cfg cloudGatewayCfg, vk valkey.Client, org *cloudOrgCache, tenantID string, user map[string]any) {
 	if tenantID == "" {
 		return
 	}
@@ -267,15 +248,13 @@ func emitMAU(cfg cloudGatewayCfg, getVK func() vkgo.Client, org *cloudOrgCache, 
 	day := time.Now().UTC().Format("2006-01-02")
 	dk := mauDedupeKey(cfg.emailSalt, projectRef, user)
 	key := "mau:org:" + orgID + ":d:" + day
-	vk := getVK()
-	if vk == nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
+	// Forty days, so a month's rollup can still read the day after it closes.
 	exp := time.Now().UTC().AddDate(0, 0, 40)
-	_ = vk.Do(ctx, vk.B().Sadd().Key(key).Member(dk).Build()).Error()
-	_ = vk.Do(ctx, vk.B().Expireat().Key(key).Timestamp(exp.Unix()).Build()).Error()
+	if err := vk.AddToExpiringSet(ctx, key, dk, exp); err != nil {
+		logrus.WithError(err).Debug("cloud-gateway: MAU tally not recorded")
+	}
 }
 
 type cloudOrgCache struct {

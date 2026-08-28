@@ -12,6 +12,9 @@ supatype-server
 supatype-server.exe
 supatype-server.exe~
 supatype-server-linux
+supatype-server-linux-arm64
+supatype-server-linux-arm64-strip
+supatype-server-darwin-arm64
 coverage.out
 
 .DS_Store

@@ -244,7 +244,7 @@ func TestEnvRoundTrip(t *testing.T) {
 		if prefix != "" {
 			expected = ".env.hello.local"
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, expected)) //nolint:gosec // this test's own temp dir
+		raw, err := os.ReadFile(filepath.Join(dir, expected)) // #nosec G304 -- this test's own temp dir
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -288,7 +288,7 @@ func TestSettingAnExistingKeyReplacesIt(t *testing.T) {
 	call(t, handler, http.MethodPost, "/env", `{"key":"API_KEY","value":"first"}`)
 	call(t, handler, http.MethodPost, "/env", `{"key":"API_KEY","value":"second"}`)
 
-	raw, err := os.ReadFile(filepath.Join(dir, ".env.local")) //nolint:gosec // this test's own temp dir
+	raw, err := os.ReadFile(filepath.Join(dir, ".env.local")) // #nosec G304 -- this test's own temp dir
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,4 +624,34 @@ func withKey(req *http.Request, key string) *http.Request {
 	routeCtx := chi.RouteContext(req.Context())
 	routeCtx.URLParams.Add("key", key)
 	return req
+}
+
+// A directory the server cannot write into answers, rather than losing the
+// variable silently. The env file is written through a root, so both the root
+// and the file within it can refuse.
+func TestSettingAVariableThatCannotBeWritten(t *testing.T) {
+	cfg := &config.Config{Mode: "standalone", ServiceRoleKey: serviceKey}
+
+	missing := Handler(cfg, filepath.Join(t.TempDir(), "no-such-functions-dir"), nil)
+	if rec := call(t, missing, http.MethodPost, "/env", `{"key":"K","value":"v"}`); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a functions directory that is not there: status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// An env file that can be read and not written: the read succeeds and the
+	// write is what fails, which is the branch a directory in its place cannot
+	// reach because the read fails first.
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env.local")
+	if err := os.WriteFile(path, []byte("EXISTING=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	readOnly := Handler(cfg, dir, nil)
+	if rec := call(t, readOnly, http.MethodPost, "/env", `{"key":"K","value":"v"}`); rec.Code != http.StatusInternalServerError {
+		t.Errorf("an env file that cannot be written: status = %d (%s)", rec.Code, rec.Body.String())
+	}
 }

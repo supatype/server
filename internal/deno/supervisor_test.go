@@ -59,8 +59,15 @@ func childCommand(t *testing.T, counter *atomic.Int64) {
 		if counter != nil {
 			counter.Add(1)
 		}
-		return exec.CommandContext(ctx, os.Args[0], "-test.run=TestChildProcess")
+		return selfCommand(ctx)
 	}
+}
+
+// selfCommand re-runs this test binary as the child, which is how the
+// supervisor is exercised against a real subprocess without Deno installed.
+func selfCommand(ctx context.Context) *exec.Cmd {
+	// #nosec G204,G702 -- the only argument is this test binary's own path.
+	return exec.CommandContext(ctx, os.Args[0], "-test.run=TestChildProcess")
 }
 
 // manager returns a Manager whose paths pass validation and whose child, when
@@ -305,7 +312,7 @@ func TestWatchAddsTheFlag(t *testing.T) {
 		original := command
 		command = func(ctx context.Context, path string, args ...string) *exec.Cmd {
 			got = args
-			return exec.CommandContext(ctx, os.Args[0], "-test.run=TestChildProcess")
+			return selfCommand(ctx)
 		}
 
 		entry := filepath.Join(t.TempDir(), "router.ts")
@@ -434,7 +441,7 @@ func TestRunReportsAPipeItCannotOpen(t *testing.T) {
 	} {
 		original := command
 		command = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestChildProcess")
+			cmd := selfCommand(ctx)
 			prepare(cmd)
 			return cmd
 		}

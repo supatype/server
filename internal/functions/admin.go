@@ -225,12 +225,24 @@ func functionEnvFile(dir string) envFile {
 	}
 }
 
-func readEnvFile(path string) (map[string]string, error) {
+// envRoot opens the directory an env file lives in, so both the read and the
+// write are scoped to it. The file name carries a function name that arrived on
+// a request, and the validation the route applies to it is the first line of
+// defence rather than the only one.
+func envRoot(path string) (*os.Root, string, error) {
 	dir, name := filepath.Split(filepath.Clean(path))
 	if dir == "" {
 		dir = "."
 	}
 	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	return root, name, nil
+}
+
+func readEnvFile(path string) (map[string]string, error) {
+	root, name, err := envRoot(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[string]string{}, nil
@@ -275,7 +287,21 @@ func writeEnvFile(path string, vars map[string]string) error {
 		sb.WriteString(vars[k])
 		sb.WriteByte('\n')
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0600)
+
+	root, name, err := envRoot(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString(sb.String())
+	return errors.Join(writeErr, f.Close())
 }
 
 func sortedKeys(vars map[string]string) []string {

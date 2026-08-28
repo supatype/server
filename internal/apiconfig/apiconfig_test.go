@@ -158,7 +158,7 @@ func TestSetWritesIndentedJSONThatOnlyTheOwnerCanRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(path) //nolint:gosec // the path is this test's own temp dir
+	raw, err := os.ReadFile(path) // #nosec G304 -- this test's own temp dir
 	if err != nil {
 		t.Fatal(err)
 	}

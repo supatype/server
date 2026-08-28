@@ -56,7 +56,7 @@ func buildAdminAPI(d *Deps) http.Handler {
 }
 
 func buildSQLRunner(d *Deps) http.Handler {
-	return sqlrunner.Handler(d.Config, d.Resources)
+	return sqlrunner.Handler(d.Config, d.AdminPool)
 }
 
 func buildStudioMembers(d *Deps) http.Handler { return studioauth.MembersAPI(d.Studio) }
@@ -98,7 +98,7 @@ func buildStudioConfig(d *Deps) http.Handler {
 // write reaches them before PostgREST sees it, which is the only place a hook
 // can still reject or rewrite one.
 func buildREST(d *Deps) http.Handler {
-	return maskedfields.Middleware(d.Resources,
+	return maskedfields.Middleware(d.MaskedFields,
 		restcache.Middleware(
 			d.APIStore, d.Cache, d.Resources, d.Config,
 			d.RestSchema, d.RestMaxRows,

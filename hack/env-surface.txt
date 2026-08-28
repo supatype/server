@@ -810,7 +810,7 @@ SUPATYPE_MAILER_URLPATHS_RECOVERY
 SUPATYPE_MANAGED_PROJECT_REF
     struct internal/config.Config
 SUPATYPE_MANIFEST_PATH
-    call internal/config/dotenv.go:69
+    call internal/config/dotenv.go:77
     struct internal/config.Config
 SUPATYPE_METRICS_ENABLED
     struct internal/conf.GlobalConfiguration

@@ -49,21 +49,58 @@ type Client struct {
 	// configured does.
 	Unavailable bool
 
+	// SetErrAfter makes SetBytes fail once this many have succeeded, which is
+	// how a write that fails partway through a multi-step operation is
+	// arranged. Zero means never.
+	SetErrAfter int
+
+	// ScanPageSize caps how many keys one ScanPage returns, so a consumer's
+	// paging can be exercised. Zero means everything in one page.
+	ScanPageSize int
+
+	// vanishing are keys a scan returns and a read does not find, which is what
+	// a key expiring between the two looks like. Real Valkey allows it, and a
+	// consumer that assumes otherwise dereferences nothing.
+	vanishing map[string]bool
+
 	// Counts, for asserting that a cache was consulted rather than bypassed.
 	Gets, Sets, Dels int
+
+	// cursors maps a scan cursor to the last key that page returned.
+	cursors    map[uint64]string
+	nextCursor uint64
 }
 
 type entry struct {
-	value    []byte
+	value []byte
+	// expireAt is zero when the value does not expire, which is what a
+	// ttlSeconds of zero or less means to SetBytes. Storing now+0 instead made
+	// every such value already expired, so a test that wrote one and read it
+	// back saw a miss.
 	expireAt time.Time
+}
+
+// expiry turns a TTL in seconds into an instant, or zero for no expiry.
+func expiry(ttlSeconds int) time.Time {
+	if ttlSeconds <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+}
+
+// live reports whether an entry is still readable.
+func (e entry) live() bool {
+	return e.expireAt.IsZero() || time.Now().Before(e.expireAt)
 }
 
 // New returns an empty client.
 func New() *Client {
 	return &Client{
-		values:  map[string]entry{},
-		tenants: map[string]*valkey.TenantConfig{},
-		sets:    map[string]map[string]time.Time{},
+		values:    map[string]entry{},
+		tenants:   map[string]*valkey.TenantConfig{},
+		sets:      map[string]map[string]time.Time{},
+		cursors:   map[uint64]string{},
+		vanishing: map[string]bool{},
 	}
 }
 
@@ -81,7 +118,16 @@ func (c *Client) WithTenant(ref string, cfg *valkey.TenantConfig) *Client {
 func (c *Client) Put(key string, value []byte, ttlSeconds int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.values[key] = entry{value: value, expireAt: time.Now().Add(time.Duration(ttlSeconds) * time.Second)}
+	c.values[key] = entry{value: value, expireAt: expiry(ttlSeconds)}
+}
+
+// PutVanishing stores a key a scan will return and a read will not find, which
+// is a key that expired between the two.
+func (c *Client) PutVanishing(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.values[key] = entry{value: []byte("gone")}
+	c.vanishing[key] = true
 }
 
 // Keys returns every live key, sorted.
@@ -90,8 +136,10 @@ func (c *Client) Keys() []string {
 	defer c.mu.Unlock()
 
 	keys := make([]string, 0, len(c.values))
-	for key := range c.values {
-		keys = append(keys, key)
+	for key, value := range c.values {
+		if value.live() {
+			keys = append(keys, key)
+		}
 	}
 	sort.Strings(keys)
 	return keys
@@ -129,7 +177,7 @@ func (c *Client) GetBytes(_ context.Context, key string) ([]byte, error) {
 		return nil, c.GetErr
 	}
 	found, ok := c.values[key]
-	if !ok || time.Now().After(found.expireAt) {
+	if !ok || !found.live() || c.vanishing[key] {
 		return nil, nil
 	}
 	return found.value, nil
@@ -142,7 +190,10 @@ func (c *Client) SetBytes(_ context.Context, key string, value []byte, ttlSecond
 	if c.SetErr != nil {
 		return c.SetErr
 	}
-	c.values[key] = entry{value: value, expireAt: time.Now().Add(time.Duration(ttlSeconds) * time.Second)}
+	if c.SetErrAfter > 0 && c.Sets > c.SetErrAfter {
+		return ErrFailed
+	}
+	c.values[key] = entry{value: value, expireAt: expiry(ttlSeconds)}
 	return nil
 }
 
@@ -159,27 +210,46 @@ func (c *Client) Del(_ context.Context, keys ...string) error {
 	return nil
 }
 
-// ScanPage returns every matching key in one page, which is a legitimate SCAN
-// implementation: the cursor contract allows any page size.
+// ScanPage returns matching keys, one page at a time when ScanPageSize says so.
 func (c *Client) ScanPage(_ context.Context, cursor uint64, pattern string, _ int) ([]string, uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.ScanErr != nil {
 		return nil, 0, c.ScanErr
 	}
-	if cursor != 0 {
-		return nil, 0, nil
-	}
-
 	prefix := strings.TrimSuffix(pattern, "*")
 	var matched []string
-	for key := range c.values {
-		if strings.HasPrefix(key, prefix) {
+	for key, value := range c.values {
+		if value.live() && strings.HasPrefix(key, prefix) {
 			matched = append(matched, key)
 		}
 	}
 	sort.Strings(matched)
-	return matched, 0, nil
+
+	// The cursor remembers the last key handed out, not an index into the match
+	// set. Real Valkey guarantees that a key present throughout the scan is
+	// returned at least once even while other keys are deleted, and callers
+	// rely on that: the flush endpoint deletes as it pages. An index-based
+	// cursor would skip keys as the set shrank under it, and the consumer would
+	// look wrong when the fake was.
+	after := c.cursors[cursor]
+	remaining := matched[:0:0]
+	for _, key := range matched {
+		if after == "" || key > after {
+			remaining = append(remaining, key)
+		}
+	}
+	if len(remaining) == 0 {
+		return nil, 0, nil
+	}
+	if c.ScanPageSize <= 0 || c.ScanPageSize >= len(remaining) {
+		return remaining, 0, nil
+	}
+
+	page := remaining[:c.ScanPageSize]
+	c.nextCursor++
+	c.cursors[c.nextCursor] = page[len(page)-1]
+	return page, c.nextCursor, nil
 }
 
 func (c *Client) TTLSeconds(_ context.Context, key string) (int, error) {
@@ -191,6 +261,9 @@ func (c *Client) TTLSeconds(_ context.Context, key string) (int, error) {
 	found, ok := c.values[key]
 	if !ok {
 		return -2, nil // Valkey's answer for a key that does not exist.
+	}
+	if found.expireAt.IsZero() {
+		return -1, nil // And for one with no expiry.
 	}
 	return int(time.Until(found.expireAt).Seconds()), nil
 }

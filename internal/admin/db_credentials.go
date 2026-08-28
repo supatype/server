@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -49,10 +48,10 @@ func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 		case "managed":
 			meta, err := loadMeta(r.Context(), vc, tenantRef(r))
 			if err != nil {
-				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
+				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			utilities.WriteJSON(w, 200, statusResponse{
+			utilities.WriteJSON(w, http.StatusOK, statusResponse{
 				Mode:              "cloud",
 				PasswordStatus:    meta.Status,
 				CanReveal:         meta.Status == "available_once",
@@ -61,7 +60,7 @@ func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 				FirstViewConsumed: meta.FirstViewConsumed,
 			})
 		case "standalone":
-			utilities.WriteJSON(w, 200, statusResponse{
+			utilities.WriteJSON(w, http.StatusOK, statusResponse{
 				Mode:           "self_host",
 				PasswordStatus: "operator_managed",
 				CanReveal:      cfg.AllowSecretReadback && cfg.PostgresPassword != "",
@@ -69,7 +68,7 @@ func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 				Message:        "Database password is managed by your deployment secrets.",
 			})
 		default:
-			utilities.WriteJSON(w, 200, statusResponse{
+			utilities.WriteJSON(w, http.StatusOK, statusResponse{
 				Mode:           "local",
 				PasswordStatus: "available",
 				CanReveal:      true,
@@ -87,43 +86,45 @@ func credentialFirstViewHandler(cfg *config.Config, vc valkey.Client) http.Handl
 			ref := tenantRef(r)
 			meta, err := loadMeta(r.Context(), vc, ref)
 			if err != nil {
-				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
+				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 			if meta.Status != "available_once" {
-				utilities.WriteJSON(w, 409, map[string]string{"error": "password is not available for first-view"})
+				writeErr(w, http.StatusConflict, "password is not available for first-view")
 				return
 			}
 			pw, err := loadManagedSecret(r.Context(), vc, cfg.DBCredentialsKEK, ref, meta.Generation)
 			if err != nil {
-				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
+				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 			meta.Status = "hidden"
 			meta.FirstViewConsumed = time.Now().UTC().Format(time.RFC3339)
 			if err := saveMeta(r.Context(), vc, ref, meta); err != nil {
-				utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
+				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			// Best effort. The metadata already says hidden, so a second first-view
+			// is refused whether or not the ciphertext goes.
 			_ = vc.Del(r.Context(), secretKey(ref, meta.Generation))
-			utilities.WriteJSON(w, 200, map[string]string{"password": pw})
+			utilities.WriteJSON(w, http.StatusOK, map[string]string{"password": pw})
 		case "standalone":
 			if !cfg.AllowSecretReadback {
-				utilities.WriteJSON(w, 403, map[string]string{"error": "secret readback disabled"})
+				writeErr(w, http.StatusForbidden, "secret readback disabled")
 				return
 			}
 			pw := cfg.PostgresPassword
 			if pw == "" {
-				utilities.WriteJSON(w, 404, map[string]string{"error": "POSTGRES_PASSWORD is not set"})
+				writeErr(w, http.StatusNotFound, "POSTGRES_PASSWORD is not set")
 				return
 			}
-			utilities.WriteJSON(w, 200, map[string]string{"password": pw})
+			utilities.WriteJSON(w, http.StatusOK, map[string]string{"password": pw})
 		default:
 			pw := cfg.PostgresPassword
 			if pw == "" {
 				pw = "postgres"
 			}
-			utilities.WriteJSON(w, 200, map[string]string{"password": pw})
+			utilities.WriteJSON(w, http.StatusOK, map[string]string{"password": pw})
 		}
 	}
 }
@@ -131,36 +132,31 @@ func credentialFirstViewHandler(cfg *config.Config, vc valkey.Client) http.Handl
 func credentialRotateHandler(cfg *config.Config, vc valkey.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Mode != "managed" {
-			utilities.WriteJSON(w, 501, map[string]string{"error": "rotation is managed by your runtime/environment in this mode"})
+			writeErr(w, http.StatusNotImplemented, "rotation is managed by your runtime/environment in this mode")
 			return
 		}
 		ref := tenantRef(r)
 		meta, err := loadMeta(r.Context(), vc, ref)
 		if err != nil {
-			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// loadMeta already floors the generation at 1, so incrementing cannot
+		// produce a value below it.
 		meta.Generation++
-		if meta.Generation < 1 {
-			meta.Generation = 1
-		}
-		newPassword, err := randomPassword(32)
-		if err != nil {
-			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
+		newPassword := randomPassword(32)
 		if err := saveManagedSecret(r.Context(), vc, cfg.DBCredentialsKEK, ref, meta.Generation, newPassword); err != nil {
-			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		meta.Status = "available_once"
 		meta.LastRotatedAt = time.Now().UTC().Format(time.RFC3339)
 		meta.FirstViewConsumed = ""
 		if err := saveMeta(r.Context(), vc, ref, meta); err != nil {
-			utilities.WriteJSON(w, 500, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		utilities.WriteJSON(w, 200, map[string]any{
+		utilities.WriteJSON(w, http.StatusOK, map[string]any{
 			"password_status": "available_once",
 			"generation":      meta.Generation,
 			"last_rotated_at": meta.LastRotatedAt,
@@ -168,12 +164,23 @@ func credentialRotateHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 	}
 }
 
+// marshalJSON is a seam. dbCredMeta and encryptedSecret are both plain data, so
+// neither can fail to encode and the error branches below are unreachable in
+// production. They are kept because writing a truncated record would lose the
+// only note of which generation a tenant's password belongs to.
+var marshalJSON = json.Marshal
+
 func loadMeta(ctx context.Context, vc valkey.Client, ref string) (dbCredMeta, error) {
 	if !vc.Available() {
 		return dbCredMeta{}, valkey.ErrUnavailable
 	}
 	data, err := vc.GetBytes(ctx, metaKey(ref))
-	if err != nil || len(data) == 0 {
+	if err != nil {
+		return dbCredMeta{}, fmt.Errorf("read credentials metadata: %w", err)
+	}
+	// Nothing stored is a tenant that has never had a password generated, which
+	// is the state "pending" describes.
+	if len(data) == 0 {
 		return dbCredMeta{Status: "pending", Generation: 1}, nil
 	}
 	var meta dbCredMeta
@@ -190,7 +197,7 @@ func loadMeta(ctx context.Context, vc valkey.Client, ref string) (dbCredMeta, er
 }
 
 func saveMeta(ctx context.Context, vc valkey.Client, ref string, meta dbCredMeta) error {
-	payload, err := json.Marshal(meta)
+	payload, err := marshalJSON(meta)
 	if err != nil {
 		return err
 	}
@@ -202,7 +209,7 @@ func saveManagedSecret(ctx context.Context, vc valkey.Client, kekBase64, ref str
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(secret)
+	data, err := marshalJSON(secret)
 	if err != nil {
 		return err
 	}
@@ -211,7 +218,10 @@ func saveManagedSecret(ctx context.Context, vc valkey.Client, kekBase64, ref str
 
 func loadManagedSecret(ctx context.Context, vc valkey.Client, kekBase64, ref string, generation int) (string, error) {
 	data, err := vc.GetBytes(ctx, secretKey(ref, generation))
-	if err != nil || len(data) == 0 {
+	if err != nil {
+		return "", fmt.Errorf("read managed password for generation %d: %w", generation, err)
+	}
+	if len(data) == 0 {
 		return "", fmt.Errorf("managed password not found for generation %d", generation)
 	}
 	var secret encryptedSecret
@@ -221,25 +231,37 @@ func loadManagedSecret(ctx context.Context, vc valkey.Client, kekBase64, ref str
 	return decryptManagedSecret(kekBase64, ref, generation, secret)
 }
 
-func encryptManagedSecret(kekBase64, ref string, generation int, password string) (encryptedSecret, error) {
+// aeadFor builds the cipher both directions use, from the key-encryption key
+// the deployment configures.
+func aeadFor(kekBase64 string) (cipher.AEAD, error) {
 	key, err := base64.StdEncoding.DecodeString(kekBase64)
 	if err != nil || len(key) != 32 {
-		return encryptedSecret{}, errors.New("SUPATYPE_DB_CREDENTIALS_KEK must be base64-encoded 32-byte key")
+		return nil, errors.New("SUPATYPE_DB_CREDENTIALS_KEK must be base64-encoded 32-byte key")
 	}
-	block, err := aes.NewCipher(key)
+	// A 32-byte key is always a valid AES-256 key, and a valid block always
+	// makes a GCM, so neither can fail once the length above is checked.
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	return gcm, nil
+}
+
+// aad binds a ciphertext to the tenant and generation it was made for, so a
+// secret cannot be moved between tenants or replayed from an older rotation.
+func aad(ref string, generation int) []byte {
+	return []byte(fmt.Sprintf("%s:%d", ref, generation))
+}
+
+func encryptManagedSecret(kekBase64, ref string, generation int, password string) (encryptedSecret, error) {
+	gcm, err := aeadFor(kekBase64)
 	if err != nil {
 		return encryptedSecret{}, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return encryptedSecret{}, err
-	}
+	// crypto/rand.Read does not fail, for the same reason randomPassword does
+	// not check it: a short read would be a broken runtime, not a condition to
+	// handle here.
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return encryptedSecret{}, err
-	}
-	aad := []byte(fmt.Sprintf("%s:%d", ref, generation))
-	cipherText := gcm.Seal(nil, nonce, []byte(password), aad)
+	_, _ = rand.Read(nonce)
+	cipherText := gcm.Seal(nil, nonce, []byte(password), aad(ref, generation))
 	return encryptedSecret{
 		Algorithm:  "aes-256-gcm",
 		KeyVersion: 1,
@@ -249,9 +271,9 @@ func encryptManagedSecret(kekBase64, ref string, generation int, password string
 }
 
 func decryptManagedSecret(kekBase64, ref string, generation int, secret encryptedSecret) (string, error) {
-	key, err := base64.StdEncoding.DecodeString(kekBase64)
-	if err != nil || len(key) != 32 {
-		return "", errors.New("SUPATYPE_DB_CREDENTIALS_KEK must be base64-encoded 32-byte key")
+	gcm, err := aeadFor(kekBase64)
+	if err != nil {
+		return "", err
 	}
 	nonce, err := base64.StdEncoding.DecodeString(secret.Nonce)
 	if err != nil {
@@ -261,33 +283,35 @@ func decryptManagedSecret(kekBase64, ref string, generation int, secret encrypte
 	if err != nil {
 		return "", err
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
+	// Checked rather than left to Open, which panics on a wrong-length nonce
+	// instead of returning an error. A stored secret that was truncated, or
+	// written by something else, would otherwise take down the request.
+	if len(nonce) != gcm.NonceSize() {
+		return "", errors.New("failed to decrypt managed password")
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	aad := []byte(fmt.Sprintf("%s:%d", ref, generation))
-	plain, err := gcm.Open(nil, nonce, cipherText, aad)
+	plain, err := gcm.Open(nil, nonce, cipherText, aad(ref, generation))
 	if err != nil {
 		return "", errors.New("failed to decrypt managed password")
 	}
 	return string(plain), nil
 }
 
-func randomPassword(n int) (string, error) {
+// randomPassword returns n characters from an alphabet that survives being
+// pasted into a connection string.
+//
+// It returns no error because it cannot fail: crypto/rand.Read does not return
+// one, and a short read would be a broken runtime rather than a condition a
+// caller could do anything about.
+func randomPassword(n int) string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-	buf := make([]byte, n)
 	rnd := make([]byte, n)
-	if _, err := io.ReadFull(rand.Reader, rnd); err != nil {
-		return "", err
-	}
+	_, _ = rand.Read(rnd)
+
+	buf := make([]byte, n)
 	for i := range buf {
 		buf[i] = alphabet[int(rnd[i])%len(alphabet)]
 	}
-	return string(buf), nil
+	return string(buf)
 }
 
 func tenantRef(r *http.Request) string {

@@ -202,6 +202,25 @@ jobs:
     with:
       version: ${{ needs.release_please.outputs.RELEASE_VERSION }}
 
+  # Native binaries to the CDN, which `supatype dev` on provider: native downloads.
+  #
+  # Called here rather than left to server-release.yml's `v*` trigger: release-please creates tags
+  # with GITHUB_TOKEN, and GitHub does not start tag-triggered runs from that token. So the tag
+  # existed for 1.4.0 and 1.5.0 and the publish never ran, leaving the CDN on 1.1.2 from June while
+  # Docker Hub moved twice. Nobody noticed because the docker provider does not read the CDN.
+  #
+  # Release candidates are excluded: that workflow rewrites server/latest.json, which every native
+  # install resolves through, so an rc there would reach everyone.
+  publish_cdn:
+    needs: [release_please]
+    if: >
+      ${{ success() && needs.release_please.outputs.RELEASE_VERSION
+          && needs.release_please.outputs.RELEASE_CANDIDATE == 'false' }}
+    uses: ./.github/workflows/server-release.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.release_please.outputs.RELEASE_VERSION }}
+
   # Docker Hub supatype/server for self-host Compose (not cloud Pulumi).
   publish_dockerhub:
     needs: [release_please]

@@ -16,8 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -206,41 +204,11 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	if workerURL != "" {
 		logrus.WithField("url", workerURL).Info("serve: using external functions worker (in-process Deno disabled)")
 	}
-	if workerURL == "" && srvCfg.DenoFunctionsDir != "" && srvCfg.DenoPath != "" {
-		if _, lookErr := exec.LookPath(srvCfg.DenoPath); lookErr != nil {
-			logrus.WithError(lookErr).Warn("serve: Deno not found on PATH — edge function invocations disabled; install Deno or set SUPATYPE_DENO_PATH")
-		} else {
-			serveEntry := strings.TrimSpace(srvCfg.DenoServeScript)
-			if serveEntry == "" {
-				serveEntry = srvCfg.DenoFunctionsDir
-			}
-			if serveEntry != "" {
-				denoPortInt := 8001 // default
-				if srvCfg.DenoPort != "" {
-					if p, parseErr := strconv.Atoi(srvCfg.DenoPort); parseErr == nil {
-						denoPortInt = p
-					}
-				}
-				dm = deno.New(
-					srvCfg.DenoPath,
-					serveEntry,
-					denoPortInt,
-					deno.EdgeSubprocessEnv(srvCfg, strings.TrimSpace(authCfg.API.ExternalURL)),
-					strings.TrimSpace(srvCfg.Mode) == "dev",
-				)
-				dm.Start(ctx)
-			}
-		}
+	if dm = denoSupervisor(srvCfg, authCfg.API.ExternalURL); dm != nil {
+		dm.Start(ctx)
 	}
 
-	denoBaseStr := ""
-	if srvCfg.DenoFunctionsDir != "" {
-		if workerURL != "" {
-			denoBaseStr = workerURL
-		} else if dm != nil {
-			denoBaseStr = "http://127.0.0.1:" + utilities.FirstNonEmpty(srvCfg.DenoPort, "8001")
-		}
-	}
+	denoBaseStr := denoBaseURL(srvCfg, workerURL, dm)
 
 	healthProbes := func() outerhealth.ProbeConfig {
 		pc := outerhealth.ProbeConfigFrom(srvCfg, live.File(), denoBaseStr)

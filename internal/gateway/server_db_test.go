@@ -512,3 +512,26 @@ func TestReloadingSwapsTheServedAPI(t *testing.T) {
 		t.Errorf("what was stored is not the auth service: %T", ah.LoadHandler())
 	}
 }
+
+// A deployment with Deno installed runs edge functions in a process of its own,
+// and gives it back when the server drains. CI has no Deno, so whether it is
+// installed is the seam: without it this branch of the bootstrap is only ever
+// exercised on a developer's machine.
+func TestNewRunsDenoInProcessWhenItIsInstalled(t *testing.T) {
+	requireAuthEnvironment(t)
+
+	previous := lookPath
+	t.Cleanup(func() { lookPath = previous })
+	// Reported as installed, but the supervisor still cannot run it, so no
+	// subprocess is created. What is under test is that the server built one,
+	// started it, and stopped it.
+	lookPath = func(file string) (string, error) { return file, nil }
+
+	if got := servesHealth(t, map[string]string{
+		"SUPATYPE_FUNCTIONS_WORKER_URL": "",
+		"SUPATYPE_DENO_FUNCTIONS_DIR":   t.TempDir(),
+		"SUPATYPE_DENO_PATH":            "deno",
+	}, nil); got != http.StatusOK {
+		t.Errorf("/health: status = %d", got)
+	}
+}

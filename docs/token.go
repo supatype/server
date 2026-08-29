@@ -2,7 +2,7 @@
 package docs
 
 import (
-	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/auth"
 )
 
 // swagger:route POST /token?grant_type=password token token-password
@@ -13,7 +13,7 @@ import (
 // swagger:parameters token-password
 type tokenPasswordGrantParamsWrapper struct {
 	// in:body
-	Body api.PasswordGrantParams
+	Body auth.PasswordGrantParams
 }
 
 // swagger:route POST /token?grant_type=refresh_token token token-refresh
@@ -24,11 +24,11 @@ type tokenPasswordGrantParamsWrapper struct {
 // swagger:parameters token-refresh
 type tokenRefreshTokenGrantParamsWrapper struct {
 	// in:body
-	Body api.RefreshTokenGrantParams
+	Body auth.RefreshTokenGrantParams
 }
 
 // swagger:response tokenResponse
 type tokenResponseWrapper struct {
 	// in:body
-	Body api.AccessTokenResponse
+	Body auth.AccessTokenResponse
 }

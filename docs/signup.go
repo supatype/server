@@ -2,7 +2,7 @@
 package docs
 
 import (
-	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/auth"
 )
 
 // swagger:route POST /signup signup signup
@@ -13,5 +13,5 @@ import (
 // swagger:parameters signup
 type signupParamsWrapper struct {
 	// in:body
-	Body api.SignupParams
+	Body auth.SignupParams
 }

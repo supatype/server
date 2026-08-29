@@ -195,6 +195,14 @@ func evaluateCompare(r *rule, caller Caller) Verdict {
 		return VerdictRow
 	}
 
+	// A comparison against null is never true in SQL, whichever operator it is:
+	// `NULL <> 'x'` is NULL, not true, so the policy does not grant. Negating
+	// sameValue would have said otherwise and offered an action the database
+	// then refuses — which is exactly the drift this package exists to stop.
+	if left == nil || right == nil {
+		return VerdictDeny
+	}
+
 	// Only equality and inequality are settled here. The ordering operators would
 	// need type-aware comparison of two claim values, which is rare enough that a
 	// row-dependent answer costs nothing and a wrong one costs a misleading UI.
@@ -251,11 +259,10 @@ func claimByPath(claims map[string]any, path string) any {
 
 // sameValue compares two claim/literal values the way Postgres would after the
 // text cast a policy applies, so `1` and `"1"` are the same value here as there.
+// Neither side can be nil here: evaluateCompare answers a comparison against
+// null before it gets this far, because SQL's answer is "not true" whichever
+// operator was used.
 func sameValue(a, b any) bool {
-	if a == nil || b == nil {
-		// SQL null comparison is never true.
-		return false
-	}
 	return scalarText(a) == scalarText(b)
 }
 

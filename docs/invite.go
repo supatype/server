@@ -1,7 +1,7 @@
 //lint:file-ignore U1000 ignore go-swagger template
 package docs
 
-import "github.com/supatype/server/internal/api"
+import "github.com/supatype/server/internal/auth"
 
 // swagger:route POST /invite invite invite
 // Sends an invite link to the user.
@@ -11,7 +11,7 @@ import "github.com/supatype/server/internal/api"
 // swagger:parameters invite
 type inviteParamsWrapper struct {
 	// in:body
-	Body api.InviteParams
+	Body auth.InviteParams
 }
 
 // swagger:response inviteResponse

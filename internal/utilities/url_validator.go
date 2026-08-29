@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/auth/apierrors"
 )
 
 // ValidateOAuthURL validates that a URL is safe for OAuth/OIDC operations

@@ -129,7 +129,7 @@ func ParseMessage(raw string) (*SIWEMessage, error) {
 			msg.ChainID = value
 
 		case "Nonce":
-			// this is supposed to be REQUIRED >8 chr alphanum but we'll leave it for now for gotrue's nonce impl
+			// this is supposed to be REQUIRED >8 chr alphanum but we'll leave it for now for the upstream nonce implementation
 			msg.Nonce = value
 
 		case "Issued At":

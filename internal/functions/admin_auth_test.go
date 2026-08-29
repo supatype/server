@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/supatype/server/internal/config"
 )
 
 func TestRequireServiceRole(t *testing.T) {
@@ -59,8 +61,7 @@ func TestRequireServiceRole(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("SUPATYPE_MODE", tc.mode)
-			t.Setenv("SUPATYPE_SERVICE_ROLE_KEY", tc.serviceKey)
+			cfg := &config.Config{Mode: tc.mode, ServiceRoleKey: tc.serviceKey}
 
 			nextCalled := false
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -74,7 +75,7 @@ func TestRequireServiceRole(t *testing.T) {
 			}
 			rr := httptest.NewRecorder()
 
-			requireServiceRole(next).ServeHTTP(rr, req)
+			requireServiceRole(cfg, next).ServeHTTP(rr, req)
 
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("expected status %d, got %d", tc.wantStatus, rr.Code)

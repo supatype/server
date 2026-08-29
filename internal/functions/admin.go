@@ -15,31 +15,48 @@ package functions
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/deno"
+	"github.com/supatype/server/internal/modes"
+	"github.com/supatype/server/internal/utilities"
 )
 
+// LogSource is the part of the edge-function worker this API reads.
+//
+// Narrowed to the one method so the log endpoint can be exercised without
+// supervising a real process, and so this package does not depend on the
+// supervisor to serve a list of log lines.
+type LogSource interface {
+	RecentLogs(since time.Time, n int) []deno.LogLine
+}
+
 // Handler returns a chi.Router that serves the functions admin API.
-// manager may be nil when edge functions are disabled; all routes return 404.
-func Handler(functionsDir string, manager *deno.Manager) http.Handler {
+// manager may be nil when edge functions are disabled; the log route is then
+// empty rather than absent.
+func Handler(cfg *config.Config, functionsDir string, manager LogSource) http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(RequireServiceRoleMiddleware)
+	r.Use(RequireServiceRoleMiddleware(cfg))
 
 	r.Get("/list", listFunctions(functionsDir))
 	r.Get("/{name}/logs", functionLogs(manager))
-	r.Get("/env", listEnv(functionsDir))
-	r.Post("/env", setEnv(functionsDir))
-	r.Delete("/env/{key}", deleteEnv(functionsDir))
-	r.Get("/{name}/env", listFunctionEnv(functionsDir))
-	r.Post("/{name}/env", setFunctionEnv(functionsDir))
-	r.Delete("/{name}/env/{key}", deleteFunctionEnv(functionsDir))
+	shared, perFunction := sharedEnvFile(functionsDir), functionEnvFile(functionsDir)
+	r.Get("/env", listEnv(shared))
+	r.Post("/env", setEnv(shared))
+	r.Delete("/env/{key}", deleteEnv(shared))
+	r.Get("/{name}/env", listEnv(perFunction))
+	r.Post("/{name}/env", setEnv(perFunction))
+	r.Delete("/{name}/env/{key}", deleteEnv(perFunction))
 
 	return r
 }
@@ -47,35 +64,29 @@ func Handler(functionsDir string, manager *deno.Manager) http.Handler {
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
 // RequireServiceRoleMiddleware rejects requests that don't carry the service-role key.
-func RequireServiceRoleMiddleware(next http.Handler) http.Handler {
-	return requireServiceRole(next)
+func RequireServiceRoleMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return requireServiceRole(cfg, next) }
 }
 
 // requireServiceRole rejects requests that don't carry the service-role key.
-// The service-role key is read from the SUPATYPE_SERVICE_ROLE_KEY env var at
-// request time so it works even if the key rotates without a restart.
-func requireServiceRole(next http.Handler) http.Handler {
+//
+// The key comes from configuration rather than being read per request. That
+// read was justified as supporting rotation without a restart, but nothing
+// rotates it in place: the deployment sets it in the environment and a change
+// replaces the pod. Reading it once keeps the whole surface in one place.
+func requireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimSpace(os.Getenv("SUPATYPE_MODE")) == "dev" {
+		if strings.TrimSpace(cfg.Mode) == "dev" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		serviceRoleKey := strings.TrimSpace(os.Getenv("SUPATYPE_SERVICE_ROLE_KEY"))
-		if serviceRoleKey == "" {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key not configured"})
+		if strings.TrimSpace(cfg.ServiceRoleKey) == "" {
+			utilities.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key not configured"})
 			return
 		}
-
-		auth := strings.TrimSpace(r.Header.Get("Authorization"))
-		token, ok := strings.CutPrefix(auth, "Bearer ")
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
-			return
-		}
-		token = strings.TrimSpace(token)
-		if token != serviceRoleKey {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
+		if !modes.ServiceRoleBearer(r, cfg.ServiceRoleKey) {
+			utilities.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key required"})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -96,10 +107,10 @@ func listFunctions(dir string) http.HandlerFunc {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				writeJSON(w, http.StatusOK, []functionMeta{})
+				utilities.WriteJSON(w, http.StatusOK, []functionMeta{})
 				return
 			}
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -129,7 +140,7 @@ func listFunctions(dir string) http.HandlerFunc {
 			funcs = append(funcs, meta)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{"data": funcs})
+		utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": funcs})
 	}
 }
 
@@ -141,10 +152,10 @@ type logEntry struct {
 	Message   string `json:"message"`
 }
 
-func functionLogs(manager *deno.Manager) http.HandlerFunc {
+func functionLogs(manager LogSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if manager == nil {
-			writeJSON(w, http.StatusOK, map[string]any{"data": []logEntry{}})
+			utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": []logEntry{}})
 			return
 		}
 
@@ -159,7 +170,7 @@ func functionLogs(manager *deno.Manager) http.HandlerFunc {
 				Message:   l.Message,
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": entries})
+		utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": entries})
 	}
 }
 
@@ -175,23 +186,63 @@ func parseSince(s string) time.Time {
 	return time.Now().UTC().Add(-d)
 }
 
-// ─── Env vars ─────────────────────────────────────────────────────────────────
+// ─── Env files ────────────────────────────────────────────────────────────────
 
-func envFilePath(dir string) string {
-	return filepath.Join(dir, ".env.local")
+// validFunctionName is what a function may be called.
+//
+// The name becomes part of a filename, so it is checked rather than cleaned. A
+// chi path parameter cannot contain a separator, which is what makes the
+// current routes safe, but that is a property of the router and not of this
+// code, and a future route with a wildcard would silently remove it.
+var validFunctionName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// envFile resolves which env file a request is about.
+//
+// The three operations — list, set, remove — are the same whether the file is
+// the shared one or one function's; only which file differs. They were written
+// out twice each, six handlers for three behaviours, and the copies had already
+// drifted over which errors they checked.
+type envFile func(*http.Request) (string, error)
+
+// sharedEnvFile is .env.local, applying to every function.
+func sharedEnvFile(dir string) envFile {
+	return func(*http.Request) (string, error) {
+		return filepath.Join(dir, ".env.local"), nil
+	}
 }
 
-func functionEnvFilePath(dir, name string) string {
-	clean := strings.TrimSpace(name)
-	return filepath.Join(dir, ".env."+clean+".local")
+// functionEnvFile is .env.{name}.local, applying to one.
+func functionEnvFile(dir string) envFile {
+	return func(r *http.Request) (string, error) {
+		name := strings.TrimSpace(chi.URLParam(r, "name"))
+		if name == "" {
+			return "", errors.New("function name required")
+		}
+		if !validFunctionName.MatchString(name) {
+			return "", errors.New("function name must be letters, digits, hyphens or underscores")
+		}
+		return filepath.Join(dir, ".env."+name+".local"), nil
+	}
 }
 
-func readEnvFile(path string) (map[string]string, error) {
+// envRoot opens the directory an env file lives in, so both the read and the
+// write are scoped to it. The file name carries a function name that arrived on
+// a request, and the validation the route applies to it is the first line of
+// defence rather than the only one.
+func envRoot(path string) (*os.Root, string, error) {
 	dir, name := filepath.Split(filepath.Clean(path))
 	if dir == "" {
 		dir = "."
 	}
 	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	return root, name, nil
+}
+
+func readEnvFile(path string) (map[string]string, error) {
+	root, name, err := envRoot(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[string]string{}, nil
@@ -226,172 +277,119 @@ func readEnvFile(path string) (map[string]string, error) {
 	return result, scanner.Err()
 }
 
+// writeEnvFile rewrites the file in key order, so setting one variable does not
+// reshuffle the rest and turn every change into a whole-file diff.
 func writeEnvFile(path string, vars map[string]string) error {
 	var sb strings.Builder
-	for k, v := range vars {
+	for _, k := range sortedKeys(vars) {
 		sb.WriteString(k)
 		sb.WriteByte('=')
-		sb.WriteString(v)
+		sb.WriteString(vars[k])
 		sb.WriteByte('\n')
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0600)
+
+	root, name, err := envRoot(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.WriteString(sb.String())
+	return errors.Join(writeErr, f.Close())
 }
 
-func listEnv(dir string) http.HandlerFunc {
+func sortedKeys(vars map[string]string) []string {
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// load resolves the file for this request and reads it, answering the caller
+// itself when either fails.
+func load(w http.ResponseWriter, r *http.Request, file envFile) (path string, vars map[string]string, ok bool) {
+	path, err := file(r)
+	if err != nil {
+		utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return "", nil, false
+	}
+	vars, err = readEnvFile(path)
+	if err != nil {
+		utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return "", nil, false
+	}
+	return path, vars, true
+}
+
+// listEnv answers with the key names. Values are never returned: the point of
+// putting a secret in an env file is that reading it back is not an API.
+func listEnv(file envFile) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		vars, err := readEnvFile(envFilePath(dir))
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		_, vars, ok := load(w, r, file)
+		if !ok {
 			return
 		}
-		keys := make([]string, 0, len(vars))
-		for k := range vars {
-			keys = append(keys, k)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": keys})
+		utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": sortedKeys(vars)})
 	}
 }
 
-func setEnv(dir string) http.HandlerFunc {
+// save writes the file back and answers, so the two mutating endpoints report
+// a failed write the same way rather than in two places that can drift.
+func save(w http.ResponseWriter, path string, vars map[string]string, key, message string) {
+	if err := writeEnvFile(path, vars); err != nil {
+		utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"key": key, "message": message}})
+}
+
+func setEnv(file envFile) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Key   string `json:"key"`
 			Value string `json:"value"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key and value required"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key and value required"})
 			return
 		}
 
-		path := envFilePath(dir)
-		vars, err := readEnvFile(path)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		path, vars, ok := load(w, r, file)
+		if !ok {
 			return
 		}
 		vars[body.Key] = body.Value
-		if err := writeEnvFile(path, vars); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"key": body.Key, "message": "set"}})
+		save(w, path, vars, body.Key, "set")
 	}
 }
 
-func deleteEnv(dir string) http.HandlerFunc {
+func deleteEnv(file envFile) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := chi.URLParam(r, "key")
 		if key == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
 			return
 		}
 
-		path := envFilePath(dir)
-		vars, err := readEnvFile(path)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		path, vars, ok := load(w, r, file)
+		if !ok {
 			return
 		}
-		if _, ok := vars[key]; !ok {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
+		if _, present := vars[key]; !present {
+			utilities.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
 			return
 		}
 		delete(vars, key)
-		if err := writeEnvFile(path, vars); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"key": key, "message": "removed"}})
-	}
-}
-
-func listFunctionEnv(dir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimSpace(chi.URLParam(r, "name"))
-		if name == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "function name required"})
-			return
-		}
-		vars, err := readEnvFile(functionEnvFilePath(dir, name))
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		keys := make([]string, 0, len(vars))
-		for k := range vars {
-			keys = append(keys, k)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": keys})
-	}
-}
-
-func setFunctionEnv(dir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimSpace(chi.URLParam(r, "name"))
-		if name == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "function name required"})
-			return
-		}
-		var body struct {
-			Key   string `json:"key"`
-			Value string `json:"value"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key and value required"})
-			return
-		}
-
-		path := functionEnvFilePath(dir, name)
-		vars, err := readEnvFile(path)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		vars[body.Key] = body.Value
-		if err := writeEnvFile(path, vars); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"key": body.Key, "message": "set"}})
-	}
-}
-
-func deleteFunctionEnv(dir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimSpace(chi.URLParam(r, "name"))
-		if name == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "function name required"})
-			return
-		}
-		key := chi.URLParam(r, "key")
-		if key == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key required"})
-			return
-		}
-
-		path := functionEnvFilePath(dir, name)
-		vars, err := readEnvFile(path)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		if _, ok := vars[key]; !ok {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "key not found"})
-			return
-		}
-		delete(vars, key)
-		if err := writeEnvFile(path, vars); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"key": key, "message": "removed"}})
+		save(w, path, vars, key, "removed")
 	}
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}

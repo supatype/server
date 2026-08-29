@@ -6,11 +6,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 func TestServerCacheOffered_nonManagedAlwaysTrue(t *testing.T) {
-	cfg := &serverconf.ServerConfig{Mode: "standalone"}
+	cfg := &config.Config{Mode: "standalone"}
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
 	if !ServerCacheOffered(context.Background(), cfg, nil, req) {
 		t.Fatal("expected standalone to offer server cache")
@@ -18,7 +18,7 @@ func TestServerCacheOffered_nonManagedAlwaysTrue(t *testing.T) {
 }
 
 func TestServerCacheOffered_managedWithoutValkeyFalse(t *testing.T) {
-	cfg := &serverconf.ServerConfig{Mode: "managed", ManagedProjectRef: "abc"}
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abc"}
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
 	if ServerCacheOffered(context.Background(), cfg, nil, req) {
 		t.Fatal("expected managed without valkey to deny server cache")

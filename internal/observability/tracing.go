@@ -27,11 +27,11 @@ func Tracer(name string, opts ...trace.TracerOption) trace.Tracer {
 
 func openTelemetryResource() *sdkresource.Resource {
 	environmentResource := sdkresource.Environment()
-	gotrueResource := sdkresource.NewSchemaless(attribute.String("gotrue.version", utilities.Version))
+	authResource := sdkresource.NewSchemaless(attribute.String("supatype_auth.version", utilities.Version))
 
-	mergedResource, err := sdkresource.Merge(environmentResource, gotrueResource)
+	mergedResource, err := sdkresource.Merge(environmentResource, authResource)
 	if err != nil {
-		logrus.WithError(err).Error("unable to merge OpenTelemetry environment and gotrue resources")
+		logrus.WithError(err).Error("unable to merge OpenTelemetry environment and service resources")
 
 		return environmentResource
 	}

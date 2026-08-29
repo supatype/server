@@ -48,7 +48,7 @@ tags:
   - name: oauth-client
     description: APIs for OAuth flows where this service acts as an OAuth client (connecting to external providers).
   - name: oauth-server
-    description: APIs for OAuth 2.1 flows where this service acts as an OAuth provider/server for other applications. Requires `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio. (Experimental.)
+    description: APIs for OAuth 2.1 flows where this service acts as an OAuth provider/server for other applications. Requires `SUPATYPE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio. (Experimental.)
   - name: sso
     description: APIs for authenticating using SSO providers (SAML). (Experimental.)
   - name: saml
@@ -114,8 +114,8 @@ paths:
               type: object
               description: |-
                 For the refresh token flow, supply only `refresh_token`.
-                For the email/phone with password flow, supply `email`, `phone` and `password` with an optional `gotrue_meta_security`.
-                For the OIDC ID token flow, supply `id_token`, `nonce`, `provider`, `client_id`, `issuer` with an optional `gotrue_meta_security`.
+                For the email/phone with password flow, supply `email`, `phone` and `password` with an optional `supatype_meta_security`.
+                For the OIDC ID token flow, supply `id_token`, `nonce`, `provider`, `client_id`, `issuer` with an optional `supatype_meta_security`.
                 For the Web3 flow, supply `message`, `signature`, and `chain`.
               properties:
                 refresh_token:
@@ -148,8 +148,8 @@ paths:
                 issuer:
                   type: string
                   description: If `provider` is `azure` then you can specify any Azure OIDC issuer string here, which will be used for verification.
-                gotrue_meta_security:
-                  $ref: "#/components/schemas/GoTrueSecurity"
+                supatype_meta_security:
+                  $ref: "#/components/schemas/MetaSecurity"
                 auth_code:
                   type: string
                   format: uuid
@@ -409,8 +409,8 @@ paths:
                   enum:
                     - plain
                     - s256
-                gotrue_meta_security:
-                  $ref: "#/components/schemas/GoTrueSecurity"
+                supatype_meta_security:
+                  $ref: "#/components/schemas/MetaSecurity"
       responses:
         200:
           description: >
@@ -453,8 +453,8 @@ paths:
                   enum:
                     - plain
                     - s256
-                gotrue_meta_security:
-                  $ref: "#/components/schemas/GoTrueSecurity"
+                supatype_meta_security:
+                  $ref: "#/components/schemas/MetaSecurity"
       responses:
         200:
           description: A recovery email has been sent to the address. An empty JSON object is returned. To obfuscate whether such an email address already exists in the system this response is sent regardless whether the address exists or not.
@@ -505,8 +505,8 @@ paths:
                     - email_change
                     - sms
                     - phone_change
-                gotrue_meta_security:
-                  $ref: "#/components/schemas/GoTrueSecurity"
+                supatype_meta_security:
+                  $ref: "#/components/schemas/MetaSecurity"
       responses:
         200:
           description: A One-Time Password was sent to the email or phone. To obfuscate whether such an address or number already exists in the system this response is sent in both cases.
@@ -551,8 +551,8 @@ paths:
                   format: email
                 data:
                   type: object
-                gotrue_meta_security:
-                  $ref: "#/components/schemas/GoTrueSecurity"
+                supatype_meta_security:
+                  $ref: "#/components/schemas/MetaSecurity"
       responses:
         200:
           description: A recovery email has been sent to the address. An empty JSON object is returned. To obfuscate whether such an email address already exists in the system this response is sent regardless whether the address exists or not.
@@ -606,8 +606,8 @@ paths:
                     - plain
                 code_challenge:
                   type: string
-                gotrue_meta_security:
-                  $ref: "#/components/schemas/GoTrueSecurity"
+                supatype_meta_security:
+                  $ref: "#/components/schemas/MetaSecurity"
       responses:
         200:
           description: A One-Time Password was sent to the email or phone. To obfuscate whether such an address or number already exists in the system this response is sent in both cases.
@@ -1224,8 +1224,8 @@ paths:
                   enum:
                     - plain
                     - s256
-                gotrue_meta_security:
-                  $ref: "#/components/schemas/GoTrueSecurity"
+                supatype_meta_security:
+                  $ref: "#/components/schemas/MetaSecurity"
       responses:
         200:
           description: >
@@ -2249,7 +2249,7 @@ paths:
       description: >
         Retrieves a list of all custom OAuth 2.0 and OIDC provider configurations.
         Optionally filter by provider type. Only available when custom OIDC/OAuth providers are enabled
-        (set `GOTRUE_CUSTOM_OAUTH_ENABLED=true` for self-hosted or enable in Supatype Studio).
+        (set `SUPATYPE_CUSTOM_OAUTH_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - admin
         - oauth-client
@@ -2723,7 +2723,7 @@ paths:
     post:
       summary: Register a new OAuth client dynamically (public endpoint).
       description: >
-        Allows applications to register as OAuth clients with this server dynamically. This follows the OAuth 2.0 Dynamic Client Registration Protocol. Only available when OAuth server is enabled and dynamic registration is allowed (set `GOTRUE_OAUTH_SERVER_ENABLED=true` and `GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=true` for self-hosted or enable both settings in Supatype Studio).
+        Allows applications to register as OAuth clients with this server dynamically. This follows the OAuth 2.0 Dynamic Client Registration Protocol. Only available when OAuth server is enabled and dynamic registration is allowed (set `SUPATYPE_OAUTH_SERVER_ENABLED=true` and `SUPATYPE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=true` for self-hosted or enable both settings in Supatype Studio).
       tags:
         - oauth-server
       requestBody:
@@ -2805,7 +2805,7 @@ paths:
     post:
       summary: OAuth 2.1 Token endpoint
       description: >
-        Issues access tokens in exchange for authorization codes or refresh tokens. Supports authorization_code and refresh_token grant types. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
+        Issues access tokens in exchange for authorization codes or refresh tokens. Supports authorization_code and refresh_token grant types. Only available when OAuth server is enabled (set `SUPATYPE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       requestBody:
@@ -2874,7 +2874,7 @@ paths:
     get:
       summary: OAuth 2.1 Authorization endpoint
       description: >
-        Initiates the OAuth authorization code flow. Redirects users to login and authorize the requesting application. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
+        Initiates the OAuth authorization code flow. Redirects users to login and authorize the requesting application. Only available when OAuth server is enabled (set `SUPATYPE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       parameters:
@@ -2943,7 +2943,7 @@ paths:
     get:
       summary: Get OAuth authorization details
       description: >
-        Retrieves details about a pending OAuth authorization request. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
+        Retrieves details about a pending OAuth authorization request. Only available when OAuth server is enabled (set `SUPATYPE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       security:
@@ -3006,7 +3006,7 @@ paths:
     post:
       summary: Approve or deny OAuth authorization
       description: >
-        User approves or denies authorization to the OAuth client. Only available when OAuth server is enabled (set `GOTRUE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
+        User approves or denies authorization to the OAuth client. Only available when OAuth server is enabled (set `SUPATYPE_OAUTH_SERVER_ENABLED=true` for self-hosted or enable in Supatype Studio).
       tags:
         - oauth-server
       security:
@@ -3064,10 +3064,10 @@ paths:
                     example: v2.40.1
                   name:
                     type: string
-                    example: GoTrue
+                    example: Supatype Auth
                   description:
                     type: string
-                    example: GoTrue is a user registration and authentication API
+                    example: Supatype Auth is a user registration and authentication API
 
         500:
           description: >
@@ -3155,7 +3155,7 @@ components:
         When deployed on Supatype, this server requires an `apikey` header containing a valid Supatype-issued API key to call any endpoint.
 
   schemas:
-    GoTrueSecurity:
+    MetaSecurity:
       type: object
       description: >
         Use this property to pass a CAPTCHA token only if you have enabled CAPTCHA protection.

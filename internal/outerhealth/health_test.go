@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 func TestAttachHealthJSON(t *testing.T) {
 	r := chi.NewRouter()
-	cfg := &serverconf.ServerConfig{Mode: "dev"}
+	cfg := &config.Config{Mode: "dev"}
 	Attach(r, cfg, "test-version", func() ProbeConfig { return ProbeConfig{PostgRESTURL: ""} })
 
 	t.Run("health", func(t *testing.T) {
@@ -61,7 +61,7 @@ func TestAttachHealth_allProbesGreen(t *testing.T) {
 	defer ts.Close()
 
 	r := chi.NewRouter()
-	cfg := &serverconf.ServerConfig{Mode: "dev"}
+	cfg := &config.Config{Mode: "dev"}
 	Attach(r, cfg, "v1", func() ProbeConfig {
 		return ProbeConfig{
 			PostgRESTURL:     ts.URL,
@@ -143,10 +143,10 @@ func TestProbePostgREST(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if !probePostgREST(ts.URL, time.Second) {
+	if !probeHTTPGet(joinURL(ts.URL, "/"), time.Second) {
 		t.Fatal("expected probe success")
 	}
-	if probePostgREST("http://127.0.0.1:9", 100*time.Millisecond) {
+	if probeHTTPGet(joinURL("http://127.0.0.1:9", "/"), 100*time.Millisecond) {
 		t.Fatal("expected probe failure on closed port")
 	}
 }

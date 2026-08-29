@@ -7,7 +7,6 @@ import (
 	"html/template"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +41,7 @@ type Mailer struct {
 
 // FromConfig returns a new mailer configured using the global configuration.
 // The provider is selected by globalConfig.Mailer.MailerProvider (set from
-// GOTRUE_MAILER_MAILER_PROVIDER, e.g. via supatype.config.ts `email.provider` in dev):
+// SUPATYPE_MAILER_MAILER_PROVIDER, e.g. via supatype.config.ts `email.provider` in dev):
 //   - "" or "smtp": SMTP via mailmeclient (falls back to noop if SMTP host is unset)
 //   - "console": log structured metadata to stdout (no network delivery)
 //   - "resend": Resend API (requires RESEND_API_KEY and RESEND_FROM env vars)
@@ -56,10 +55,10 @@ func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
 		mc = consoleclient.New()
 
 	case "resend":
-		apiKey := os.Getenv("RESEND_API_KEY")
-		from := os.Getenv("RESEND_FROM")
+		apiKey := globalConfig.Mailer.ResendAPIKey
+		from := globalConfig.Mailer.ResendFrom
 		if apiKey == "" || from == "" {
-			logrus.Warn("templatemailer: MAILER_PROVIDER=resend but RESEND_API_KEY or RESEND_FROM is unset; falling back to noop")
+			logrus.Warn("templatemailer: resend provider selected but SUPATYPE_RESEND_API_KEY or SUPATYPE_RESEND_FROM is unset; falling back to noop")
 			mc = noopclient.New()
 		} else {
 			logrus.Infof("templatemailer: using Resend for %v", globalConfig.SiteURL)
@@ -67,9 +66,9 @@ func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
 		}
 
 	case "ses":
-		from := os.Getenv("SES_FROM")
+		from := globalConfig.Mailer.SESFrom
 		if from == "" {
-			logrus.Warn("templatemailer: MAILER_PROVIDER=ses but SES_FROM is unset; falling back to noop")
+			logrus.Warn("templatemailer: ses provider selected but SUPATYPE_SES_FROM is unset; falling back to noop")
 			mc = noopclient.New()
 		} else {
 			sesClient, err := sesclient.New(context.Background(), from)

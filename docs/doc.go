@@ -1,6 +1,6 @@
-// Package classification gotrue
+// Package classification supatype-auth
 //
-// Documentation of the gotrue API.
+// Documentation of the Supatype Auth API.
 //
 //	Schemes: http, https
 //	BasePath: /

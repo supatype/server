@@ -70,15 +70,12 @@ func liveServer(t *testing.T, rest string, hooks map[string]TableHooksView, scri
 		req.Host = upstream.Host
 	}
 
-	callback, err := NewCallback(
+	callback := NewCallback(
 		func(*http.Request) string { return rest },
 		func(*http.Request) string { return "public" },
 		"", // anon: this fixture grants it directly, and the credential is not what is under test
 		nil,
 	)
-	if err != nil {
-		t.Fatalf("building the callback: %v", err)
-	}
 
 	mw := Middleware(Options{
 		Dispatcher: NewDispatcher(nil, "test-secret"),

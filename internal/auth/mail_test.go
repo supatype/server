@@ -204,12 +204,12 @@ func (ts *MailTestSuite) TestGenerateLink() {
 		},
 	}
 
-	customDomainUrl, err := url.ParseRequestURI("https://example.gotrue.com")
+	customDomainUrl, err := url.ParseRequestURI("https://example.auth-test.com")
 	require.NoError(ts.T(), err)
 
 	originalHosts := ts.API.config.Mailer.ExternalHosts
 	ts.API.config.Mailer.ExternalHosts = []string{
-		"example.gotrue.com",
+		"example.auth-test.com",
 	}
 
 	for _, c := range cases {

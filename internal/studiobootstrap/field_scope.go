@@ -3,9 +3,10 @@ package studiobootstrap
 import (
 	"context"
 	"encoding/json"
-	"github.com/supatype/server/internal/data"
 	"sync"
 	"time"
+
+	"github.com/supatype/server/internal/data"
 )
 
 // IsRowDependent reports whether a rule's outcome varies by *which row* it is tested

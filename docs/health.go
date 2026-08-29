@@ -4,7 +4,7 @@ package docs
 import "github.com/supatype/server/internal/auth"
 
 // swagger:route GET /health health health
-// The healthcheck endpoint for gotrue. Returns the current gotrue version.
+// The healthcheck endpoint. Returns the current version.
 // responses:
 //   200: healthCheckResponse
 

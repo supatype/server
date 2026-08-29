@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/supatype/server/internal/config"
 	"time"
+
+	"github.com/supatype/server/internal/config"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -191,7 +192,7 @@ func TestTokenNotYetValidIsRefused(t *testing.T) {
 
 // ─── The privilege-escalation vector that matters most ───────────────────────
 
-// `user_metadata` is writable by the user through GoTrue's own update endpoint. `app_metadata`
+// `user_metadata` is writable by the user through the auth service’s own update endpoint. `app_metadata`
 // is not. So the application role must never be read from user_metadata — otherwise any signed-in
 // user can promote themselves by editing their own profile.
 func TestUserMetadataRoleIsIgnored(t *testing.T) {
@@ -300,7 +301,7 @@ func TestDevBypassAcceptsExplicitAffirmatives(t *testing.T) {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("SUPATYPE_MODE", "dev")
 			t.Setenv("STUDIO_OPEN_DEV", v)
-			t.Setenv("API_EXTERNAL_URL", "http://localhost:18473")
+			t.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:18473")
 
 			loaded, err := config.Load()
 			if err != nil {

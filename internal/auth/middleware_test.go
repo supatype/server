@@ -159,7 +159,7 @@ func (ts *MiddlewareTestSuite) TestVerifyCaptchaValid() {
 		require.NoError(ts.T(), json.NewEncoder(&buffer).Encode(map[string]interface{}{
 			"email":    "test@example.com",
 			"password": "secret",
-			"gotrue_meta_security": map[string]interface{}{
+			"supatype_meta_security": map[string]interface{}{
 				"captcha_token": c.captcha_token,
 			},
 		}))
@@ -184,7 +184,7 @@ func (ts *MiddlewareTestSuite) TestVerifyCaptchaValid() {
 		require.NoError(ts.T(), json.NewEncoder(&buffer).Encode(map[string]interface{}{
 			"email":    "test@example.com",
 			"password": "secret",
-			"gotrue_meta_security": map[string]interface{}{
+			"supatype_meta_security": map[string]interface{}{
 				"captcha_token": c.captcha_token,
 			},
 		}))
@@ -231,7 +231,7 @@ func (ts *MiddlewareTestSuite) TestVerifyCaptchaInvalid() {
 			require.NoError(ts.T(), json.NewEncoder(&buffer).Encode(map[string]interface{}{
 				"email":    "test@example.com",
 				"password": "secret",
-				"gotrue_meta_security": map[string]interface{}{
+				"supatype_meta_security": map[string]interface{}{
 					"captcha_token": CaptchaResponse,
 				},
 			}))

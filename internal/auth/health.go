@@ -2,11 +2,10 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/utilities"
 )
 
 var authStartTime = time.Now()
@@ -29,12 +28,12 @@ func HandleHealth(w http.ResponseWriter, r *http.Request) {
 		Version:       "0.1.0",
 		UptimeSeconds: int64(time.Since(authStartTime).Seconds()),
 	}
-	writeJSON(w, http.StatusOK, resp)
+	utilities.WriteJSON(w, http.StatusOK, resp)
 }
 
 // HandleLiveness returns liveness status (is the process running?)
 func HandleLiveness(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "alive"})
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"status": "alive"})
 }
 
 // HandleReadiness returns readiness status (can we serve requests?)
@@ -51,7 +50,7 @@ func HandleReadiness(db interface{ Ping() error }, upstreamURLs map[string]strin
 		// Check database — hard failure.
 		if err := db.Ping(); err != nil {
 			checks["database"] = "failed"
-			writeJSON(w, http.StatusServiceUnavailable, HealthResponse{
+			utilities.WriteJSON(w, http.StatusServiceUnavailable, HealthResponse{
 				Status:  "not_ready",
 				Service: "auth",
 				Checks:  checks,
@@ -98,18 +97,10 @@ func HandleReadiness(db interface{ Ping() error }, upstreamURLs map[string]strin
 		if !overallOK {
 			status = "degraded"
 		}
-		writeJSON(w, code, HealthResponse{
+		utilities.WriteJSON(w, code, HealthResponse{
 			Status:  status,
 			Service: "auth",
 			Checks:  checks,
 		})
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		logrus.WithError(err).Debug("health: write response failed")
 	}
 }

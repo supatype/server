@@ -583,7 +583,7 @@ func (a *API) emailChangeVerify(r *http.Request, conn *storage.Connection, param
 		return nil, nil
 	}
 
-	// one email is confirmed at this point if GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED is enabled
+	// one email is confirmed at this point if SUPATYPE_MAILER_SECURE_EMAIL_CHANGE_ENABLED is enabled
 	oldEmail := user.GetEmail()
 	err := conn.Transaction(func(tx *storage.Connection) error {
 		if terr := models.NewAuditLogEntry(config.AuditLog, r, tx, user, models.UserModifiedAction, "", nil); terr != nil {

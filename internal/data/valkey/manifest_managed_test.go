@@ -89,3 +89,90 @@ func TestCloneDoesNotShareTheHookMap(t *testing.T) {
 		t.Fatal("the clone shared the original's hook map")
 	}
 }
+
+// Every routing field the tenant config can carry has to reach the manifest, or
+// a tenant sets something in the control plane and nothing happens.
+func TestEveryRoutingFieldIsCarried(t *testing.T) {
+	enabled := true
+	tc := &TenantConfig{
+		PostgRESTURL:            "http://rest",
+		GraphQLURL:              "http://gql",
+		StorageURL:              "http://store",
+		AppMode:                 "proxy",
+		AppUpstream:             "http://app",
+		ViteDevURL:              "http://vite",
+		AppStaticDir:            "/srv/app",
+		Schema:                  "app",
+		RealtimeEnabled:         &enabled,
+		RealtimeURL:             "http://realtime",
+		FunctionsEnabled:        &enabled,
+		FunctionsWorkerURL:      "http://worker",
+		FunctionWorkerURLs:      map[string]string{"fn": "http://fn", "blank": ""},
+		StaticCacheHTML:         "no-store",
+		StaticCacheHashedAssets: "max-age=60",
+		StaticCachePrefixes:     map[string]string{"/docs": "max-age=300"},
+	}
+
+	m := &proxy.RouteManifest{}
+	tc.mergeRoutingInto(m)
+
+	for name, got := range map[string]string{
+		"postgrest":     m.PostgRESTURL,
+		"graphql":       m.GraphQLURL,
+		"storage":       m.StorageURL,
+		"app mode":      m.AppMode,
+		"app upstream":  m.AppUpstream,
+		"vite":          m.ViteDevURL,
+		"static dir":    m.AppStaticDir,
+		"schema":        m.Schema,
+		"realtime url":  m.RealtimeURL,
+		"functions url": m.FunctionsWorkerURL,
+		"cache html":    m.StaticCacheHTML,
+		"cache assets":  m.StaticCacheHashedAssets,
+	} {
+		if got == "" {
+			t.Errorf("%s was dropped", name)
+		}
+	}
+	if !m.RealtimeEnabled || !m.FunctionsEnabled {
+		t.Errorf("a boolean was dropped: %+v", m)
+	}
+	if m.FunctionWorkerURLs["fn"] != "http://fn" {
+		t.Errorf("worker URLs = %v", m.FunctionWorkerURLs)
+	}
+	// An empty value is not a URL, and writing it would route a function at
+	// nothing.
+	if _, present := m.FunctionWorkerURLs["blank"]; present {
+		t.Error("an empty worker URL was written")
+	}
+	if m.StaticCachePrefixes["/docs"] != "max-age=300" {
+		t.Errorf("cache prefixes = %v", m.StaticCachePrefixes)
+	}
+}
+
+// Merging into a manifest that has the maps already adds to them rather than
+// replacing them.
+func TestMergingIntoExistingMaps(t *testing.T) {
+	tc := &TenantConfig{
+		FunctionWorkerURLs:  map[string]string{"b": "http://b"},
+		StaticCachePrefixes: map[string]string{"/api": "max-age=1"},
+	}
+	m := &proxy.RouteManifest{
+		FunctionWorkerURLs:  map[string]string{"a": "http://a"},
+		StaticCachePrefixes: map[string]string{"/docs": "max-age=2"},
+	}
+	tc.mergeRoutingInto(m)
+
+	if m.FunctionWorkerURLs["a"] != "http://a" || m.FunctionWorkerURLs["b"] != "http://b" {
+		t.Errorf("worker URLs = %v", m.FunctionWorkerURLs)
+	}
+	if m.StaticCachePrefixes["/docs"] != "max-age=2" || m.StaticCachePrefixes["/api"] != "max-age=1" {
+		t.Errorf("cache prefixes = %v", m.StaticCachePrefixes)
+	}
+}
+
+// Nothing to merge, or nothing to merge into, is a no-op rather than a panic.
+func TestMergingNothing(t *testing.T) {
+	(*TenantConfig)(nil).mergeRoutingInto(&proxy.RouteManifest{})
+	(&TenantConfig{Schema: "app"}).mergeRoutingInto(nil)
+}

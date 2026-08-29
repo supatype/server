@@ -60,7 +60,7 @@ func (f *FunctionHooks) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-var emailRateLimitCounter = observability.ObtainMetricCounter("gotrue_email_rate_limit_counter", "Number of times an email rate limit has been triggered")
+var emailRateLimitCounter = observability.ObtainMetricCounter("supatype_auth_email_rate_limit_counter", "Number of times an email rate limit has been triggered")
 
 func (a *API) performRateLimitingWithHeader(lmt *limiter.Limiter, req *http.Request) error {
 	limitHeader := a.config.RateLimitHeader
@@ -217,7 +217,7 @@ func (a *API) verifyCaptcha(w http.ResponseWriter, req *http.Request) (context.C
 		return ctx, nil
 	}
 
-	body := &security.GotrueRequest{}
+	body := &security.AuthRequest{}
 	if err := retrieveRequestParams(req, body); err != nil {
 		return nil, err
 	}
@@ -324,7 +324,7 @@ func (a *API) isValidExternalHost(w http.ResponseWriter, req *http.Request) (con
 			}
 		}
 
-		logrus.WithFields(fields).Info("Request received external host in X-Forwarded-Host or Host headers, but the values have not been added to GOTRUE_MAILER_EXTERNAL_HOSTS and will not be used. To suppress this message add the host, or sanitize the headers before the request reaches Auth.")
+		logrus.WithFields(fields).Info("Request received external host in X-Forwarded-Host or Host headers, but the values have not been added to SUPATYPE_MAILER_EXTERNAL_HOSTS and will not be used. To suppress this message add the host, or sanitize the headers before the request reaches Auth.")
 	}
 
 	// either the provided external hosts don't match the allow list, or

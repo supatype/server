@@ -30,7 +30,7 @@ type SortField struct {
 	Dir  SortDirection
 }
 
-// TruncateAll deletes all data from the database, as managed by GoTrue. Not
+// TruncateAll deletes all data from the database, as managed by the auth service. Not
 // intended for use outside of tests.
 func TruncateAll(conn *storage.Connection) error {
 	return conn.Transaction(func(tx *storage.Connection) error {

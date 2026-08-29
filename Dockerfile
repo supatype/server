@@ -25,9 +25,9 @@ RUN apk add --no-cache ca-certificates
 COPY --from=build /go/src/github.com/supatype/server/supatype-server /usr/local/bin/supatype-server
 COPY --from=build /go/src/github.com/supatype/server/migrations /usr/local/etc/auth/migrations/
 RUN ln -sf /usr/local/bin/supatype-server /usr/local/bin/auth \
- && ln -sf /usr/local/bin/supatype-server /usr/local/bin/gotrue
 
-ENV GOTRUE_DB_MIGRATIONS_PATH /usr/local/etc/auth/migrations
+
+ENV SUPATYPE_DB_MIGRATIONS_PATH /usr/local/etc/auth/migrations
 
 USER supabase
 CMD ["supatype-server"]

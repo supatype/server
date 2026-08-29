@@ -56,7 +56,7 @@ func buildAdminAPI(d *Deps) http.Handler {
 }
 
 func buildSQLRunner(d *Deps) http.Handler {
-	return sqlrunner.Handler(d.Config, d.Resources)
+	return sqlrunner.Handler(d.Config, d.AdminPool)
 }
 
 func buildStudioMembers(d *Deps) http.Handler { return studioauth.MembersAPI(d.Studio) }
@@ -98,10 +98,16 @@ func buildStudioConfig(d *Deps) http.Handler {
 // write reaches them before PostgREST sees it, which is the only place a hook
 // can still reject or rewrite one.
 func buildREST(d *Deps) http.Handler {
-	return maskedfields.Middleware(d.Resources,
+	return maskedfields.Middleware(d.MaskedFields,
 		restcache.Middleware(
-			d.APIStore, d.Cache, d.Resources, d.Config,
-			d.RestSchema, d.RestMaxRows,
+			restcache.Deps{
+				Store:          d.APIStore,
+				Cache:          d.Cache,
+				Config:         d.Config,
+				SchemaFor:      d.RestSchema,
+				MaxRowsFor:     d.RestMaxRows,
+				IdentityScoped: d.IdentityScopedTables,
+			},
 			d.Hooks(restProxyHandler(d)),
 		),
 	)
@@ -149,13 +155,9 @@ func buildGraphQL(d *Deps) http.Handler {
 
 // rewriteToGraphQLRPC points a copy of the request at the RPC endpoint.
 func rewriteToGraphQLRPC(req *http.Request) *http.Request {
+	// Clone already deep-copies the URL, so copying it again — and handling a
+	// nil one that net/http never hands a server handler — bought nothing.
 	rpc := req.Clone(req.Context())
-	if rpc.URL == nil {
-		rpc.URL = &url.URL{}
-	} else {
-		cloned := *rpc.URL
-		rpc.URL = &cloned
-	}
 	rpc.URL.Path = "/rpc/graphql"
 	rpc.URL.RawPath = ""
 	rpc.Header.Set("Content-Profile", "graphql_public")
@@ -208,7 +210,7 @@ func buildStorage(d *Deps) http.Handler {
 func buildFunctionsAdmin(d *Deps) http.Handler {
 	logrus.WithField("dir", d.Config.DenoFunctionsDir).
 		Info("mux: Functions admin handler mounted at /functions/v1/admin")
-	return functions.Handler(d.Config, d.Config.DenoFunctionsDir, d.Deno)
+	return functions.Handler(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs())
 }
 
 func buildFunctions(d *Deps) http.Handler {
@@ -281,17 +283,12 @@ func buildApp(d *Deps) http.Handler {
 // is about to change as the service role. See internal/modelhooks/previous.go
 // for why that is the right privilege and what the token pins.
 func newHookCallback(d *Deps) *modelhooks.Callback {
-	callback, err := modelhooks.NewCallback(
+	return modelhooks.NewCallback(
 		func(req *http.Request) string { return PostgRESTUpstream(d.ManifestFor(req), d.Config) },
 		d.RestSchema,
 		d.Config.ServiceRoleKey,
 		nil,
 	)
-	if err != nil {
-		logrus.WithError(err).Warn("mux: hook previous() callback unavailable")
-		return nil
-	}
-	return callback
 }
 
 // newHookMiddleware runs a project's schema-declared hooks and validators.

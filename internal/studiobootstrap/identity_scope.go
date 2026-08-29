@@ -3,9 +3,10 @@ package studiobootstrap
 import (
 	"context"
 	"encoding/json"
-	"github.com/supatype/server/internal/data"
 	"sync"
 	"time"
+
+	"github.com/supatype/server/internal/data"
 )
 
 // IsIdentityDependent reports whether a rule's outcome varies by *who* is asking.
@@ -137,13 +138,4 @@ func IdentityScopedTables(ctx context.Context, resources *data.Resources) (map[s
 	identityScope.loadedAt = time.Now()
 	identityScope.loaded = true
 	return tables, true
-}
-
-// ResetIdentityScopeCache clears the memoised classification. For tests.
-func ResetIdentityScopeCache() {
-	identityScope.Lock()
-	defer identityScope.Unlock()
-	identityScope.tables = nil
-	identityScope.loaded = false
-	identityScope.loadedAt = time.Time{}
 }

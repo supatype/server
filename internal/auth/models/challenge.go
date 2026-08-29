@@ -5,11 +5,12 @@ import (
 	"fmt"
 
 	"encoding/json"
+	"time"
+
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gofrs/uuid"
 	"github.com/supatype/server/internal/auth/crypto"
 	"github.com/supatype/server/internal/auth/storage"
-	"time"
 )
 
 type Challenge struct {

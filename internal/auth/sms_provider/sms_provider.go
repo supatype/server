@@ -2,8 +2,6 @@ package sms_provider
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"time"
 
 	"github.com/supatype/server/internal/conf"
@@ -17,14 +15,14 @@ var defaultTimeout time.Duration = time.Second * 10
 const SMSProvider = "sms"
 const WhatsappProvider = "whatsapp"
 
-func init() {
-	timeoutStr := os.Getenv("GOTRUE_INTERNAL_HTTP_TIMEOUT")
-	if timeoutStr != "" {
-		if timeout, err := time.ParseDuration(timeoutStr); err != nil {
-			log.Fatalf("error loading GOTRUE_INTERNAL_HTTP_TIMEOUT: %v", err.Error()) // #nosec G706
-		} else if timeout != 0 {
-			defaultTimeout = timeout
-		}
+// SetHTTPTimeout sets the bound on outbound SMS provider calls. A non-positive
+// duration leaves the default in place.
+//
+// This was a package init reading the environment directly; see
+// internal/auth/provider for the same change.
+func SetHTTPTimeout(d time.Duration) {
+	if d > 0 {
+		defaultTimeout = d
 	}
 }
 

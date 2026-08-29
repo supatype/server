@@ -710,7 +710,7 @@ func (s *Service) GenerateAccessToken(r *http.Request, tx *storage.Connection, p
 		Scope:                         scopes,
 	}
 
-	var gotrueClaims jwt.Claims = claims
+	var authClaims jwt.Claims = claims
 	if config.Hook.CustomAccessToken.Enabled {
 		input := v0hooks.NewCustomAccessTokenInput(
 			r,
@@ -728,10 +728,10 @@ func (s *Service) GenerateAccessToken(r *http.Request, tx *storage.Connection, p
 		if err := validateTokenClaims(output.Claims); err != nil {
 			return "", 0, err
 		}
-		gotrueClaims = jwt.MapClaims(output.Claims)
+		authClaims = jwt.MapClaims(output.Claims)
 	}
 
-	signed, err := SignJWT(&config.JWT, gotrueClaims)
+	signed, err := SignJWT(&config.JWT, authClaims)
 	if err != nil {
 		return "", 0, err
 	}

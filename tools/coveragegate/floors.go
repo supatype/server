@@ -21,19 +21,16 @@ const pinnedFloor = 100.0
 // Floors is the coverage ratchet: a per-package minimum that CI refuses to let
 // slip.
 //
-// Pinned holds the packages held at 100%: the Supatype-owned seam as it reaches
-// that mark, plus anything already there that must not slip back. SeamTarget
-// records the seam packages still on their way, so the goal survives in the file
-// rather than only in a plan; it is documentation and is not enforced. Packages
-// holds measured floors for everything else, including the forked auth handlers,
-// where the rule is "no worse than today" rather than a number anybody chose.
+// Pinned holds the packages held at 100%: the Supatype-owned seam, plus anything
+// else already there that must not slip back. Packages holds measured floors for
+// everything else, including the forked auth handlers, where the rule is "no
+// worse than today" rather than a number anybody chose.
 type Floors struct {
-	Comment    string             `json:"_comment,omitempty"`
-	Default    float64            `json:"default"`
-	Exclude    []string           `json:"exclude"`
-	Pinned     []string           `json:"pinned"`
-	SeamTarget []string           `json:"seam_target"`
-	Packages   map[string]float64 `json:"packages"`
+	Comment  string             `json:"_comment,omitempty"`
+	Default  float64            `json:"default"`
+	Exclude  []string           `json:"exclude"`
+	Pinned   []string           `json:"pinned"`
+	Packages map[string]float64 `json:"packages"`
 }
 
 // LoadFloors decodes a floors file, refusing unknown fields so a typo in a key

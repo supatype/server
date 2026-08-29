@@ -31,7 +31,7 @@ type Config struct {
 	Mode string `envconfig:"SUPATYPE_MODE" default:"dev"`
 
 	// SupatypeURL is the public base URL of this deployment (injected into the Deno edge subprocess as SUPATYPE_URL).
-	// When empty, serve passes API_EXTERNAL_URL from GoTrue config as a fallback for the Deno child only.
+	// When empty, serve passes API_EXTERNAL_URL from the auth configuration as a fallback for the Deno child only.
 	SupatypeURL string `envconfig:"SUPATYPE_URL"`
 
 	// AnonKey is the publishable anon JWT (SUPATYPE_ANON_KEY for edge functions).
@@ -143,9 +143,11 @@ type Config struct {
 	// Required when StorageProvider == "local".
 	StoragePath string `envconfig:"STORAGE_PATH"`
 
-	// JWTSecret is the HS256 secret used to validate Bearer tokens issued by GoTrue.
-	// Read from GOTRUE_JWT_SECRET which is always set by the CLI.
-	JWTSecret string `envconfig:"GOTRUE_JWT_SECRET"`
+	// JWTSecret is the HS256 secret used to validate Bearer tokens issued by the auth service.
+	// The same variable the auth service reads for its own JWT configuration:
+	// the gateway verifies tokens the auth service issues, so a second secret
+	// would mean the gateway rejecting its own service's tokens.
+	JWTSecret string `envconfig:"SUPATYPE_JWT_SECRET"`
 
 	// ServiceRoleKey is used to enrich pg_graphql proxy requests with auth headers.
 	ServiceRoleKey string `envconfig:"SUPATYPE_SERVICE_ROLE_KEY"`
@@ -243,6 +245,14 @@ type Config struct {
 	// LogLevel is the logrus level for the auth service's own logger. The outer
 	// access log has its own level in OuterLogLevel.
 	LogLevel string `envconfig:"LOG_LEVEL"`
+
+	// PublicURLs are every address this deployment answers on.
+	//
+	// Not read from the environment: the values live in the auth service's
+	// configuration, and the bootstrap joins the two. Studio's open-dev bypass
+	// refuses unless all of them are local, so what it reads should be visible
+	// where it is wired rather than guessed at from a variable name.
+	PublicURLs []string `ignored:"true"`
 }
 
 // Load parses Config from environment variables (SUPATYPE_* prefix).

@@ -142,7 +142,7 @@ func (g azureProvider) GetUserData(ctx context.Context, tok *oauth2.Token) (*Use
 
 		if g.ExpectedIssuer != "" && issuer != g.ExpectedIssuer {
 			// Since ExpectedIssuer was set, then the developer had
-			// setup GoTrue to use the tenant-specific
+			// set the service up to use the tenant-specific
 			// authorization endpoint, which in-turn means that
 			// only those tenant's ID tokens will be accepted.
 			return nil, fmt.Errorf("azure: ID token issuer %q does not match expected issuer %q", issuer, g.ExpectedIssuer)

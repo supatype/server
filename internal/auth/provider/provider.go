@@ -5,25 +5,26 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/supatype/server/internal/utilities"
 	"golang.org/x/oauth2"
 )
 
-var defaultTimeout time.Duration = time.Second * 10
+// defaultTimeout bounds outbound calls to identity providers.
+//
+// It used to be read from the environment in a package init, which parsed the
+// value before configuration existed and killed the process with log.Fatalf if
+// it was malformed. It is set from configuration at startup now; the fallback
+// applies when nothing sets it.
+var defaultTimeout = 10 * time.Second
 
-func init() {
-	timeoutStr := os.Getenv("GOTRUE_INTERNAL_HTTP_TIMEOUT")
-	if timeoutStr != "" {
-		if timeout, err := time.ParseDuration(timeoutStr); err != nil {
-			log.Fatalf("error loading GOTRUE_INTERNAL_HTTP_TIMEOUT: %v", err.Error()) // #nosec G706
-		} else if timeout != 0 {
-			defaultTimeout = timeout
-		}
+// SetHTTPTimeout sets the bound on outbound provider calls. A non-positive
+// duration leaves the default in place.
+func SetHTTPTimeout(d time.Duration) {
+	if d > 0 {
+		defaultTimeout = d
 	}
 }
 

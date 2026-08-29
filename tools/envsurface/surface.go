@@ -45,8 +45,8 @@ type Var struct {
 //
 // Two names are recorded per field, because Process looks up the prefixed Key
 // and then falls back to the bare Alt from an explicit `envconfig` tag. A field
-// tagged `envconfig:"DATABASE_URL"` under prefix "gotrue" answers to both
-// GOTRUE_DB_DATABASE_URL and DATABASE_URL, and both are therefore live.
+// tagged `envconfig:"DATABASE_URL"` under the service prefix answers to both
+// SUPATYPE_DB_DATABASE_URL and DATABASE_URL, and both are therefore live.
 func StructNames(prefix string, spec interface{}, where string) ([]Var, error) {
 	var sb strings.Builder
 	const format = "{{range .}}{{.Key}}\t{{.Alt}}\n{{end}}"
@@ -177,7 +177,7 @@ func collectStringSpec(spec ast.Spec, out map[string]string) {
 //
 // The enclosing-node stack exists for the range case: a loop over a literal
 // slice of names reads all of them, and dropping that would hide the very
-// GOTRUE_ names this refactor is removing.
+// SUPATYPE_ names this refactor is removing.
 func envReadsInFile(fset *token.FileSet, display, path string, file *ast.File, consts map[string]string) []Var {
 	var found []Var
 	var stack []ast.Node
@@ -340,7 +340,7 @@ const surfaceHeader = `# Environment surface of supatype-server. Generated; do n
 #
 # This file is a behaviour lock for the coherence refactor. A diff here means the
 # configuration surface changed, which is either the point of the commit or a bug
-# in it. Renaming GOTRUE_* to SUPATYPE_* should rewrite this file wholesale and
+# in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
 `

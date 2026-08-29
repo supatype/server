@@ -16,7 +16,7 @@ import (
 // secret must be a non-empty shared secret configured identically on Kong and
 // supatype-server. Timing-safe comparison is used (hmac.Equal).
 // tenantBypassPaths are reachable without Kong tenant headers.
-// /auth/v1 is the inner GoTrue mount (platform login + control-plane proxy); tenant
+// /auth/v1 is the inner auth mount (platform login + control-plane proxy); tenant
 // routing applies to /rest/v1, /storage/v1, etc.
 func tenantBypassPaths(path string) bool {
 	if path == "/health" || path == "/health/ready" {

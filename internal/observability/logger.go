@@ -28,7 +28,7 @@ type LogEntry struct {
 // This used to read LOG_LEVEL at package initialisation, which made the level a
 // hidden dependency on the process environment and left it unsettable from
 // configuration. Note that LOG_LEVEL is a third, separate control: the auth
-// service's own logrus level is GOTRUE_LOG_LEVEL and the gateway access log is
+// service's own logrus level is SUPATYPE_LOG_LEVEL and the gateway access log is
 // SUPATYPE_OUTER_LOG_LEVEL. Collapsing the three is a behaviour change and
 // belongs with the rename.
 var logLevel = levelInfo

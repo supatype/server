@@ -175,7 +175,7 @@ Version          Name                         Status
 
 That lists each migration that was applied. Note: there may be more migrations than those listed.
 
-4. Create a `.env` file in the root of the project and copy the following config in [example.env](example.env). Set the values to GOTRUE_SMS_TEST_OTP_VALID_UNTIL in the `.env` file.
+4. Create a `.env` file in the root of the project and copy the following config in [example.env](example.env). Set the values to SUPATYPE_SMS_TEST_OTP_VALID_UNTIL in the `.env` file.
 
 5. In order to have Auth connect to your PostgreSQL database running in Docker, it is important to set a connection string like:
 
@@ -251,9 +251,9 @@ To see the current settings, make a request to `http://localhost:9999/settings` 
 
 To test the admin endpoints (or other api endpoints), you can invoke via HTTP requests. Using [Insomnia](https://insomnia.rest/products/insomnia) can help you issue these requests.
 
-You will need to know the `GOTRUE_JWT_SECRET` configured in the `.env` settings.
+You will need to know the `SUPATYPE_JWT_SECRET` configured in the `.env` settings.
 
-Also, you must generate a JWT with the signature which has the `supatype_admin` role (or one that is specified in `GOTRUE_JWT_ADMIN_ROLES`).
+Also, you must generate a JWT with the signature which has the `supatype_admin` role (or one that is specified in `SUPATYPE_JWT_ADMIN_ROLES`).
 
 For example:
 
@@ -456,7 +456,7 @@ DATABASE_URL="postgres://supatype_auth_admin:root@localhost:7432/postgres" 👈 
 
 ```
 // file: migrate.sh
-export GOTRUE_DB_DATABASE_URL="postgres://supatype_auth_admin:root@localhost:7432/$DB_ENV"
+export SUPATYPE_DB_DATABASE_URL="postgres://supatype_auth_admin:root@localhost:7432/$DB_ENV"
 ```
 
 ## Helpful Docker Commands

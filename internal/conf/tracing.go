@@ -22,7 +22,7 @@ type TracingConfig struct {
 	Port string
 
 	// ServiceName is the service name to use with OpenTracing.
-	ServiceName string `default:"gotrue" split_words:"true"`
+	ServiceName string `default:"supatype-auth" split_words:"true"`
 
 	// Tags are the tags to associate with OpenTracing.
 	Tags map[string]string

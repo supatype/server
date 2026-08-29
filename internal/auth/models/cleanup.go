@@ -88,10 +88,10 @@ func NewCleanup(config *conf.GlobalConfiguration) *Cleanup {
 		c.cleanupStatements = append(c.cleanupStatements, fmt.Sprintf("delete from %q where id in (select %q.id as id from %q, %q where %q.session_id = %q.id and %q.refreshed_at is null and %q.revoked is false and %q.updated_at + interval '%d seconds' < now() - interval '24 hours' limit 100 for update skip locked)", tableSessions, tableSessions, tableSessions, tableRefreshTokens, tableRefreshTokens, tableSessions, tableSessions, tableRefreshTokens, tableRefreshTokens, inactivitySeconds))
 	}
 
-	meter := otel.Meter("gotrue")
+	meter := otel.Meter("supatype-auth")
 
 	_, err := meter.Int64ObservableCounter(
-		"gotrue_cleanup_affected_rows",
+		"supatype_auth_cleanup_affected_rows",
 		metric.WithDescription("Number of affected rows from cleaning up stale entities"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
 			o.Observe(c.cleanupAffectedRows.Load())
@@ -100,7 +100,7 @@ func NewCleanup(config *conf.GlobalConfiguration) *Cleanup {
 	)
 
 	if err != nil {
-		logrus.WithError(err).Error("unable to get gotrue.gotrue_cleanup_rows counter metric")
+		logrus.WithError(err).Error("unable to get supatype_auth_cleanup_rows counter metric")
 	}
 
 	return c
@@ -113,11 +113,11 @@ func NewCleanup(config *conf.GlobalConfiguration) *Cleanup {
 // not clean up the whole database, but does a small piecemeal clean up each
 // time when called.
 func (c *Cleanup) Clean(db *storage.Connection) (int, error) {
-	ctx, span := observability.Tracer("gotrue").Start(db.Context(), "database-cleanup")
+	ctx, span := observability.Tracer("supatype-auth").Start(db.Context(), "database-cleanup")
 	defer span.End()
 
 	affectedRows := 0
-	defer span.SetAttributes(attribute.Int64("gotrue.cleanup.affected_rows", int64(affectedRows)))
+	defer span.SetAttributes(attribute.Int64("supatype_auth.cleanup.affected_rows", int64(affectedRows)))
 
 	if err := db.WithContext(ctx).Transaction(func(tx *storage.Connection) error {
 		nextIndex := atomic.AddUint32(&c.cleanupNext, 1) % uint32(len(c.cleanupStatements)) // #nosec G115

@@ -25,26 +25,28 @@ import (
 // the caches, and the assembled mux. Nothing exercised it, so a change that
 // broke startup would have been found by running the binary.
 //
-// It needs the same environment the auth tests need — hack/test.env and a
-// migrated database — so it skips without one.
+// It needs the same environment the auth service's own tests need: hack/test.env
+// and a migrated database.
+
+// authTestConfig is loaded rather than assumed to be exported. CI runs the
+// suite without it in the environment, so every database-backed test in this
+// repository loads it for itself; reading the environment instead passed
+// locally, skipped every one of these on CI, and left the package 23 points
+// short of the floor with nothing failing to say why.
+const authTestConfig = "../../hack/test.env"
 
 func requireAuthEnvironment(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv("DATABASE_URL")) == "" {
-		t.Skip("set DATABASE_URL (hack/test.env) to run the bootstrap tests")
-	}
-	if strings.TrimSpace(os.Getenv("SUPATYPE_JWT_SECRET")) == "" {
-		t.Skip("set SUPATYPE_JWT_SECRET (hack/test.env) to run the bootstrap tests")
+
+	cfg, err := conf.LoadGlobal(authTestConfig)
+	if err != nil {
+		t.Skipf("the auth configuration does not load: %v", err)
 	}
 	// New waits for a database that is merely not up yet, which is what it is
 	// supposed to do and what makes a run with no database hang until the go
 	// test deadline rather than say why. Ask once, briefly, and skip instead.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cfg, err := conf.LoadGlobalFromEnv()
-	if err != nil {
-		t.Skipf("the auth configuration does not load: %v", err)
-	}
 	db, err := storage.DialContext(ctx, cfg)
 	if err != nil {
 		t.Skipf("the database is not reachable: %v", err)

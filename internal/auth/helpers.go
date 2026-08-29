@@ -69,7 +69,7 @@ type RequestParams interface {
 		VerifyParams |
 		adminUserUpdateFactorParams |
 		adminUserDeleteParams |
-		security.GotrueRequest |
+		security.AuthRequest |
 		ChallengeFactorParams |
 
 		struct {

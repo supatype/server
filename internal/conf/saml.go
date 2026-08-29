@@ -116,8 +116,8 @@ func (c *SAMLConfiguration) populateFields(externalURL string) (*x509.Certificat
 	// fixed values.
 	// Please avoid modifying or adding new values to this template as they
 	// will change the exposed SAML certificate, requiring users of
-	// GoTrue to re-establish a connection between their Identity Provider
-	// and their running GoTrue instances.
+	// the service to re-establish a connection between their Identity Provider
+	// and their running instances.
 	certTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(0),
 		IsCA:         false,

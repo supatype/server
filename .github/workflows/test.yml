@@ -27,6 +27,19 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # The Valkey client is a wrapper around a real protocol, including a
+      # circuit breaker that opens on real failures. Faking valkey-go's Client
+      # means reimplementing fifteen methods and constructing ValkeyResults by
+      # hand, which tests the fake rather than the wrapper.
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -75,6 +88,9 @@ jobs:
           # the migrated one on purpose: these tests drop and recreate
           # auth.users, which fails where the auth migrations own it.
           SUPATYPE_TEST_DSN: postgresql://postgres:root@localhost:5432/supatype_studio_test
+          # Same reason: without an address the Valkey client's own tests skip
+          # and the package cannot reach its floor.
+          SUPATYPE_TEST_VALKEY_ADDR: 127.0.0.1:6379
         run: make test
       - name: Cleanup coverage
         run: |

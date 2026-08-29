@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Per-field validators: a rule the database cannot express, run before the write.
@@ -110,7 +111,7 @@ func runValidators(
 		}
 
 		for _, value := range values {
-			encoded, err := json.Marshal(validatorPayload{
+			encoded, err := marshalPayload(validatorPayload{
 				Table:     target.Table,
 				Operation: target.Operation,
 				Field:     field,
@@ -170,28 +171,16 @@ func writeFieldRejection(w http.ResponseWriter, field string, outcome Outcome) {
 				_, _ = w.Write(outcome.Body)
 				return
 			}
-			message = firstNonEmpty(existing.Message, existing.Error)
+			message = utilities.FirstNonEmpty(existing.Message, existing.Error)
 		}
 	}
 	if message == "" {
 		message = "This value was rejected."
 	}
 
-	encoded, err := json.Marshal(rejectionBody{Error: message, Field: field, Message: message})
-	if err != nil {
-		http.Error(w, message, status)
-		return
-	}
+	// Three strings, so this cannot fail to encode.
+	encoded, _ := json.Marshal(rejectionBody{Error: message, Field: field, Message: message})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(encoded)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

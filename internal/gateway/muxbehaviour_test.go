@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 // This is the behaviour lock that matters most.
@@ -63,13 +63,13 @@ func (r *rig) lastHit() (hit, bool) {
 }
 
 // rigOption adjusts the configuration a rig is built with.
-type rigOption func(*serverconf.ServerConfig)
+type rigOption func(*config.Config)
 
 // withCORSOrigins sets the managed-mode CORS allowlist. It matters because the
 // managed CORS layer only answers a preflight for an origin it recognises;
 // otherwise it passes the request down to the gates below.
 func withCORSOrigins(origins string) rigOption {
-	return func(cfg *serverconf.ServerConfig) { cfg.CorsAllowOrigins = origins }
+	return func(cfg *config.Config) { cfg.CorsAllowOrigins = origins }
 }
 
 // newRig builds the mux for a mode with every service pointed at a fake that
@@ -109,7 +109,7 @@ func newRig(t *testing.T, mode string, opts ...rigOption) *rig {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		Mode:               mode,
 		PostgRESTURL:       postgrest.URL,
 		GraphQLURL:         graphql.URL,
@@ -458,4 +458,39 @@ func signedAPIKey(t *testing.T, role string) string {
 		t.Fatalf("not a JWT: %q", signed)
 	}
 	return signed
+}
+
+// A nil valkey.Client is a nil interface, which has no methods: the first
+// Available() call panics rather than behaving as "no cache". buildOuterMux
+// normalises it once, at the boundary, which is what lets every consumer below
+// drop its own nil check. This is a regression test for that panic.
+func TestBuildOuterMuxToleratesANilValkeyClient(t *testing.T) {
+	clearAmbientEnv(t)
+	cfg := &config.Config{Mode: "standalone"}
+	manifest := &proxy.RouteManifest{Schema: "public"}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("building the mux with no Valkey panicked: %v", r)
+		}
+	}()
+
+	handler := buildOuterMux(
+		cfg,
+		func(*http.Request) *proxy.RouteManifest { return manifest },
+		func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") },
+		http.NotFoundHandler(),
+		nil,
+		"nil-valkey-test",
+		nil, // no Valkey configured
+		nil,
+	)
+
+	// The admin cache routes must answer, reporting the cache as unavailable
+	// rather than failing to exist or crashing the request.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/cache", nil))
+	if rec.Code == 0 || rec.Code == http.StatusInternalServerError {
+		t.Errorf("GET /admin/v1/cache with no Valkey returned %d", rec.Code)
+	}
 }

@@ -219,7 +219,9 @@ func TestOAuthServerAuthorization_ApproveSuccess(t *testing.T) {
 
 	assert.Equal(t, OAuthServerAuthorizationApproved, auth.Status)
 	assert.NotNil(t, auth.ApprovedAt)
-	assert.True(t, auth.ApprovedAt.After(beforeTime))
+	// Not After: two adjacent time.Now() calls can return the same instant on a
+	// platform whose clock is coarser than the code between them.
+	assert.False(t, auth.ApprovedAt.Before(beforeTime))
 	assert.NotEmpty(t, *auth.AuthorizationCode)
 }
 

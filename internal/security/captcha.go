@@ -2,10 +2,8 @@ package security
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,11 +14,15 @@ import (
 	"github.com/supatype/server/internal/utilities"
 )
 
-type GotrueRequest struct {
-	Security GotrueSecurity `json:"gotrue_meta_security"`
+type AuthRequest struct {
+	// Security carries the captcha token a client attaches to an auth request.
+	//
+	// The JSON name is part of the request body, so its spelling ships with the
+	// client SDK that sends it.
+	Security MetaSecurity `json:"supatype_meta_security"`
 }
 
-type GotrueSecurity struct {
+type MetaSecurity struct {
 	Token string `json:"captcha_token"`
 }
 
@@ -30,23 +32,22 @@ type VerificationResponse struct {
 	Hostname   string   `json:"hostname"`
 }
 
-var Client *http.Client
+// Client calls the captcha provider.
+//
+// Its timeout used to be read from the environment in a package init, which
+// parsed the value before configuration existed and killed the process with
+// log.Fatalf if it was malformed. It is set from configuration at startup now.
+var Client = &http.Client{Timeout: 10 * time.Second}
 
-func init() {
-	var defaultTimeout time.Duration = time.Second * 10
-	timeoutStr := os.Getenv("GOTRUE_SECURITY_CAPTCHA_TIMEOUT")
-	if timeoutStr != "" {
-		if timeout, err := time.ParseDuration(timeoutStr); err != nil {
-			log.Fatalf("error loading GOTRUE_SECURITY_CAPTCHA_TIMEOUT: %v", err.Error()) // #nosec G706
-		} else if timeout != 0 {
-			defaultTimeout = timeout
-		}
+// SetHTTPTimeout sets the bound on the captcha provider call. A non-positive
+// duration leaves the default in place.
+func SetHTTPTimeout(d time.Duration) {
+	if d > 0 {
+		Client = &http.Client{Timeout: d}
 	}
-
-	Client = &http.Client{Timeout: defaultTimeout}
 }
 
-func VerifyRequest(requestBody *GotrueRequest, clientIP, secretKey, captchaProvider string) (VerificationResponse, error) {
+func VerifyRequest(requestBody *AuthRequest, clientIP, secretKey, captchaProvider string) (VerificationResponse, error) {
 	captchaResponse := strings.TrimSpace(requestBody.Security.Token)
 
 	if captchaResponse == "" {

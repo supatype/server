@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 func TestBuildOuterMux_GraphQLProxyInjectsServiceRoleAndForwardsEndUserAuth(t *testing.T) {
@@ -33,7 +33,7 @@ func TestBuildOuterMux_GraphQLProxyInjectsServiceRoleAndForwardsEndUserAuth(t *t
 	}))
 	defer upstream.Close()
 
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		Mode:           "dev",
 		ServiceRoleKey: "service-role-jwt",
 		PostgRESTURL:   upstream.URL,

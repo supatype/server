@@ -8,7 +8,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/supatype/server/internal/dbpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/supatype/server/internal/data"
 )
 
 // ErrNoSchemaState means the project has never been pushed, so there is nothing
@@ -28,11 +29,11 @@ type Snapshot struct {
 }
 
 // LoadSnapshot reads the schema state written by the last push.
-func LoadSnapshot(ctx context.Context) (*Snapshot, error) {
+func LoadSnapshot(ctx context.Context, resources *data.Resources) (*Snapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := resources.AdminPool()
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +44,13 @@ func LoadSnapshot(ctx context.Context) (*Snapshot, error) {
 		       COALESCE(admin_config::text, '')::bytea
 		  FROM _supatype.schema_state
 		 WHERE id = 1`).Scan(&ast, &adminConfig)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// A project that has never been pushed has no row at all, which is the
+		// same thing to Studio as a row with nothing in it. Returning the driver
+		// error instead put "no rows in result set" in front of a developer on
+		// their first run, where the answer is "push the schema first".
+		return nil, ErrNoSchemaState
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -65,15 +65,12 @@ func TestVerifyBearerToken_nonAdminDenied(t *testing.T) {
 	}
 }
 
-func TestDevBypass_requiresBothEnv(t *testing.T) {
-	t.Setenv("SUPATYPE_MODE", "dev")
-	t.Setenv("STUDIO_OPEN_DEV", "")
-	if DevBypass() {
-		t.Fatal("expected false without STUDIO_OPEN_DEV")
+func TestDevBypass_requiresBothSwitches(t *testing.T) {
+	if (Config{Mode: "dev"}).DevBypass() {
+		t.Fatal("expected false without the open-dev switch")
 	}
-	t.Setenv("STUDIO_OPEN_DEV", "1")
-	if !DevBypass() {
-		t.Fatal("expected true with STUDIO_OPEN_DEV=1")
+	if !(Config{Mode: "dev", OpenDev: true}).DevBypass() {
+		t.Fatal("expected true with both switches set")
 	}
 }
 

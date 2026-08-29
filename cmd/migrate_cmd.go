@@ -122,7 +122,7 @@ func migrate(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("%v", errors.Wrap(err, "running db migrations"))
 	} else {
-		log.WithField("count", count).Infof("GoTrue migrations applied successfully")
+		log.WithField("count", count).Infof("auth migrations applied successfully")
 	}
 
 	log.Debugf("after status")

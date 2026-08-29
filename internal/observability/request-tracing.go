@@ -90,7 +90,7 @@ func (w *interceptingResponseWriter) Header() http.Header {
 }
 
 // countStatusCodesSafely counts the number of HTTP status codes per route that
-// occurred while GoTrue was running. If it is not able to identify the route
+// occurred while the service was running. If it is not able to identify the route
 // via chi.RouteContext(ctx).RoutePattern() it counts with a noroute attribute.
 func countStatusCodesSafely(w *interceptingResponseWriter, r *http.Request, counter metric.Int64Counter) {
 	if counter == nil {
@@ -131,13 +131,13 @@ func addMetricAttributes(r *http.Request) []attribute.KeyValue {
 // in. Supports Chi routers, so this should be one of the first middlewares on
 // the router.
 func RequestTracing() func(http.Handler) http.Handler {
-	meter := otel.Meter("gotrue")
+	meter := otel.Meter("supatype-auth")
 	statusCodes, err := meter.Int64Counter(
 		"http_status_codes",
 		metric.WithDescription("Number of returned HTTP status codes"),
 	)
 	if err != nil {
-		logrus.WithError(err).Error("unable to get gotrue.http_status_codes counter metric")
+		logrus.WithError(err).Error("unable to get supatype_auth.http_status_codes counter metric")
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -150,7 +150,7 @@ func RequestTracing() func(http.Handler) http.Handler {
 			defer traceChiRouteURLParamsSafely(r)
 			defer countStatusCodesSafely(&writer, r, statusCodes)
 
-			originalUserAgent := r.Header.Get("X-Gotrue-Original-User-Agent")
+			originalUserAgent := r.Header.Get("X-Supatype-Original-User-Agent")
 			if originalUserAgent != "" {
 				r.Header.Set("User-Agent", originalUserAgent)
 			}
@@ -158,7 +158,7 @@ func RequestTracing() func(http.Handler) http.Handler {
 			next.ServeHTTP(&writer, r)
 
 			if originalUserAgent != "" {
-				r.Header.Set("X-Gotrue-Original-User-Agent", originalUserAgent)
+				r.Header.Set("X-Supatype-Original-User-Agent", originalUserAgent)
 				r.Header.Set("User-Agent", "stripped")
 			}
 		}
@@ -175,11 +175,11 @@ func RequestTracing() func(http.Handler) http.Handler {
 			// can be used as an easy way to resource exhaustion;
 			// so this code strips the User-Agent header before
 			// it's passed to be traced by otelhttp, and then is
-			// returned back to the middleware
-			// https://github.com/supabase/gotrue/security/dependabot/11
+			// returned back to the middleware. This was a reported
+			// vulnerability upstream, not a theoretical one.
 			userAgent := r.UserAgent()
 			if userAgent != "" {
-				r.Header.Set("X-Gotrue-Original-User-Agent", userAgent)
+				r.Header.Set("X-Supatype-Original-User-Agent", userAgent)
 				r.Header.Set("User-Agent", "stripped")
 			}
 

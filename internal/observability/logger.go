@@ -22,21 +22,43 @@ type LogEntry struct {
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
-var logLevel = getLogLevel()
+// logLevel filters structured log entries. It defaults to info and is set once
+// at startup by Configure.
+//
+// This used to read LOG_LEVEL at package initialisation, which made the level a
+// hidden dependency on the process environment and left it unsettable from
+// configuration. Note that LOG_LEVEL is a third, separate control: the auth
+// service's own logrus level is SUPATYPE_LOG_LEVEL and the gateway access log is
+// SUPATYPE_OUTER_LOG_LEVEL. Collapsing the three is a behaviour change and
+// belongs with the rename.
+var logLevel = levelInfo
 
-func getLogLevel() int {
-	level := os.Getenv("LOG_LEVEL")
+const (
+	levelDebug = 0
+	levelInfo  = 1
+	levelWarn  = 2
+	levelError = 3
+)
+
+// SetStructuredLevel sets the structured log level. An unrecognised or empty level
+// leaves it at info, which is what reading an unset LOG_LEVEL always did.
+func SetStructuredLevel(level string) {
+	logLevel = ParseLevel(level)
+}
+
+// ParseLevel maps a level name to its ordering, defaulting to info.
+func ParseLevel(level string) int {
 	switch level {
 	case "debug":
-		return 0
+		return levelDebug
 	case "info":
-		return 1
+		return levelInfo
 	case "warn":
-		return 2
+		return levelWarn
 	case "error":
-		return 3
+		return levelError
 	default:
-		return 1 // info
+		return levelInfo
 	}
 }
 

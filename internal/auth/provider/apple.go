@@ -94,7 +94,7 @@ func NewAppleProvider(ctx context.Context, ext conf.OAuthProviderConfiguration, 
 	}
 
 	if ext.URL != "" {
-		logrus.Warn("Apple OAuth provider has URL config set which is ignored (check GOTRUE_EXTERNAL_APPLE_URL)")
+		logrus.Warn("Apple OAuth provider has URL config set which is ignored (check SUPATYPE_EXTERNAL_APPLE_URL)")
 	}
 
 	oidcProvider, err := cache.GetProvider(ctx, DefaultAppleIssuer)

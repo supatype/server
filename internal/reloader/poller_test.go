@@ -49,7 +49,7 @@ func TestPoller(t *testing.T) {
 				// write to the config
 				name := fmt.Sprintf("%.02d_conf.env", i)
 				helpWriteEnvFile(t, dir, name, map[string]string{
-					"GOTRUE_SMTP_PORT": fmt.Sprintf("%d", 1000+i),
+					"SUPATYPE_SMTP_PORT": fmt.Sprintf("%d", 1000+i),
 				})
 			}
 
@@ -70,7 +70,7 @@ func TestPoller(t *testing.T) {
 			// write to the config
 			name := fmt.Sprintf("%.02d_conf.env.bak", i)
 			helpWriteEnvFile(t, dir, name, map[string]string{
-				"GOTRUE_SMTP_PORT": fmt.Sprintf("%d", 1000+i),
+				"SUPATYPE_SMTP_PORT": fmt.Sprintf("%d", 1000+i),
 			})
 
 			// no changes detected since last poll since conf file has .bak

@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 // muxWithHooks wires a fake PostgREST and a fake functions worker behind the real outer mux, so the
@@ -39,7 +39,7 @@ func muxWithHooks(
 	worker := httptest.NewServer(http.HandlerFunc(hook))
 	t.Cleanup(worker.Close)
 
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		Mode:               "dev",
 		PostgRESTURL:       postgrest.URL,
 		FunctionsWorkerURL: worker.URL,
@@ -165,7 +165,7 @@ func TestHooksNamespaceIsNotPubliclyInvocable(t *testing.T) {
 	}))
 	t.Cleanup(worker.Close)
 
-	cfg := &serverconf.ServerConfig{
+	cfg := &config.Config{
 		Mode:               "dev",
 		FunctionsWorkerURL: worker.URL,
 	}
@@ -199,7 +199,7 @@ func TestPublicFunctionsStillInvocable(t *testing.T) {
 	}))
 	t.Cleanup(worker.Close)
 
-	cfg := &serverconf.ServerConfig{Mode: "dev", FunctionsWorkerURL: worker.URL}
+	cfg := &config.Config{Mode: "dev", FunctionsWorkerURL: worker.URL}
 	manifest := &proxy.RouteManifest{
 		Schema:             "public",
 		FunctionsEnabled:   true,

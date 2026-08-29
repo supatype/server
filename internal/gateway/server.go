@@ -7,7 +7,7 @@
 // New performs the same bootstrap that `supatype-server serve` does, minus the
 // listener/TLS/graceful-shutdown loop (which the caller owns). Stock binary
 // behaviour is preserved: cmd/serve_cmd.go calls New and then runs the
-// unchanged listen loop, so routes and config handling are identical.
+// unchanged listen loop, so routes and authCfg handling are identical.
 package gateway
 
 import (
@@ -16,24 +16,27 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/auth"
 	"github.com/supatype/server/internal/auth/apiworker"
 	"github.com/supatype/server/internal/auth/mailer/templatemailer"
+	"github.com/supatype/server/internal/auth/provider"
+	smsprovider "github.com/supatype/server/internal/auth/sms_provider"
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/data/valkey"
 	"github.com/supatype/server/internal/deno"
+	"github.com/supatype/server/internal/observability"
 	"github.com/supatype/server/internal/outerhealth"
+	"github.com/supatype/server/internal/platform"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/reloader"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/security"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -45,8 +48,13 @@ var (
 	WatchDir   = ""
 )
 
+// getwd is os.Getwd, swapped in tests. A process whose working directory has
+// been removed cannot name it, and the .env files found relative to it are then
+// simply not there — which is a debug line, not a reason to refuse to start.
+var getwd = os.Getwd
+
 // New builds the full supatype-server outer handler and starts its background
-// workers (apiworker + optional config reloader), which stop when ctx is
+// workers (apiworker + optional authCfg reloader), which stop when ctx is
 // cancelled. The returned drain func waits for those workers and releases
 // resources (Deno subprocess, Valkey, database); call it after cancelling ctx.
 //
@@ -55,16 +63,16 @@ var (
 // the metering gateway on :9999).
 func New(ctx context.Context) (http.Handler, func(), error) {
 	if err := conf.LoadFile(ConfigFile); err != nil {
-		return nil, nil, fmt.Errorf("unable to load config: %w", err)
+		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
 	}
 
 	if err := conf.LoadDirectory(WatchDir); err != nil {
-		logrus.WithError(err).Error("unable to load config from watch dir")
+		logrus.WithError(err).Error("unable to load authCfg from watch dir")
 	}
 
-	config, err := conf.LoadGlobalFromEnv()
+	authCfg, err := conf.LoadGlobalFromEnv()
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to load config: %w", err)
+		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
 	}
 
 	// Include serve ctx which carries cancelation signals so DialContext does
@@ -76,7 +84,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// healthcheck ever covered a database that restarts later. A wrong password or a missing database
 	// still fails immediately; see internal/auth/storage/dial_retry.go for where that line sits.
 	db, err := storage.DialWithRetry(ctx, func(ctx context.Context) (*storage.Connection, error) {
-		return storage.DialContext(ctx, config)
+		return storage.DialContext(ctx, authCfg)
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("error opening database: %w", err)
@@ -87,46 +95,66 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	db = db.WithContext(ctx)
 
 	var (
-		wg       sync.WaitGroup
-		vkShared *valkey.Client
-		dm       *deno.Manager
+		wg sync.WaitGroup
+		dm *deno.Manager
 	)
+	// Never nil, so every consumer and both shutdown paths can use it without
+	// asking whether a cache exists.
+	var resources *data.Resources
+	// Nil everywhere except a hosted tenant pod. Declared here because the drain
+	// closure below is built before it is assigned, and a nil Gateway closes and
+	// wraps as a no-op.
+	var tenantGateway *platform.Gateway
+	vkShared := valkey.Unavailable()
 
-	// fail closes resources opened so far and returns the bootstrap error.
+	// fail releases what has been acquired so far and returns the bootstrap error.
 	fail := func(err error) (http.Handler, func(), error) {
-		if vkShared != nil {
-			vkShared.Close()
-		}
+		_ = resources.Close()
 		_ = db.Close()
 		return nil, nil, err
 	}
 
 	mrCache := templatemailer.NewCache()
-	limiterOpts := auth.NewLimiterOptions(config)
+	limiterOpts := auth.NewLimiterOptions(authCfg)
 	initialAPI := auth.NewAPIWithVersion(
-		config, db, utilities.Version,
+		authCfg, db, utilities.Version,
 		limiterOpts,
-		auth.WithMailer(templatemailer.FromConfig(config, mrCache)),
+		auth.WithMailer(templatemailer.FromConfig(authCfg, mrCache)),
 	)
-	logrus.WithField("version", initialAPI.Version()).Info("GoTrue API initialized")
+	logrus.WithField("version", initialAPI.Version()).Info("auth API initialised")
 
 	ah := reloader.NewAtomicHandler(initialAPI)
 
 	// ── supatype-server outer layer ───────────────────────────────────────────
-	// Load `.env` / `.env.local` from --config dir, cwd, then manifest project root (A22).
-	if cwd, err := os.Getwd(); err == nil {
-		if err := serverconf.LoadDotEnvForServe(cwd, ConfigFile); err != nil {
+	// Load `.env` / `.env.local` from --authCfg dir, cwd, then manifest project root (A22).
+	if cwd, err := getwd(); err == nil {
+		if err := config.LoadDotEnvForServe(cwd, ConfigFile); err != nil {
 			logrus.WithError(err).Warn("serve: .env load failed")
 		}
 	} else {
 		logrus.WithError(err).Debug("serve: getwd failed; skipping .env")
 	}
 
-	srvCfg, err := serverconf.Load()
+	srvCfg, err := config.Load()
 	if err != nil {
-		return fail(fmt.Errorf("serve: failed to load server config: %w", err))
+		return fail(fmt.Errorf("serve: failed to load server authCfg: %w", err))
 	}
 	configureOuterAccessLogging(srvCfg.OuterLogLevel)
+	// The structured logger used to read LOG_LEVEL at package initialisation.
+	// It is set from configuration here instead, before the listener opens.
+	observability.SetStructuredLevel(srvCfg.LogLevel)
+	// Timeouts that used to be parsed from the environment in package inits,
+	// before configuration existed and with log.Fatalf as the error path.
+	provider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
+	smsprovider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
+	security.SetHTTPTimeout(authCfg.Security.Captcha.Timeout)
+	// Every address this deployment answers on, joined from both configs. Studio
+	// refuses to open without authentication unless all of them are local.
+	srvCfg.PublicURLs = []string{
+		strings.TrimSpace(authCfg.API.ExternalURL),
+		strings.TrimSpace(authCfg.SiteURL),
+		strings.TrimSpace(srvCfg.SupatypeURL),
+	}
 	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
 		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
 	}
@@ -140,68 +168,33 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	}
 
 	ref := strings.TrimSpace(srvCfg.ManagedProjectRef)
-	vkAddr := strings.TrimSpace(srvCfg.ValkeyAddr)
 	managed := strings.TrimSpace(srvCfg.Mode) == "managed"
 
-	if vkAddr != "" {
-		vc, vkErr := valkey.New(vkAddr)
-		if vkErr != nil {
-			if managed {
-				return fail(fmt.Errorf("serve: Valkey connect failed (managed mode): %w", vkErr))
-			}
-			logrus.WithError(vkErr).Warn("serve: Valkey connect failed — REST cache will bypass")
-		} else {
-			vkShared = vc
-		}
+	// Every connection this process holds, acquired and released in one place.
+	var resErr error
+	resources, resErr = data.Open(ctx, srvCfg)
+	if resErr != nil {
+		return fail(resErr)
 	}
+	vkShared = resources.Cache()
 
-	mergeFromValkey := managed && vkShared != nil && ref != ""
-	perTenantManifest := managed && vkShared != nil && ref == ""
+	mergeFromValkey := managed && vkShared.Available() && ref != ""
+	perTenantManifest := managed && vkShared.Available() && ref == ""
 
-	var fileManifestAt atomic.Value
-	fileManifestAt.Store(manifest)
-
-	var manifestLive atomic.Value
-	manifestLive.Store(manifest)
-
-	var tenantCache *valkey.TenantManifestCache
+	live := newLiveManifests(manifest)
 	if perTenantManifest {
-		tenantCache = valkey.NewTenantManifestCache(vkShared, 0, func() *proxy.RouteManifest {
-			v := fileManifestAt.Load()
-			if v == nil {
-				return &proxy.RouteManifest{Schema: "public"}
-			}
-			return proxy.CloneRouteManifest(v.(*proxy.RouteManifest))
-		})
+		live.tenant = valkey.NewTenantManifestCache(vkShared, 0, live.Base)
 		logrus.Info("serve: per-tenant route manifests from Valkey (SUPATYPE_MANAGED_PROJECT_REF unset)")
 	}
-
-	reapplyFileManifest := func(fileM *proxy.RouteManifest) {
-		fileManifestAt.Store(fileM)
-		if tenantCache != nil {
-			tenantCache.Flush()
-		}
-		if mergeFromValkey {
-			merged, mergeErr := valkey.LoadMergedManagedManifest(context.Background(), vkShared, ref, fileM)
-			if mergeErr != nil {
-				logrus.WithError(mergeErr).Warn("serve: Valkey manifest merge failed — keeping previous live manifest")
-				return
-			}
-			manifestLive.Store(merged)
-			return
-		}
-		manifestLive.Store(fileM)
-	}
-
 	if mergeFromValkey {
-		reapplyFileManifest(manifest)
+		live.merge = func(ctx context.Context, fileM *proxy.RouteManifest) (*proxy.RouteManifest, error) {
+			return valkey.LoadMergedManagedManifest(ctx, vkShared, ref, fileM)
+		}
+		live.Reapply(manifest)
 		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from Valkey")
 	}
 
-	if watchErr := proxy.Watch(srvCfg.ManifestPath, func(m *proxy.RouteManifest) {
-		reapplyFileManifest(m)
-		logrus.Info("serve: route manifest reloaded")
-	}); watchErr != nil {
+	if watchErr := proxy.Watch(srvCfg.ManifestPath, live.ReloadFrom); watchErr != nil {
 		logrus.WithError(watchErr).Debug("serve: manifest watch not started")
 	}
 
@@ -211,89 +204,34 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	if workerURL != "" {
 		logrus.WithField("url", workerURL).Info("serve: using external functions worker (in-process Deno disabled)")
 	}
-	if workerURL == "" && srvCfg.DenoFunctionsDir != "" && srvCfg.DenoPath != "" {
-		if _, lookErr := exec.LookPath(srvCfg.DenoPath); lookErr != nil {
-			logrus.WithError(lookErr).Warn("serve: Deno not found on PATH — edge function invocations disabled; install Deno or set SUPATYPE_DENO_PATH")
-		} else {
-			serveEntry := strings.TrimSpace(srvCfg.DenoServeScript)
-			if serveEntry == "" {
-				serveEntry = srvCfg.DenoFunctionsDir
-			}
-			if serveEntry != "" {
-				denoPortInt := 8001 // default
-				if srvCfg.DenoPort != "" {
-					if p, parseErr := strconv.Atoi(srvCfg.DenoPort); parseErr == nil {
-						denoPortInt = p
-					}
-				}
-				dm = deno.New(
-					srvCfg.DenoPath,
-					serveEntry,
-					denoPortInt,
-					deno.EdgeSubprocessEnv(srvCfg, strings.TrimSpace(config.API.ExternalURL)),
-					strings.TrimSpace(srvCfg.Mode) == "dev",
-				)
-				dm.Start(ctx)
-			}
-		}
+	if dm = denoSupervisor(srvCfg, authCfg.API.ExternalURL); dm != nil {
+		dm.Start(ctx)
 	}
 
-	denoBaseStr := ""
-	if srvCfg.DenoFunctionsDir != "" {
-		if workerURL != "" {
-			denoBaseStr = workerURL
-		} else if dm != nil {
-			denoBaseStr = "http://127.0.0.1:" + firstNonEmpty(srvCfg.DenoPort, "8001")
-		}
-	}
+	denoBaseStr := denoBaseURL(srvCfg, workerURL, dm)
 
 	healthProbes := func() outerhealth.ProbeConfig {
-		fm := fileManifestAt.Load()
-		var pc outerhealth.ProbeConfig
-		if fm == nil {
-			pc = outerhealth.ProbeConfigFrom(srvCfg, &proxy.RouteManifest{Schema: "public"}, denoBaseStr)
-		} else {
-			pc = outerhealth.ProbeConfigFrom(srvCfg, fm.(*proxy.RouteManifest), denoBaseStr)
-		}
+		pc := outerhealth.ProbeConfigFrom(srvCfg, live.File(), denoBaseStr)
 		pc.SelfBaseURL = outerhealth.SelfBaseURLForRealtimeProbe(
 			srvCfg.HealthSelfBaseURL,
 			srvCfg.Mode,
 			srvCfg.TLSDomain,
-			config.API.Host,
-			config.API.Port,
+			authCfg.API.Host,
+			authCfg.API.Port,
 		)
 		return pc
 	}
 
-	manifestFor := func(req *http.Request) *proxy.RouteManifest {
-		if tenantCache != nil && req != nil {
-			if t := strings.TrimSpace(req.Header.Get("X-Supatype-Tenant")); t != "" {
-				m, terr := tenantCache.Get(req.Context(), t)
-				if terr == nil && m != nil {
-					return m
-				}
-				if terr != nil {
-					logrus.WithError(terr).WithField("tenant", t).Debug("serve: tenant manifest from Valkey failed")
-				}
-			}
-		}
-		v := manifestLive.Load()
-		if v == nil {
-			return &proxy.RouteManifest{Schema: "public"}
-		}
-		return v.(*proxy.RouteManifest)
-	}
-
 	var sendEmailHook http.Handler
-	if config.Hook.SendEmail.Enabled && len(config.Hook.SendEmail.HTTPHookSecrets) > 0 {
-		sendEmailHook = newSendEmailHookReceiver(ah, config.Hook.SendEmail.HTTPHookSecrets)
+	if authCfg.Hook.SendEmail.Enabled && len(authCfg.Hook.SendEmail.HTTPHookSecrets) > 0 {
+		sendEmailHook = newSendEmailHookReceiver(ah, authCfg.Hook.SendEmail.HTTPHookSecrets)
 	}
 
-	outerMux := buildOuterMux(srvCfg, manifestFor, healthProbes, ah, dm, utilities.Version, vkShared, sendEmailHook)
+	outerMux := buildOuterMux(srvCfg, live.For, healthProbes, ah, dm, utilities.Version, resources, sendEmailHook)
 
 	// ── background workers (stop on ctx cancel; drained by the returned func) ──
 	wrkLog := logrus.WithField("component", "apiworker")
-	wrk := apiworker.New(config, mrCache, db, wrkLog)
+	wrk := apiworker.New(authCfg, mrCache, db, wrkLog)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -317,7 +255,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		go func() {
 			defer wg.Done()
 
-			rc := config.Reloading
+			rc := authCfg.Reloading
 			le := logrus.WithFields(logrus.Fields{
 				"component":             "reloader",
 				"notify_enabled":        rc.NotifyEnabled,
@@ -335,33 +273,20 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 				if err != nil {
 					exitFn = le.WithError(err).Error
 				}
-				exitFn("config reloader is exiting")
+				exitFn("authCfg reloader is exiting")
 			}()
 
-			fn := func(latestCfg *conf.GlobalConfiguration) {
-				le.Info("reloading api with new configuration")
-
-				// When config is updated we notify the apiworker.
-				wrk.ReloadConfig(latestCfg)
-
-				// Create a new API version with the updated config.
-				latestAPI := auth.NewAPIWithVersion(
-					latestCfg, db, utilities.Version,
-
-					// Create a new mailer with existing template cache.
-					auth.WithMailer(
-						templatemailer.FromConfig(latestCfg, mrCache),
-					),
-
-					// Persist existing rate limiters.
-					limiterOpts,
-				)
-				ah.Store(latestAPI)
+			reload := &apiReloader{
+				handler:   ah,
+				worker:    wrk,
+				db:        db,
+				templates: mrCache,
+				limiters:  limiterOpts,
 			}
 
 			rl := reloader.NewReloader(rc, WatchDir)
-			if err = rl.Watch(ctx, fn); err != nil {
-				le.WithError(err).Error("config reloader is exiting")
+			if err = rl.Watch(ctx, reload.Apply); err != nil {
+				le.WithError(err).Error("authCfg reloader is exiting")
 			}
 		}()
 	}
@@ -373,12 +298,12 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if dm != nil {
 			dm.Stop()
 		}
-		if vkShared != nil {
-			vkShared.Close()
-		}
+		tenantGateway.Close()
+		_ = resources.Close()
 		_ = db.Close()
 	}
 
-	handler := wrapCloudGateway(outerMux)
+	tenantGateway = platform.New(srvCfg, vkShared)
+	handler := tenantGateway.Wrap(outerMux)
 	return handler, drain, nil
 }

@@ -109,8 +109,6 @@ func TestAllowsRequest(t *testing.T) {
 // `editor` row was handed a full-access UI while the control plane restricted the
 // same role.
 func TestVerifyHandlerReportsRolePermissions(t *testing.T) {
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
 
 	token := signClaims(jwt.MapClaims{
 		"sub": "user-1",
@@ -150,8 +148,6 @@ func TestVerifyHandlerReportsRolePermissions(t *testing.T) {
 }
 
 func TestVerifyHandlerDeniesUnknownRole(t *testing.T) {
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
 
 	token := signClaims(jwt.MapClaims{
 		"sub": "user-1",
@@ -176,8 +172,6 @@ func TestVerifyHandlerDeniesUnknownRole(t *testing.T) {
 // The Studio proxy injects the service role key, so admission alone must not be
 // enough to reach everything behind it.
 func TestProxyHandlerEnforcesRoleOnWrites(t *testing.T) {
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
 
 	token := signClaims(jwt.MapClaims{
 		"sub": "user-1",

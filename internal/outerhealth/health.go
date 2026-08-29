@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // processStart records when this process started (for uptime in /health).
@@ -31,7 +32,7 @@ type ProbeConfig struct {
 
 // Attach mounts GET /health and GET /health/ready on r (supatype-server outer mux).
 // probes is called on each scrape so health reflects dynamic route manifests.
-func Attach(r chi.Router, cfg *serverconf.ServerConfig, version string, probes func() ProbeConfig) {
+func Attach(r chi.Router, cfg *config.Config, version string, probes func() ProbeConfig) {
 	timeout := 2 * time.Second
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -72,7 +73,7 @@ func collectComponents(probes ProbeConfig, timeout time.Duration) map[string]any
 	prReady := prURL != "" && probeHTTPGet(joinURL(prURL, "/"), timeout)
 	out["postgrest"] = map[string]any{"url": prURL, "ready": prReady}
 
-	gqBase := strings.TrimSpace(firstNonEmpty(probes.GraphQLURL, probes.PostgRESTURL))
+	gqBase := strings.TrimSpace(utilities.FirstNonEmpty(probes.GraphQLURL, probes.PostgRESTURL))
 	gqURL := joinURL(gqBase, "/graphql/v1")
 	gqReady := gqBase != "" && probeHTTPGet(gqURL, timeout)
 	out["graphql"] = map[string]any{"url": gqURL, "ready": gqReady}
@@ -150,13 +151,6 @@ func overallStatus(components map[string]any) string {
 	return "degraded"
 }
 
-func firstNonEmpty(a, b string) string {
-	if strings.TrimSpace(a) != "" {
-		return a
-	}
-	return b
-}
-
 func joinURL(base, path string) string {
 	b := strings.TrimRight(strings.TrimSpace(base), "/")
 	if b == "" {
@@ -196,12 +190,4 @@ func isDirReadable(path string) bool {
 		return false
 	}
 	return fi.IsDir()
-}
-
-// probePostgREST is kept for tests that exercised the old helper name.
-func probePostgREST(baseURL string, timeout time.Duration) bool {
-	if strings.TrimSpace(baseURL) == "" {
-		return false
-	}
-	return probeHTTPGet(joinURL(baseURL, "/"), timeout)
 }

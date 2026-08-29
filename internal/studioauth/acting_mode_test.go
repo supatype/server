@@ -69,8 +69,6 @@ func TestUnknownActingModeIsRefused(t *testing.T) {
 // Regression: every Studio request was forwarded with the service role key, so
 // admission to the panel was the same thing as unrestricted database access.
 func TestProxyForwardsCallerTokenForNonElevatedRoles(t *testing.T) {
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
 
 	const serviceRole = "service-role-key"
 	token := signClaims(jwt.MapClaims{
@@ -141,8 +139,6 @@ func TestProxyForwardsCallerTokenForNonElevatedRoles(t *testing.T) {
 }
 
 func TestVerifyReportsActingMode(t *testing.T) {
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
 
 	token := signClaims(jwt.MapClaims{
 		"sub": "user-1",

@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
-	"github.com/supatype/server/internal/serverconf"
 )
 
 // The route table is a behaviour lock for the coherence refactor.
@@ -32,7 +32,7 @@ import (
 type routeScenario struct {
 	name     string
 	golden   string
-	cfg      *serverconf.ServerConfig
+	cfg      *config.Config
 	manifest *proxy.RouteManifest
 }
 
@@ -42,7 +42,7 @@ func routeScenarios() []routeScenario {
 			// Nothing optional configured: the routes that always exist.
 			name:     "minimal",
 			golden:   "routes-minimal.txt",
-			cfg:      &serverconf.ServerConfig{Mode: "standalone"},
+			cfg:      &config.Config{Mode: "standalone"},
 			manifest: &proxy.RouteManifest{Schema: "public"},
 		},
 		{
@@ -50,7 +50,7 @@ func routeScenarios() []routeScenario {
 			// maximal route set and a dropped conditional shows up as a diff.
 			name:   "full",
 			golden: "routes-full.txt",
-			cfg: &serverconf.ServerConfig{
+			cfg: &config.Config{
 				Mode:               "standalone",
 				PostgRESTURL:       "http://postgrest.invalid",
 				GraphQLURL:         "http://graphql.invalid",

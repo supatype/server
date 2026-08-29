@@ -33,7 +33,7 @@ type TokenTestSuite struct {
 }
 
 func TestToken(t *testing.T) {
-	os.Setenv("GOTRUE_RATE_LIMIT_HEADER", "My-Custom-Header")
+	os.Setenv("SUPATYPE_RATE_LIMIT_HEADER", "My-Custom-Header")
 	api, config, err := setupAPIForTest()
 	require.NoError(t, err)
 

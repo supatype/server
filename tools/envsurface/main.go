@@ -17,7 +17,7 @@ import (
 	"os"
 
 	"github.com/supatype/server/internal/conf"
-	"github.com/supatype/server/internal/serverconf"
+	"github.com/supatype/server/internal/config"
 )
 
 // goldenPath is the checked-in surface, relative to the repository root.
@@ -47,19 +47,20 @@ func main() {
 
 // Collect gathers the whole surface: both config structs and every direct read.
 //
-// The GoTrue prefix is passed explicitly rather than read from a constant
-// because it is the thing being removed, and this tool has to keep describing
-// the surface accurately while that happens.
+// The auth prefix comes from conf.EnvPrefix rather than being written out here.
+// A tool that restates the value it is checking cannot notice when the value
+// changes, which is exactly what happened when the prefix moved and this file
+// went on reporting the old surface.
 func Collect(root string) (string, error) {
 	var vars []Var
 
-	global, err := StructNames("gotrue", &conf.GlobalConfiguration{}, "internal/conf.GlobalConfiguration")
+	global, err := StructNames(conf.EnvPrefix, &conf.GlobalConfiguration{}, "internal/conf.GlobalConfiguration")
 	if err != nil {
 		return "", fmt.Errorf("gather auth config: %w", err)
 	}
 	vars = append(vars, global...)
 
-	server, err := StructNames("", &serverconf.ServerConfig{}, "internal/serverconf.ServerConfig")
+	server, err := StructNames("", &config.Config{}, "internal/config.Config")
 	if err != nil {
 		return "", fmt.Errorf("gather server config: %w", err)
 	}

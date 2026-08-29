@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,10 +56,10 @@ func TestSurfaceStillCarriesKnownNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{
-		"GOTRUE_JWT_SECRET",      // auth config, the most load-bearing variable
-		"GOTRUE_DB_DATABASE_URL", // prefixed key
-		"DATABASE_URL",           // the bare fallback for the same field
-		"SUPATYPE_MODE",          // gateway config
+		"SUPATYPE_JWT_SECRET",      // auth config, the most load-bearing variable
+		"SUPATYPE_DB_DATABASE_URL", // prefixed key
+		"DATABASE_URL",             // the bare fallback for the same field
+		"SUPATYPE_MODE",            // gateway config
 		"SUPATYPE_SQL_DATABASE_URL",
 		"STORAGE_PATH",
 	} {
@@ -76,7 +77,7 @@ func TestStructNames_recordsKeyAndBareAlt(t *testing.T) {
 		Nested inner
 		Plain  string
 	}
-	got, err := StructNames("gotrue", &spec{}, "test")
+	got, err := StructNames("supatype", &spec{}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestStructNames_recordsKeyAndBareAlt(t *testing.T) {
 			t.Errorf("unexpected provenance: %+v", v)
 		}
 	}
-	for _, want := range []string{"GOTRUE_NESTED_JWT_SECRET", "JWT_SECRET", "GOTRUE_PLAIN"} {
+	for _, want := range []string{"SUPATYPE_NESTED_JWT_SECRET", "JWT_SECRET", "SUPATYPE_PLAIN"} {
 		if !names[want] {
 			t.Errorf("missing %s from %v", want, names)
 		}
@@ -95,7 +96,7 @@ func TestStructNames_recordsKeyAndBareAlt(t *testing.T) {
 }
 
 func TestStructNames_rejectsNonPointer(t *testing.T) {
-	if _, err := StructNames("gotrue", struct{}{}, "test"); err == nil {
+	if _, err := StructNames("supatype", struct{}{}, "test"); err == nil {
 		t.Fatal("want error for a non-pointer spec")
 	}
 }
@@ -333,5 +334,93 @@ func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// directReadBudget is the number of `call`-provenance entries the surface may
+// still record: variables read with os.Getenv from inside a package rather than
+// handed to it as configuration.
+//
+// It only ever goes down. Every remaining one is an auth-service variable that
+// moves when the SUPATYPE_ prefix does, so this reaches zero in the rename phase.
+// Until then this is what stops a new direct read appearing unnoticed, which is
+// exactly how twelve packages came to read their own configuration.
+const directReadBudget = 0
+
+func TestDirectEnvReadsOnlyShrink(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot, goldenPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reads []string
+	for _, line := range strings.Split(string(body), "\n") {
+		read := strings.TrimSpace(line)
+		if !strings.HasPrefix(read, "call ") {
+			continue
+		}
+		// internal/config is the one package allowed to read the environment;
+		// that is its job. The budget counts everywhere else.
+		if strings.Contains(read, "internal/config/") {
+			continue
+		}
+		reads = append(reads, read)
+	}
+	if len(reads) > directReadBudget {
+		t.Errorf("%d direct env reads, budget is %d. Take the variable through "+
+			"internal/config instead of reading it where it is used:\n  %s",
+			len(reads), directReadBudget, strings.Join(reads, "\n  "))
+	}
+	if len(reads) < directReadBudget {
+		t.Errorf("only %d direct env reads remain but the budget is still %d. "+
+			"Lower directReadBudget to %d so the ground gained is held.",
+			len(reads), directReadBudget, len(reads))
+	}
+}
+
+// TestTheOldPrefixIsGone stops GOTRUE_ reappearing.
+//
+// The rename touched 573 variables across the service, its example files, its
+// schema and its docs. One reintroduced name would be a variable nothing reads,
+// and the preflight would only catch it on a deployment that actually set it.
+//
+// Only tracked files are scanned, so build artifacts and local scratch cannot
+// fail the build.
+func TestTheOldPrefixIsGone(t *testing.T) {
+	// Three files are allowed to say it, and each has to.
+	//
+	//   CHANGELOG            records what happened and must keep saying so.
+	//   env-surface.txt      is generated from the code, so it cannot introduce
+	//                        anything the code does not already have.
+	//   preflight.go / its   are the code that detects the old prefix, and this
+	//   test, and this file  file is the guard itself.
+	allowed := map[string]bool{
+		"CHANGELOG.md":                      true,
+		"hack/env-surface.txt":              true,
+		"internal/config/preflight.go":      true,
+		"internal/config/preflight_test.go": true,
+		"tools/envsurface/surface_test.go":  true,
+	}
+
+	out, err := exec.Command("git", "-C", repoRoot, "ls-files").Output()
+	if err != nil {
+		t.Fatalf("listing tracked files: %v", err)
+	}
+
+	var offenders []string
+	for _, rel := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		rel = strings.TrimSpace(rel)
+		if rel == "" || allowed[rel] {
+			continue
+		}
+		body, readErr := os.ReadFile(filepath.Join(repoRoot, rel)) // #nosec G304 -- tracked repository file
+		if readErr != nil {
+			continue
+		}
+		if strings.Contains(string(body), "GOTRUE_") {
+			offenders = append(offenders, rel)
+		}
+	}
+	if len(offenders) > 0 {
+		t.Errorf("the old prefix is back in:\n  %s", strings.Join(offenders, "\n  "))
 	}
 }

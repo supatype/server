@@ -12,7 +12,7 @@ import (
 // TenantManifestCache caches merged route manifests per tenant ref for managed
 // mode when SUPATYPE_MANAGED_PROJECT_REF is not set (multi-tenant edge).
 type TenantManifestCache struct {
-	vk    *Client
+	vk    Client
 	ttl   time.Duration
 	base  func() *proxy.RouteManifest
 	sf    singleflight.Group
@@ -28,7 +28,7 @@ type tenantManifestEntry struct {
 // NewTenantManifestCache returns a cache. base must return a fresh clone or
 // immutable manifest used as the file layer for each merge. ttl <= 0 defaults
 // to 30s.
-func NewTenantManifestCache(vk *Client, ttl time.Duration, base func() *proxy.RouteManifest) *TenantManifestCache {
+func NewTenantManifestCache(vk Client, ttl time.Duration, base func() *proxy.RouteManifest) *TenantManifestCache {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}

@@ -10,7 +10,7 @@ import (
 type ContextKey string
 
 func (c ContextKey) String() string {
-	return "gotrue api context key " + string(c)
+	return "auth api context key " + string(c)
 }
 
 // Context keys used across packages

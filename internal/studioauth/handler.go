@@ -1,14 +1,14 @@
 package studioauth
 
 import (
-	"encoding/json"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/studiomembers"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Config holds studio auth handler dependencies.
@@ -21,6 +21,17 @@ type Config struct {
 	AnonKey    string
 	AdminRoles []string
 	Mode       string
+	// Resources carries the process connections, for the endpoints that read the
+	// schema snapshot straight from the database.
+	Resources *data.Resources
+	// Members reads and writes Studio membership. It carries the process
+	// resources, so a deployment with no database still yields a usable value
+	// whose every call reports that and denies.
+	Members studiomembers.Store
+	// PublicURLs are the addresses this deployment answers on. DevBypass refuses
+	// to open Studio unless every one of them is local, so convenience cannot
+	// follow a copied config into production.
+	PublicURLs []string
 	// OpenDev opens Studio without authentication. It is only honoured in dev
 	// mode on a locally addressed deployment; see Config.DevBypass.
 	OpenDev bool
@@ -46,6 +57,7 @@ func ConfigFromServer(cfg *config.Config) Config {
 		AdminRoles:     AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
 		Mode:           cfg.Mode,
 		OpenDev:        cfg.StudioOpenDev.Bool(),
+		PublicURLs:     cfg.PublicURLs,
 	}
 }
 
@@ -53,12 +65,12 @@ func ConfigFromServer(cfg *config.Config) Config {
 func VerifyHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 
 		if c.DevBypass() {
-			writeJSON(w, http.StatusOK, verifyOKResponse(Result{
+			utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(Result{
 				Role: "dev-bypass",
 				Sub:  "dev-bypass",
 			}))
@@ -71,7 +83,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			if result.Sub == "" && result.Message == "Authentication required" {
 				status = http.StatusUnauthorized
 			}
-			writeJSON(w, status, map[string]interface{}{
+			utilities.WriteJSON(w, status, map[string]interface{}{
 				"error":   "forbidden",
 				"message": result.Message,
 				"allowed": false,
@@ -79,7 +91,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, verifyOKResponse(result))
+		utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(result))
 	}
 }
 
@@ -126,7 +138,7 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 			if result.Message == "Authentication required" {
 				status = http.StatusUnauthorized
 			}
-			writeJSON(w, status, map[string]string{"error": result.Message})
+			utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
 			return
 		}
 		next.ServeHTTP(w, req)
@@ -147,7 +159,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 				if result.Message == "Authentication required" {
 					status = http.StatusUnauthorized
 				}
-				writeJSON(w, status, map[string]string{"error": result.Message})
+				utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
 				return
 			}
 			actor = result.Sub
@@ -159,7 +171,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 				perms = *result.Permissions
 			}
 			if !AllowsRequest(perms, req.Method, req.URL.Path) {
-				writeJSON(w, http.StatusForbidden, map[string]string{
+				utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 					"error": "Studio role \"" + result.Role + "\" cannot perform this request",
 				})
 				return
@@ -168,39 +180,32 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 			var ok bool
 			mode, ok = resolveActingMode(req, perms)
 			if !ok {
-				writeJSON(w, http.StatusForbidden, map[string]string{
+				utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 					"error": "Studio role \"" + result.Role + "\" cannot act with elevated access",
 				})
 				return
 			}
 		}
 
+		// Clone already deep-copies the URL, so the three branches that copied it
+		// again — two of which could not run, because net/http never hands a
+		// server handler a request without one — are gone. An empty path is not
+		// a valid request-target, so that default stays.
 		req2 := req.Clone(req.Context())
-		if req2.URL != nil {
-			u := *req2.URL
-			req2.URL = &u
-		} else if req.URL != nil {
-			u := *req.URL
-			req2.URL = &u
-		} else {
-			req2.URL = &url.URL{}
+		if req2.URL.Path == "" {
+			req2.URL.Path = "/"
 		}
-		path := req2.URL.Path
-		if path == "" {
-			path = "/"
-		}
-		req2.URL.Path = path
 
 		if mode == ModeElevated {
 			sr := strings.TrimSpace(c.ServiceRoleKey)
 			if sr == "" {
-				writeJSON(w, http.StatusServiceUnavailable,
+				utilities.WriteJSON(w, http.StatusServiceUnavailable,
 					map[string]string{"error": "service role key not configured"})
 				return
 			}
 			req2.Header.Set("Authorization", "Bearer "+sr)
 			req2.Header.Set("apikey", sr)
-			recordElevatedRequest(req, actor, req2.URL.Path)
+			recordElevatedRequest(c.Members, req, actor, req2.URL.Path)
 		} else {
 			// Leave the caller's own Authorization in place: PostgREST assumes
 			// their role and their own RLS policies apply. `apikey` still has to
@@ -223,7 +228,7 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 // Reads are logged only: Studio polls, and an audit row per read would bury the
 // membership trail in noise. Anything that could change data gets a durable row,
 // because "who edited this outside their own policies" must survive log rotation.
-func recordElevatedRequest(req *http.Request, actor, path string) {
+func recordElevatedRequest(members studiomembers.Store, req *http.Request, actor, path string) {
 	readOnly := req.Method == http.MethodGet ||
 		req.Method == http.MethodHead ||
 		req.Method == http.MethodOptions
@@ -238,11 +243,5 @@ func recordElevatedRequest(req *http.Request, actor, path string) {
 	if readOnly {
 		return
 	}
-	studiomembers.AuditElevated(req.Context(), actor, req.Method, path)
-}
-
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	members.AuditElevated(req.Context(), actor, req.Method, path)
 }

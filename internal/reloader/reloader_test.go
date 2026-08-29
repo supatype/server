@@ -20,6 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/e2e"
+	"sync"
+
 	"golang.org/x/sync/errgroup"
 )
 
@@ -138,7 +140,7 @@ func TestWatchNotify(t *testing.T) {
 		require.False(t, isWatchable(invalidDir))
 
 		name := helpWriteEnvFile(t, dir, "05_example.env", map[string]string{
-			"GOTRUE_SMTP_PORT": "2222",
+			"SUPATYPE_SMTP_PORT": "2222",
 		})
 		require.False(t, isWatchable(name))
 
@@ -376,7 +378,7 @@ func TestWatchNotify(t *testing.T) {
 				case <-tr.C:
 					// write to the config
 					helpWriteEnvFile(t, dir, "01_conf.env", map[string]string{
-						"GOTRUE_SMTP_PORT": "11111",
+						"SUPATYPE_SMTP_PORT": "11111",
 					})
 				}
 			}
@@ -436,7 +438,7 @@ func TestWatchNotify(t *testing.T) {
 				case <-tr.C:
 					// write to the config
 					helpWriteEnvFile(t, dir, "01_conf.env", map[string]string{
-						"GOTRUE_SMTP_PORT": "11111",
+						"SUPATYPE_SMTP_PORT": "11111",
 					})
 				}
 			}
@@ -519,7 +521,7 @@ func TestWatchNotify(t *testing.T) {
 			drain(rr.reloadCh)
 
 			name := helpWriteEnvFile(t, dir, "02_example.env", map[string]string{
-				"GOTRUE_EXTERNAL_APPLE_ENABLED": "true",
+				"SUPATYPE_EXTERNAL_APPLE_ENABLED": "true",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -534,7 +536,7 @@ func TestWatchNotify(t *testing.T) {
 
 		{
 			name := helpWriteEnvFile(t, dir, "03_example.env.bak", map[string]string{
-				"GOTRUE_EXTERNAL_APPLE_ENABLED": "false",
+				"SUPATYPE_EXTERNAL_APPLE_ENABLED": "false",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -547,7 +549,7 @@ func TestWatchNotify(t *testing.T) {
 			drain(rr.reloadCh)
 
 			name := helpWriteEnvFile(t, dir, "04_example.env", map[string]string{
-				"GOTRUE_SMTP_PORT": "ABC",
+				"SUPATYPE_SMTP_PORT": "ABC",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -566,7 +568,7 @@ func TestWatchNotify(t *testing.T) {
 
 		{
 			name := helpWriteEnvFile(t, dir, "05_example.env", map[string]string{
-				"GOTRUE_SMTP_PORT": "2222",
+				"SUPATYPE_SMTP_PORT": "2222",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -586,7 +588,7 @@ func TestWatchNotify(t *testing.T) {
 			wr.setErr(sentinelErr)
 
 			name := helpWriteEnvFile(t, dir, "05_example.env", map[string]string{
-				"GOTRUE_SMTP_PORT": "2221",
+				"SUPATYPE_SMTP_PORT": "2221",
 			})
 			wr.eventCh <- fsnotify.Event{
 				Name: name,
@@ -626,7 +628,7 @@ func TestReloadConfig(t *testing.T) {
 	}
 
 	helpWriteEnvFile(t, dir, "02_example.env", map[string]string{
-		"GOTRUE_EXTERNAL_APPLE_ENABLED": "true",
+		"SUPATYPE_EXTERNAL_APPLE_ENABLED": "true",
 	})
 	{
 		cfg, err := rl.reload()
@@ -636,7 +638,7 @@ func TestReloadConfig(t *testing.T) {
 	}
 
 	helpWriteEnvFile(t, dir, "03_example.env.bak", map[string]string{
-		"GOTRUE_EXTERNAL_APPLE_ENABLED": "false",
+		"SUPATYPE_EXTERNAL_APPLE_ENABLED": "false",
 	})
 	{
 		cfg, err := rl.reload()
@@ -647,8 +649,8 @@ func TestReloadConfig(t *testing.T) {
 
 	// test cfg reload failure
 	helpWriteEnvFile(t, dir, "04_example.env", map[string]string{
-		"PORT":             "INVALIDPORT",
-		"GOTRUE_SMTP_PORT": "ABC",
+		"PORT":               "INVALIDPORT",
+		"SUPATYPE_SMTP_PORT": "ABC",
 	})
 	{
 		cfg, err := rl.reload()
@@ -892,3 +894,55 @@ func (o *mockFile) Sys() any           { return nil }
 func (o *mockFile) Type() fs.FileMode          { return o.mode }
 func (o *mockFile) Info() (fs.FileInfo, error) { return o.info, o.check() }
 func (o *mockFile) String() string             { return fs.FormatDirEntry(o) }
+
+// mockWatcher is a watcher a test can drive.
+//
+// It lived in reloader.go, which meant a test double shipped in the binary,
+// counted by the coverage gate and reachable by production callers.
+type mockWatcher struct {
+	mu      sync.Mutex
+	err     error
+	eventCh chan fsnotify.Event
+	errorCh chan error
+	addCh   chan string
+}
+
+func newMockWatcher(err error) *mockWatcher {
+	wr := &mockWatcher{
+		err:     err,
+		eventCh: make(chan fsnotify.Event, 1024),
+		errorCh: make(chan error, 1024),
+		addCh:   make(chan string, 1024),
+	}
+	return wr
+}
+
+func (o *mockWatcher) getErr() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	err := o.err
+	return err
+}
+
+func (o *mockWatcher) setErr(err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.err = err
+}
+
+func (o *mockWatcher) Add(path string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.err; err != nil {
+		return err
+	}
+
+	select {
+	case o.addCh <- path:
+	default:
+	}
+	return nil
+}
+func (o *mockWatcher) Close() error                { return o.getErr() }
+func (o *mockWatcher) Events() chan fsnotify.Event { return o.eventCh }
+func (o *mockWatcher) Errors() chan error          { return o.errorCh }

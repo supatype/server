@@ -29,7 +29,7 @@ func Meter(instrumentationName string, opts ...metric.MeterOption) metric.Meter 
 }
 
 func ObtainMetricCounter(name, desc string) metric.Int64Counter {
-	counter, err := Meter("gotrue").Int64Counter(name, metric.WithDescription(desc))
+	counter, err := Meter("supatype-auth").Int64Counter(name, metric.WithDescription(desc))
 	if err != nil {
 		panic(err)
 	}
@@ -185,17 +185,17 @@ func ConfigureMetrics(ctx context.Context, mc *conf.MetricsConfig) error {
 			logrus.Info("Go runtime metrics collection started")
 		}
 
-		meter := otel.Meter("gotrue")
+		meter := otel.Meter("supatype-auth")
 		_, err := meter.Int64ObservableGauge(
-			"gotrue_running",
-			metric.WithDescription("Whether GoTrue is running (always 1)"),
+			"supatype_auth_running",
+			metric.WithDescription("Whether the auth service is running (always 1)"),
 			metric.WithInt64Callback(func(_ context.Context, obsrv metric.Int64Observer) error {
 				obsrv.Observe(int64(1))
 				return nil
 			}),
 		)
 		if err != nil {
-			logrus.WithError(err).Error("unable to get gotrue.gotrue_running gague metric")
+			logrus.WithError(err).Error("unable to get supatype_auth_running gague metric")
 			return
 		}
 		if utilities.Version != "" {

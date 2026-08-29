@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/server/internal/dbpool"
 )
 
 // writeTimeout bounds membership mutations. Longer than a lookup — these run from
@@ -32,13 +31,14 @@ type Member struct {
 	UpdatedAt string `json:"updatedAt"`
 	// PlatformAccount marks a grant held by a Supatype Cloud account rather than
 	// one of this project's own users. Those cannot sign in to a self-hosted
-	// GoTrue, so self-host lists them read-only rather than pretending otherwise.
+	// deployment, so self-host lists them read-only rather than pretending
+	// otherwise.
 	PlatformAccount bool `json:"platformAccount"`
 }
 
 // List returns every Studio membership for this project, project users first.
-func List(ctx context.Context) ([]Member, error) {
-	pool, err := dbpool.Pool(ctx)
+func (s Store) List(ctx context.Context) ([]Member, error) {
+	pool, err := s.pool()
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func List(ctx context.Context) ([]Member, error) {
 // self-promotion is the escalation this whole design exists to prevent — and the
 // last admin cannot be demoted, because there would then be nobody able to grant
 // access to anyone.
-func SetRole(ctx context.Context, actingUserID, targetUserID, role string) error {
+func (s Store) SetRole(ctx context.Context, actingUserID, targetUserID, role string) error {
 	actingUserID = strings.TrimSpace(actingUserID)
 	targetUserID = strings.TrimSpace(targetUserID)
 	role = strings.TrimSpace(role)
@@ -92,7 +92,7 @@ func SetRole(ctx context.Context, actingUserID, targetUserID, role string) error
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := s.pool()
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func SetRole(ctx context.Context, actingUserID, targetUserID, role string) error
 }
 
 // Revoke removes a membership. Same self and last-admin protections as SetRole.
-func Revoke(ctx context.Context, actingUserID, targetUserID string) error {
+func (s Store) Revoke(ctx context.Context, actingUserID, targetUserID string) error {
 	actingUserID = strings.TrimSpace(actingUserID)
 	targetUserID = strings.TrimSpace(targetUserID)
 
@@ -146,7 +146,7 @@ func Revoke(ctx context.Context, actingUserID, targetUserID string) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := s.pool()
 	if err != nil {
 		return err
 	}
@@ -182,8 +182,8 @@ const RoleAdmin = "admin"
 // No target: the record is about what the actor did, not about someone else. The
 // method and path go in `detail` so the trail says *what* was reached, which is
 // the whole point of making elevation visible.
-func AuditElevated(ctx context.Context, actorID, method, path string) {
-	pool, err := dbpool.Pool(ctx)
+func (s Store) AuditElevated(ctx context.Context, actorID, method, path string) {
+	pool, err := s.pool()
 	if err != nil {
 		logrus.WithError(err).Error("studiomembers: elevated request not audited")
 		return
@@ -219,8 +219,8 @@ func AuditElevated(ctx context.Context, actorID, method, path string) {
 //
 // `actorID` is empty when the change came from a path with no signed-in actor
 // (the dev bypass, or the CLI against the database directly).
-func Audit(ctx context.Context, actorID, targetID, action, role string) {
-	pool, err := dbpool.Pool(ctx)
+func (s Store) Audit(ctx context.Context, actorID, targetID, action, role string) {
+	pool, err := s.pool()
 	if err != nil {
 		logrus.WithError(err).Error("studiomembers: membership change not audited")
 		return
@@ -251,27 +251,25 @@ func Audit(ctx context.Context, actorID, targetID, action, role string) {
 }
 
 // guardLastAdmin refuses a change that would leave nobody able to grant access.
+//
+// One query rather than two: both read the same table inside the same
+// transaction, so asking twice bought nothing but a second round trip and a
+// second failure to handle.
 func guardLastAdmin(ctx context.Context, tx pgx.Tx, targetUserID string) error {
-	var targetIsAdmin bool
+	var (
+		targetIsAdmin bool
+		adminCount    int
+	)
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM _supatype.studio_members
 			 WHERE role = $2
-			   AND (user_id = $1::uuid OR platform_user_id = $1::uuid))`,
-		targetUserID, RoleAdmin).Scan(&targetIsAdmin); err != nil {
+			   AND (user_id = $1::uuid OR platform_user_id = $1::uuid)),
+		       (SELECT count(*) FROM _supatype.studio_members WHERE role = $2)`,
+		targetUserID, RoleAdmin).Scan(&targetIsAdmin, &adminCount); err != nil {
 		return err
 	}
-	if !targetIsAdmin {
-		return nil
-	}
-
-	var adminCount int
-	if err := tx.QueryRow(ctx,
-		`SELECT count(*) FROM _supatype.studio_members WHERE role = $1`,
-		RoleAdmin).Scan(&adminCount); err != nil {
-		return err
-	}
-	if adminCount <= 1 {
+	if targetIsAdmin && adminCount <= 1 {
 		return ErrLastAdmin
 	}
 	return nil

@@ -4,7 +4,7 @@ package docs
 import "github.com/supatype/server/internal/auth"
 
 // swagger:route GET /settings settings settings
-// Returns the configuration settings for the gotrue server.
+// Returns the configuration settings for the auth service.
 // responses:
 //   200: settingsResponse
 

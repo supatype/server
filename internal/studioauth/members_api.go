@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/supatype/server/internal/studiomembers"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // MembersAPI serves the Studio membership assignment API:
@@ -28,7 +29,7 @@ func MembersAPI(c Config) http.Handler {
 
 		if strings.HasPrefix(path, "/studio-roles") {
 			if req.Method != http.MethodGet {
-				writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+				utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 				return
 			}
 			// The catalogue is not sensitive, but it still requires admission —
@@ -36,7 +37,7 @@ func MembersAPI(c Config) http.Handler {
 			if _, ok := requireMemberAdmin(w, req, c, false); !ok {
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{"roles": roleCatalogue()})
+			utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{"roles": roleCatalogue()})
 			return
 		}
 
@@ -45,19 +46,19 @@ func MembersAPI(c Config) http.Handler {
 		switch req.Method {
 		case http.MethodGet:
 			if target != "" {
-				writeJSON(w, http.StatusNotFound, errorBody("not found"))
+				utilities.WriteJSON(w, http.StatusNotFound, errorBody("not found"))
 				return
 			}
 			if _, ok := requireMemberAdmin(w, req, c, false); !ok {
 				return
 			}
-			members, err := studiomembers.List(req.Context())
+			members, err := c.Members.List(req.Context())
 			if err != nil {
-				writeJSON(w, http.StatusServiceUnavailable,
+				utilities.WriteJSON(w, http.StatusServiceUnavailable,
 					errorBody("could not read Studio membership"))
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{"members": members})
+			utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{"members": members})
 
 		case http.MethodPatch:
 			acting, ok := requireMemberAdmin(w, req, c, true)
@@ -65,7 +66,7 @@ func MembersAPI(c Config) http.Handler {
 				return
 			}
 			if target == "" {
-				writeJSON(w, http.StatusBadRequest, errorBody("user id is required"))
+				utilities.WriteJSON(w, http.StatusBadRequest, errorBody("user id is required"))
 				return
 			}
 
@@ -73,22 +74,22 @@ func MembersAPI(c Config) http.Handler {
 				Role string `json:"role"`
 			}
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-				writeJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
+				utilities.WriteJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
 				return
 			}
 			role := strings.TrimSpace(body.Role)
 			if _, known := PermissionsForRole(role); !known {
-				writeJSON(w, http.StatusBadRequest, errorBody(
+				utilities.WriteJSON(w, http.StatusBadRequest, errorBody(
 					"role must be one of: "+strings.Join(KnownStudioRoles(), ", ")))
 				return
 			}
 
-			if err := studiomembers.SetRole(req.Context(), acting, target, role); err != nil {
+			if err := c.Members.SetRole(req.Context(), acting, target, role); err != nil {
 				writeMemberError(w, err)
 				return
 			}
-			studiomembers.Audit(req.Context(), acting, target, "set_role", role)
-			writeJSON(w, http.StatusOK, map[string]interface{}{
+			c.Members.Audit(req.Context(), acting, target, "set_role", role)
+			utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{
 				"userId": target, "role": role,
 			})
 
@@ -98,18 +99,18 @@ func MembersAPI(c Config) http.Handler {
 				return
 			}
 			if target == "" {
-				writeJSON(w, http.StatusBadRequest, errorBody("user id is required"))
+				utilities.WriteJSON(w, http.StatusBadRequest, errorBody("user id is required"))
 				return
 			}
-			if err := studiomembers.Revoke(req.Context(), acting, target); err != nil {
+			if err := c.Members.Revoke(req.Context(), acting, target); err != nil {
 				writeMemberError(w, err)
 				return
 			}
-			studiomembers.Audit(req.Context(), acting, target, "revoke", "")
-			writeJSON(w, http.StatusOK, map[string]interface{}{"userId": target, "role": nil})
+			c.Members.Audit(req.Context(), acting, target, "revoke", "")
+			utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{"userId": target, "role": nil})
 
 		default:
-			writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 		}
 	})
 }
@@ -134,7 +135,7 @@ func requireMemberAdmin(
 		if result.Message == "Authentication required" {
 			status = http.StatusUnauthorized
 		}
-		writeJSON(w, status, errorBody(result.Message))
+		utilities.WriteJSON(w, status, errorBody(result.Message))
 		return "", false
 	}
 
@@ -150,7 +151,7 @@ func requireMemberAdmin(
 		allowed = perms.ManageMembers || perms.SchemaView
 	}
 	if !allowed {
-		writeJSON(w, http.StatusForbidden, errorBody(
+		utilities.WriteJSON(w, http.StatusForbidden, errorBody(
 			"Studio role \""+result.Role+"\" cannot manage Studio membership"))
 		return "", false
 	}
@@ -161,13 +162,13 @@ func requireMemberAdmin(
 func writeMemberError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, studiomembers.ErrUnknownUser):
-		writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+		utilities.WriteJSON(w, http.StatusNotFound, errorBody(err.Error()))
 	case errors.Is(err, studiomembers.ErrLastAdmin):
-		writeJSON(w, http.StatusConflict, errorBody(err.Error()))
+		utilities.WriteJSON(w, http.StatusConflict, errorBody(err.Error()))
 	default:
 		// Self-change refusals and anything else the store rejected. These are
 		// caller mistakes, not server faults.
-		writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+		utilities.WriteJSON(w, http.StatusBadRequest, errorBody(err.Error()))
 	}
 }
 

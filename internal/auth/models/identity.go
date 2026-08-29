@@ -12,11 +12,11 @@ import (
 )
 
 type Identity struct {
-	// returned as identity_id in JSON for backward compatibility with the interface exposed by the client library
-	// see https://github.com/supabase/gotrue-js/blob/c9296bbc27a2f036af55c1f33fca5930704bd021/src/lib/types.ts#L230-L240
-	ID uuid.UUID `json:"identity_id" db:"id"`
-	// returned as id in JSON for backward compatibility with the interface exposed by the client library
-	// see https://github.com/supabase/gotrue-js/blob/c9296bbc27a2f036af55c1f33fca5930704bd021/src/lib/types.ts#L230-L240
+	// The two JSON names are swapped relative to the Go fields, deliberately:
+	// client libraries expect identity_id to be the row id and id to be the
+	// provider's own identifier. Correcting it would be a breaking change to
+	// every client.
+	ID           uuid.UUID          `json:"identity_id" db:"id"`
 	ProviderID   string             `json:"id" db:"provider_id"`
 	UserID       uuid.UUID          `json:"user_id" db:"user_id"`
 	IdentityData JSONMap            `json:"identity_data,omitempty" db:"identity_data"`

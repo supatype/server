@@ -17,7 +17,7 @@ func RouteManifestKey(ref string) string {
 // pod: start from fileManifest (typically SUPATYPE_MANIFEST_PATH), overlay
 // routing fields from tenant:{ref}:config, then overlay tenant:{ref}:manifest
 // when present.
-func LoadMergedManagedManifest(ctx context.Context, c *Client, ref string, fileManifest *proxy.RouteManifest) (*proxy.RouteManifest, error) {
+func LoadMergedManagedManifest(ctx context.Context, c Client, ref string, fileManifest *proxy.RouteManifest) (*proxy.RouteManifest, error) {
 	out := proxy.CloneRouteManifest(fileManifest)
 
 	tc, err := c.GetTenantConfig(ctx, ref)

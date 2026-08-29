@@ -9,7 +9,7 @@ import (
 )
 
 // Data-plane prefixes that require a project API key. `/auth/v1` is deliberately
-// absent: GoTrue enforces its own credentials there, and the control plane
+// absent: the auth service enforces its own credentials there, and the control plane
 // proxies admin calls through it.
 var apiKeyProtectedPrefixes = []string{
 	"/rest/v1",

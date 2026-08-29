@@ -8,6 +8,7 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/supatype/server/internal/studiobootstrap"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Studio's two bootstrap endpoints:
@@ -25,7 +26,7 @@ import (
 func SchemaHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 			return
 		}
 
@@ -34,13 +35,13 @@ func SchemaHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		snapshot, err := studiobootstrap.LoadSnapshot(req.Context())
+		snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources)
 		if err != nil {
 			if errors.Is(err, studiobootstrap.ErrNoSchemaState) {
-				writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+				utilities.WriteJSON(w, http.StatusNotFound, errorBody(err.Error()))
 				return
 			}
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("could not read schema state"))
+			utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("could not read schema state"))
 			return
 		}
 
@@ -60,11 +61,11 @@ func SchemaHandler(c Config) http.HandlerFunc {
 
 		models, err := studiobootstrap.FilterForCaller(snapshot, caller)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorBody("could not read the schema AST"))
+			utilities.WriteJSON(w, http.StatusInternalServerError, errorBody("could not read the schema AST"))
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"schemaHash":  snapshot.Hash,
 			"models":      models,
 			"adminConfig": rawOrNull(snapshot.AdminConfig),
@@ -81,7 +82,7 @@ func SchemaHandler(c Config) http.HandlerFunc {
 func SessionHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 			return
 		}
 
@@ -111,7 +112,7 @@ func SessionHandler(c Config) http.HandlerFunc {
 
 		// Row-independent access per model, so Studio can grey out what is settled
 		// and only ask per row where the answer genuinely depends on one.
-		if snapshot, err := studiobootstrap.LoadSnapshot(req.Context()); err == nil {
+		if snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources); err == nil {
 			if models, err := studiobootstrap.FilterForCaller(snapshot, caller); err == nil {
 				access := make(map[string]map[string]studiobootstrap.Verdict, len(models))
 				for _, m := range models {
@@ -131,7 +132,7 @@ func SessionHandler(c Config) http.HandlerFunc {
 		}
 
 		w.Header().Set("Cache-Control", "private, no-store")
-		writeJSON(w, http.StatusOK, body)
+		utilities.WriteJSON(w, http.StatusOK, body)
 	}
 }
 
@@ -152,7 +153,7 @@ func bootstrapCaller(
 		if result.Message == "Authentication required" {
 			status = http.StatusUnauthorized
 		}
-		writeJSON(w, status, errorBody(result.Message))
+		utilities.WriteJSON(w, status, errorBody(result.Message))
 		return studiobootstrap.Caller{}, result, false
 	}
 

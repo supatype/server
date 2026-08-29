@@ -11,7 +11,8 @@ import (
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/supatype/server/internal/dbpool"
+	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/studiomembers"
 )
 
@@ -29,12 +30,16 @@ func TestMembersAPI(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run the membership API against Postgres")
 	}
-	dbpool.Configure(dsn)
+	resources, err := data.Open(context.Background(), &config.Config{SQLDatabaseURL: dsn})
+	if err != nil {
+		t.Fatalf("open resources: %v", err)
+	}
+	t.Cleanup(func() { _ = resources.Close() })
 
 	ctx := context.Background()
-	pool, err := dbpool.Pool(ctx)
+	pool, err := resources.AdminPool()
 	if err != nil {
-		t.Fatalf("open pool: %v", err)
+		t.Fatalf("admin pool: %v", err)
 	}
 	for _, stmt := range []string{
 		`CREATE SCHEMA IF NOT EXISTS _supatype`,
@@ -82,7 +87,9 @@ func TestMembersAPI(t *testing.T) {
 	cfg := Config{
 		JWTSecret:  testSecret,
 		AdminRoles: DefaultAdminRoles,
-		StudioRole: studiomembers.Lookup,
+		StudioRole: studiomembers.NewStore(resources).Lookup,
+		Members:    studiomembers.NewStore(resources),
+		Resources:  resources,
 	}
 	handler := MembersAPI(cfg)
 
@@ -146,7 +153,7 @@ func TestMembersAPI(t *testing.T) {
 		if code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d: %s", code, body)
 		}
-		if role, _ := studiomembers.Lookup(apiEditor); role != "editor" {
+		if role, _ := studiomembers.NewStore(resources).Lookup(apiEditor); role != "editor" {
 			t.Fatalf("role changed despite rejection: %q", role)
 		}
 	})
@@ -173,7 +180,7 @@ func TestMembersAPI(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", code, body)
 		}
-		if role, _ := studiomembers.Lookup(apiEditor); role != "developer" {
+		if role, _ := studiomembers.NewStore(resources).Lookup(apiEditor); role != "developer" {
 			t.Fatalf("expected developer, got %q", role)
 		}
 
@@ -181,7 +188,7 @@ func TestMembersAPI(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("expected 200 on revoke, got %d", code)
 		}
-		if _, ok := studiomembers.Lookup(apiEditor); ok {
+		if _, ok := studiomembers.NewStore(resources).Lookup(apiEditor); ok {
 			t.Fatal("membership survived revocation")
 		}
 	})

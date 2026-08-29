@@ -3,7 +3,6 @@ package deno
 import (
 	"slices"
 	"testing"
-	"time"
 )
 
 func TestEnvForDenoProcess_overridesPORT(t *testing.T) {
@@ -26,13 +25,8 @@ func TestEnvForDenoProcess_overridesPORT(t *testing.T) {
 	}
 }
 
-func TestMinDuration(t *testing.T) {
-	t.Parallel()
-	if min(2*time.Second, 5*time.Second) != 2*time.Second || min(7*time.Second, 3*time.Second) != 3*time.Second {
-		t.Fatal("min")
-	}
-}
-
+// The restart schedule has to grow and has to have a ceiling, or a crash loop
+// either hammers the machine or gives up on ever coming back.
 func TestBackoffConstants(t *testing.T) {
 	t.Parallel()
 	if backoffInitial <= 0 || backoffMax < backoffInitial {

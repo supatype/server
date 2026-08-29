@@ -21,18 +21,18 @@ func TestMain(m *testing.M) {
 }
 
 func TestGlobal(t *testing.T) {
-	os.Setenv("GOTRUE_SITE_URL", "http://localhost:8080")
-	os.Setenv("GOTRUE_DB_DRIVER", "postgres")
-	os.Setenv("GOTRUE_DB_DATABASE_URL", "fake")
-	os.Setenv("GOTRUE_OPERATOR_TOKEN", "token")
-	os.Setenv("GOTRUE_API_REQUEST_ID_HEADER", "X-Request-ID")
-	os.Setenv("GOTRUE_JWT_SECRET", "secret")
-	os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
-	os.Setenv("GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI", "pg-functions://postgres/auth/count_failed_attempts")
-	os.Setenv("GOTRUE_HOOK_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
-	os.Setenv("GOTRUE_SMTP_HEADERS", `{"X-PM-Metadata-project-ref":["project_ref"],"X-SES-Message-Tags":["ses:feedback-id-a=project_ref,ses:feedback-id-b=$messageType"]}`)
-	os.Setenv("GOTRUE_MAILER_EMAIL_VALIDATION_SERVICE_HEADERS", `{"apikey":["test"]}`)
-	os.Setenv("GOTRUE_SMTP_LOGGING_ENABLED", "true")
+	os.Setenv("SUPATYPE_SITE_URL", "http://localhost:8080")
+	os.Setenv("SUPATYPE_DB_DRIVER", "postgres")
+	os.Setenv("SUPATYPE_DB_DATABASE_URL", "fake")
+	os.Setenv("SUPATYPE_OPERATOR_TOKEN", "token")
+	os.Setenv("SUPATYPE_API_REQUEST_ID_HEADER", "X-Request-ID")
+	os.Setenv("SUPATYPE_JWT_SECRET", "secret")
+	os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
+	os.Setenv("SUPATYPE_HOOK_MFA_VERIFICATION_ATTEMPT_URI", "pg-functions://postgres/auth/count_failed_attempts")
+	os.Setenv("SUPATYPE_HOOK_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+	os.Setenv("SUPATYPE_SMTP_HEADERS", `{"X-PM-Metadata-project-ref":["project_ref"],"X-SES-Message-Tags":["ses:feedback-id-a=project_ref,ses:feedback-id-b=$messageType"]}`)
+	os.Setenv("SUPATYPE_MAILER_EMAIL_VALIDATION_SERVICE_HEADERS", `{"apikey":["test"]}`)
+	os.Setenv("SUPATYPE_SMTP_LOGGING_ENABLED", "true")
 	gc, err := LoadGlobal("")
 	require.NoError(t, err)
 	assert.Equal(t, true, gc.SMTP.LoggingEnabled)
@@ -42,7 +42,7 @@ func TestGlobal(t *testing.T) {
 	assert.Equal(t, "pg-functions://postgres/auth/count_failed_attempts", gc.Hook.MFAVerificationAttempt.URI)
 
 	{
-		os.Setenv("GOTRUE_RATE_LIMIT_EMAIL_SENT", "0/1h")
+		os.Setenv("SUPATYPE_RATE_LIMIT_EMAIL_SENT", "0/1h")
 
 		gc, err := LoadGlobal("")
 		require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestGlobal(t *testing.T) {
 	}
 
 	{
-		os.Setenv("GOTRUE_RATE_LIMIT_EMAIL_SENT", "10/1h")
+		os.Setenv("SUPATYPE_RATE_LIMIT_EMAIL_SENT", "10/1h")
 
 		gc, err := LoadGlobal("")
 		require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestGlobal(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, false, gc.Mailer.EmailBackgroundSending)
 
-		os.Setenv("GOTRUE_MAILER_EMAIL_BACKGROUND_SENDING", "true")
+		os.Setenv("SUPATYPE_MAILER_EMAIL_BACKGROUND_SENDING", "true")
 		gc, err = LoadGlobal("")
 		require.NoError(t, err)
 		assert.Equal(t, true, gc.Mailer.EmailBackgroundSending)
@@ -95,25 +95,25 @@ func TestGlobal(t *testing.T) {
 	}
 
 	{
-		os.Setenv("GOTRUE_MAILER_AUTOCONFIRM", "TRUE")
-		os.Setenv("GOTRUE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS", "TRUE")
+		os.Setenv("SUPATYPE_MAILER_AUTOCONFIRM", "TRUE")
+		os.Setenv("SUPATYPE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS", "TRUE")
 		cfg, err := LoadGlobal("")
 		require.Error(t, err)
 		require.Nil(t, cfg)
-		os.Setenv("GOTRUE_MAILER_AUTOCONFIRM", "FALSE")
-		os.Setenv("GOTRUE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS", "FALSE")
+		os.Setenv("SUPATYPE_MAILER_AUTOCONFIRM", "FALSE")
+		os.Setenv("SUPATYPE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS", "FALSE")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		err := loadGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.Hook = HookConfiguration{
 			PasswordVerificationAttempt: ExtensibilityPointConfiguration{
@@ -124,11 +124,11 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.Hook = HookConfiguration{
 			SendSMS: ExtensibilityPointConfiguration{
@@ -139,11 +139,11 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.Hook = HookConfiguration{
 			SendEmail: ExtensibilityPointConfiguration{
@@ -154,11 +154,11 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.Hook = HookConfiguration{
 			MFAVerificationAttempt: ExtensibilityPointConfiguration{
@@ -169,11 +169,11 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.Hook = HookConfiguration{
 			CustomAccessToken: ExtensibilityPointConfiguration{
@@ -184,11 +184,11 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.Hook = HookConfiguration{
 			BeforeUserCreated: ExtensibilityPointConfiguration{
@@ -199,11 +199,11 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.Hook = HookConfiguration{
 			AfterUserCreated: ExtensibilityPointConfiguration{
@@ -214,11 +214,11 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
-		os.Setenv("API_EXTERNAL_URL", "")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "")
 		cfg := new(GlobalConfiguration)
 		cfg.SAML = SAMLConfiguration{
 			Enabled: true,
@@ -226,7 +226,7 @@ func TestGlobal(t *testing.T) {
 
 		err := populateGlobal(cfg)
 		require.Error(t, err)
-		os.Setenv("API_EXTERNAL_URL", "http://localhost:9999")
+		os.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:9999")
 	}
 
 	{
@@ -1163,8 +1163,8 @@ func TestMethods(t *testing.T) {
 		err := val.ApplyDefaults()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `cannot enable both `+
-			`GOTRUE_MAILER_AUTOCONFIRM and `+
-			`GOTRUE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS`)
+			`SUPATYPE_MAILER_AUTOCONFIRM and `+
+			`SUPATYPE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS`)
 	}
 	{
 		val := &GlobalConfiguration{
@@ -1229,8 +1229,9 @@ func TestLoading(t *testing.T) {
 		os.Clearenv()
 		err := LoadDirectory("__invalid__")
 		require.Error(t, err)
-		require.Contains(t, err.Error(),
-			`open __invalid__: no such file or directory`)
+		// The directory it could not open, not the operating system's wording
+		// for why: Windows says "The system cannot find the file specified."
+		require.Contains(t, err.Error(), "__invalid__")
 	}
 
 	{
@@ -1262,7 +1263,7 @@ func TestWebAuthnConfigurationValidate(t *testing.T) {
 		}
 		err := w.Validate()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "GOTRUE_WEBAUTHN_RP_ID is required")
+		require.Contains(t, err.Error(), "SUPATYPE_WEBAUTHN_RP_ID is required")
 	}
 
 	// Empty RPDisplayName → error
@@ -1273,7 +1274,7 @@ func TestWebAuthnConfigurationValidate(t *testing.T) {
 		}
 		err := w.Validate()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "GOTRUE_WEBAUTHN_RP_DISPLAY_NAME is required")
+		require.Contains(t, err.Error(), "SUPATYPE_WEBAUTHN_RP_DISPLAY_NAME is required")
 	}
 
 	// Empty RPOrigins → error
@@ -1284,7 +1285,7 @@ func TestWebAuthnConfigurationValidate(t *testing.T) {
 		}
 		err := w.Validate()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "GOTRUE_WEBAUTHN_RP_ORIGINS is required")
+		require.Contains(t, err.Error(), "SUPATYPE_WEBAUTHN_RP_ORIGINS is required")
 	}
 
 	// HTTP origin (not localhost) → error
@@ -1356,7 +1357,7 @@ func TestWebAuthnConfigurationValidate(t *testing.T) {
 		require.NoError(t, cfg.ApplyDefaults())
 		err := cfg.Validate()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "GOTRUE_WEBAUTHN_RP_ID is required")
+		require.Contains(t, err.Error(), "SUPATYPE_WEBAUTHN_RP_ID is required")
 	}
 }
 

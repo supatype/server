@@ -336,7 +336,7 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 		// surface change. It therefore set to true for other linking
 		// domains, not just SSO ones. This enables different linking
 		// domains to co-exist, such as when using
-		// GOTRUE_EXPERIMENTAL_PROVIDERS_WITH_OWN_LINKING_DOMAIN="provider_a,provider_b".
+		// SUPATYPE_EXPERIMENTAL_PROVIDERS_WITH_OWN_LINKING_DOMAIN="provider_a,provider_b".
 		isSSOUser := decision.LinkingDomain != "default"
 
 		// because params above sets no password, this method is not

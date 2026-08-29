@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/valkey"
 )
@@ -191,5 +192,27 @@ func TestCloseAfterReportsOnlyTheCauseWhenTeardownSucceeds(t *testing.T) {
 	err := r.closeAfter(errors.New("open failed"))
 	if err.Error() != "open failed" {
 		t.Errorf("got %q, want just the cause", err)
+	}
+}
+
+// The branch is unreachable once ParseConfig has succeeded, so the seam is what
+// proves it reports rather than handing back a nil pool for something to
+// dereference later.
+func TestOpenAdminPoolReportsAConstructorFailure(t *testing.T) {
+	original := newPool
+	t.Cleanup(func() { newPool = original })
+	newPool = func(context.Context, *pgxpool.Config) (*pgxpool.Pool, error) {
+		return nil, errors.New("refused")
+	}
+
+	resources, err := Open(context.Background(), &config.Config{DatabaseURL: "postgres://user@localhost:5432/db"})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "admin pool") {
+		t.Errorf("the error should say which pool: %v", err)
+	}
+	if resources != nil {
+		t.Error("nothing should be handed back to close")
 	}
 }

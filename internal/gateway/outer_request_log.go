@@ -140,15 +140,7 @@ func (e *outerLogEntry) Write(status, bytes int, _ http.Header, elapsed time.Dur
 		"bytes":       bytes,
 		"duration_ms": elapsed.Milliseconds(),
 	}
-	if m := outerLogMode(e.req); m != "" {
-		fields["mode"] = m
-	}
-	if q := strings.TrimSpace(e.req.URL.RawQuery); q != "" {
-		fields["query"] = q
-	}
-	if t := tenantForAccessLog(e.req); t != "" {
-		fields["tenant"] = t
-	}
+	describeRequest(fields, e.req)
 	lg := outerAccessLog().WithFields(fields)
 	if health {
 		lg.Debug("request")
@@ -171,15 +163,23 @@ func (e *outerLogEntry) Panic(v interface{}, stack []byte) {
 	if e.req != nil {
 		fields["method"] = e.req.Method
 		fields["path"] = e.req.URL.Path
-		if m := outerLogMode(e.req); m != "" {
-			fields["mode"] = m
-		}
-		if q := strings.TrimSpace(e.req.URL.RawQuery); q != "" {
-			fields["query"] = q
-		}
-		if t := tenantForAccessLog(e.req); t != "" {
-			fields["tenant"] = t
-		}
+		describeRequest(fields, e.req)
 	}
 	outerAccessLog().WithFields(fields).Error("request panicked")
+}
+
+// describeRequest adds what both the access log line and the panic line say
+// about the request itself: which mode served it, what was asked for, and which
+// tenant asked. Each is omitted when there is nothing to say, so a standalone
+// deployment's log is not three empty columns wider.
+func describeRequest(fields logrus.Fields, req *http.Request) {
+	if m := outerLogMode(req); m != "" {
+		fields["mode"] = m
+	}
+	if q := strings.TrimSpace(req.URL.RawQuery); q != "" {
+		fields["query"] = q
+	}
+	if t := tenantForAccessLog(req); t != "" {
+		fields["tenant"] = t
+	}
 }

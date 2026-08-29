@@ -119,22 +119,14 @@ func (c *conn) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, 
 	defer cancel()
 
 	key := fmt.Sprintf("tenant:%s:config", ref)
-	cmd := c.vc.B().Get().Key(key).Build()
-	result := c.vc.Do(rctx, cmd)
-
-	if err := result.Error(); err != nil {
+	data, err := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build()).AsBytes()
+	if err != nil {
 		if vkgo.IsValkeyNil(err) {
 			c.recordSuccess()
 			return nil, nil
 		}
 		c.recordFailure()
 		return nil, fmt.Errorf("valkey: GET %s: %w", key, err)
-	}
-
-	data, err := result.AsBytes()
-	if err != nil {
-		c.recordFailure()
-		return nil, fmt.Errorf("valkey: decode %s: %w", key, err)
 	}
 
 	var cfg TenantConfig
@@ -153,19 +145,14 @@ func (c *conn) GetBytes(ctx context.Context, key string) ([]byte, error) {
 	}
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
-	result := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build())
-	if err := result.Error(); err != nil {
+	data, err := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build()).AsBytes()
+	if err != nil {
 		if vkgo.IsValkeyNil(err) {
 			c.recordSuccess()
 			return nil, nil
 		}
 		c.recordFailure()
 		return nil, fmt.Errorf("valkey: GET %s: %w", key, err)
-	}
-	data, err := result.AsBytes()
-	if err != nil {
-		c.recordFailure()
-		return nil, fmt.Errorf("valkey: decode %s: %w", key, err)
 	}
 	c.recordSuccess()
 	return data, nil
@@ -178,6 +165,9 @@ func (c *conn) SetBytes(ctx context.Context, key string, value []byte, ttlSecond
 	}
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
+	// Built twice rather than once and adjusted: a valkey-go builder is
+	// single-use and recycles the command, so holding one and calling Build
+	// again returns something already sent.
 	var result vkgo.ValkeyResult
 	if ttlSeconds > 0 {
 		result = c.vc.Do(rctx, c.vc.B().Set().Key(key).Value(string(value)).Ex(time.Duration(ttlSeconds)*time.Second).Build())
@@ -249,15 +239,10 @@ func (c *conn) ScanPage(ctx context.Context, cursor uint64, pattern string, coun
 	}
 	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	result := c.vc.Do(rctx, c.vc.B().Scan().Cursor(cursor).Match(pattern).Count(int64(count)).Build())
-	if err := result.Error(); err != nil {
-		c.recordFailure()
-		return nil, 0, fmt.Errorf("valkey: SCAN: %w", err)
-	}
-	entry, err := result.AsScanEntry()
+	entry, err := c.vc.Do(rctx, c.vc.B().Scan().Cursor(cursor).Match(pattern).Count(int64(count)).Build()).AsScanEntry()
 	if err != nil {
 		c.recordFailure()
-		return nil, 0, fmt.Errorf("valkey: SCAN decode: %w", err)
+		return nil, 0, fmt.Errorf("valkey: SCAN: %w", err)
 	}
 	c.recordSuccess()
 	return entry.Elements, entry.Cursor, nil
@@ -270,15 +255,10 @@ func (c *conn) TTLSeconds(ctx context.Context, key string) (int, error) {
 	}
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
-	result := c.vc.Do(rctx, c.vc.B().Ttl().Key(key).Build())
-	if err := result.Error(); err != nil {
-		c.recordFailure()
-		return 0, fmt.Errorf("valkey: TTL %s: %w", key, err)
-	}
-	n, err := result.AsInt64()
+	n, err := c.vc.Do(rctx, c.vc.B().Ttl().Key(key).Build()).AsInt64()
 	if err != nil {
 		c.recordFailure()
-		return 0, fmt.Errorf("valkey: TTL decode %s: %w", key, err)
+		return 0, fmt.Errorf("valkey: TTL %s: %w", key, err)
 	}
 	c.recordSuccess()
 	return int(n), nil

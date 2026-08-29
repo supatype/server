@@ -12,10 +12,10 @@
 package maskedfields
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
-	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/studiobootstrap"
 )
 
@@ -40,9 +40,16 @@ const Header = "X-Supatype-Masked-Fields"
 // as misses. That is safe because the value is caller-independent — it describes the
 // schema's restrictions, not one caller's verdicts — so a shared cache entry carrying it
 // cannot disclose anything about the caller who happened to populate it.
-func Middleware(resources *data.Resources, next http.Handler) http.Handler {
+// Lookup answers which columns of which tables carry a read restriction.
+//
+// Taken as a value rather than reached for through the package that computes it,
+// so what this middleware writes can be stated in a test rather than arranged in
+// a database.
+type Lookup func(ctx context.Context) (map[string][]studiobootstrap.FieldMask, bool)
+
+func Middleware(lookup Lookup, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if value, ok := headerFor(req, resources); ok {
+		if value, ok := headerFor(req, lookup); ok {
 			// Set before the proxy writes, since headers cannot be added afterwards.
 			w.Header().Set(Header, value)
 		}
@@ -50,13 +57,17 @@ func Middleware(resources *data.Resources, next http.Handler) http.Handler {
 	})
 }
 
-func headerFor(req *http.Request, resources *data.Resources) (string, bool) {
+func headerFor(req *http.Request, lookup Lookup) (string, bool) {
+	if lookup == nil {
+		return "", false
+	}
+
 	table := tableFromPath(req.URL.Path)
 	if table == "" {
 		return "", false
 	}
 
-	tables, ok := studiobootstrap.MaskedFields(req.Context(), resources)
+	tables, ok := lookup(req.Context())
 	if !ok {
 		return "", false
 	}

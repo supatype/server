@@ -45,6 +45,13 @@ const adminMaxConns = 10
 // only reachable branch in a unit test is the failure one.
 var openValkey = valkey.New
 
+// newPool is the pgxpool constructor, indirected for the same reason: once
+// ParseConfig has succeeded and MaxConns is a sane constant, it has no reason
+// left to refuse, so its error branch is unreachable in production. The branch
+// is kept because pgxpool may grow new reasons, and discovering one by
+// panicking on a nil pool would be worse.
+var newPool = pgxpool.NewWithConfig
+
 // Resources is every connection the process owns, and the one place that closes
 // them.
 type Resources struct {
@@ -107,13 +114,7 @@ func openAdminPool(_ context.Context, dsn string) (*pgxpool.Pool, error) {
 	}
 	poolCfg.MaxConns = adminMaxConns
 	// Background context: pool lifetime must not be tied to the caller's.
-	//
-	// The error here is not reachable once ParseConfig has succeeded and MaxConns
-	// is a sane constant, which is why this package carries a measured floor
-	// rather than a pin. It is kept because pgxpool may grow new reasons to
-	// refuse a config, and discovering that by panicking on a nil pool would be
-	// worse.
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	pool, err := newPool(context.Background(), poolCfg)
 	if err != nil {
 		return nil, err
 	}

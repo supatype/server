@@ -139,12 +139,3 @@ func IdentityScopedTables(ctx context.Context, resources *data.Resources) (map[s
 	identityScope.loaded = true
 	return tables, true
 }
-
-// ResetIdentityScopeCache clears the memoised classification. For tests.
-func ResetIdentityScopeCache() {
-	identityScope.Lock()
-	defer identityScope.Unlock()
-	identityScope.tables = nil
-	identityScope.loaded = false
-	identityScope.loadedAt = time.Time{}
-}

@@ -101,8 +101,25 @@ func TestDispatch(t *testing.T) {
 		},
 
 		{
-			desc:   "fail - ctx timeout",
-			dr:     New(WithTimeout(1)),
+			// A hook that answers, too late. Ten times the deadline, so no
+			// timing margin is being relied on, and bounded rather than a wait
+			// on the request context, because httptest.Server.Close waits for
+			// handlers to return and the caller giving up does not reliably
+			// cancel one.
+			//
+			// This case used to set the budget to one nanosecond and let the
+			// default instant handler answer. That races the round trip rather
+			// than beating it: against the keep-alive connection an earlier
+			// subtest leaves behind, the response arrives before the transport
+			// looks at the deadline, and the case then asserted a timeout
+			// against a perfectly good answer. It passed run alone and failed
+			// run with the others, which is how it came to fail only on some
+			// machines.
+			desc: "fail - hook answers too late",
+			dr:   New(WithTimeout(time.Second / 20)),
+			hr: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				time.Sleep(time.Second / 2)
+			}),
 			errStr: "422: Failed to reach hook within maximum time",
 		},
 

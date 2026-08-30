@@ -109,9 +109,15 @@ func (o *Dispatcher) runHTTPHook(
 	hookConfig *conf.ExtensibilityPointConfiguration,
 	input any,
 ) ([]byte, error) {
-	client := http.Client{
-		Timeout: o.hookTimeout,
-	}
+	// One budget, one clock. http.Client.Timeout was set to the same duration as
+	// the context below, and could never be the one to fire: the context's
+	// deadline is absolute from here, while the client's timer restarts on each
+	// attempt, so the context is always the closer of the two. It mattered only
+	// as a second thing to keep in step, and the two classify differently —
+	// only the context's expiry satisfies errors.Is(err,
+	// context.DeadlineExceeded), which is what the timeout branch below tests
+	// for. The context bounds the body read as well, so nothing is given up.
+	client := http.Client{}
 	ctx, cancel := context.WithTimeout(ctx, o.hookTimeout)
 	defer cancel()
 

@@ -386,19 +386,26 @@ func TestDirectEnvReadsOnlyShrink(t *testing.T) {
 // Only tracked files are scanned, so build artifacts and local scratch cannot
 // fail the build.
 func TestTheOldPrefixIsGone(t *testing.T) {
-	// Three files are allowed to say it, and each has to.
+	// These files are allowed to say it, and each has to. They are listed by
+	// name rather than by directory so the exception cannot spread: a large file
+	// on this list is somewhere a genuinely stale variable could hide, which is
+	// why the wiring test below lives in a file of its own.
 	//
 	//   CHANGELOG            records what happened and must keep saying so.
 	//   env-surface.txt      is generated from the code, so it cannot introduce
 	//                        anything the code does not already have.
 	//   preflight.go / its   are the code that detects the old prefix, and this
 	//   test, and this file  file is the guard itself.
+	//   preflight_wiring     proves the bootstrap actually calls the preflight,
+	//                        which it did not, by setting an old name and
+	//                        watching the server refuse to start.
 	allowed := map[string]bool{
-		"CHANGELOG.md":                      true,
-		"hack/env-surface.txt":              true,
-		"internal/config/preflight.go":      true,
-		"internal/config/preflight_test.go": true,
-		"tools/envsurface/surface_test.go":  true,
+		"CHANGELOG.md":                              true,
+		"hack/env-surface.txt":                      true,
+		"internal/config/preflight.go":              true,
+		"internal/config/preflight_test.go":         true,
+		"internal/gateway/preflight_wiring_test.go": true,
+		"tools/envsurface/surface_test.go":          true,
 	}
 
 	out, err := exec.Command("git", "-C", repoRoot, "ls-files").Output()

@@ -72,9 +72,9 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 
 	// After the config files have been read into the environment, because a
 	// stale name is just as stale coming from a file, and before anything is
-	// decoded from it: a deployment that still sets GOTRUE_JWT_SECRET has no JWT
-	// secret at all, and the error it would otherwise get names some unrelated
-	// key that happened to be checked first.
+	// decoded from it: a deployment that still sets the JWT secret under the old
+	// prefix has no JWT secret at all, and the error it would otherwise get names
+	// some unrelated key that happened to be checked first.
 	if err := config.Preflight(config.OSEnv{}); err != nil {
 		return nil, nil, err
 	}

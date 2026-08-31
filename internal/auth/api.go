@@ -71,23 +71,17 @@ func (a *API) Now() time.Time {
 	return time.Now()
 }
 
+// The API used to log two "DEPRECATION NOTICE" lines at startup, for
+// SUPATYPE_JWT_ADMIN_GROUP_NAME and SUPATYPE_JWT_DEFAULT_GROUP_NAME, saying
+// neither was supported and both would be removed soon. Both are supported.
+// DefaultGroupName is the role every new user is given at signup and carried in
+// every access token; AdminGroupName is the role isAdmin checks for. An operator
+// who believed the notice and unset either would change who is an admin, or what
+// role a new account gets, and get no warning for the change that actually
+// mattered. There is nothing left to notice, so the function is gone.
 // NewAPI instantiates a new REST API
 func NewAPI(globalConfig *conf.GlobalConfiguration, db *storage.Connection, opt ...Option) *API {
 	return NewAPIWithVersion(globalConfig, db, defaultVersion, opt...)
-}
-
-func (a *API) deprecationNotices() {
-	config := a.config
-
-	log := logrus.WithField("component", "api")
-
-	if config.JWT.AdminGroupName != "" {
-		log.Warn("DEPRECATION NOTICE: SUPATYPE_JWT_ADMIN_GROUP_NAME not supported by this service, will be removed soon")
-	}
-
-	if config.JWT.DefaultGroupName != "" {
-		log.Warn("DEPRECATION NOTICE: SUPATYPE_JWT_DEFAULT_GROUP_NAME not supported by this service, will be removed soon")
-	}
 }
 
 // NewAPIWithVersion creates a new REST API using the specified version
@@ -148,8 +142,6 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 			logrus.Infof("Pwned passwords cache is %.2f KB", float64(cache.Cap())/(8*1024.0))
 		}
 	}
-
-	api.deprecationNotices()
 
 	xffmw, _ := xff.Default()
 	logger := observability.NewStructuredLogger(logrus.StandardLogger(), globalConfig)

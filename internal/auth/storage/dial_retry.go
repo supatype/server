@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gobuffalo/pop/v6"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
 	"github.com/sirupsen/logrus"
@@ -94,44 +95,77 @@ func isTransientDialError(err error) bool {
 // dialFunc is the dial being retried; swapped in tests.
 type dialFunc func(context.Context) (*Connection, error)
 
-// DialWithRetry dials the database, waiting through transient failures until ctx is done.
+// retryTransient runs attempt until it succeeds, until the failure is one that
+// waiting cannot fix, or until ctx is done.
 //
-// Every attempt is logged with the elapsed total, so a database that has been unreachable for ten
-// minutes reads as exactly that rather than as a server that quietly stopped trying.
-func DialWithRetry(ctx context.Context, dial dialFunc) (*Connection, error) {
+// Every attempt is logged with the elapsed total, so a database that has been
+// unreachable for ten minutes reads as exactly that rather than as a server
+// that quietly stopped trying.
+func retryTransient(ctx context.Context, attempt func(context.Context) error) error {
 	started := time.Now()
 	delay := dialFirstDelay
 
-	for attempt := 1; ; attempt++ {
-		conn, err := dial(ctx)
+	for n := 1; ; n++ {
+		err := attempt(ctx)
 		if err == nil {
-			if attempt > 1 {
-				logrus.WithField("attempts", attempt).Info("storage: database reachable")
+			if n > 1 {
+				logrus.WithField("attempts", n).Info("storage: database reachable")
 			}
-			return conn, nil
+			return nil
 		}
 		if !isTransientDialError(err) {
-			return nil, err
+			return err
 		}
 		// A cancelled context means shutdown, and pgx reports that as a connection failure. Return
 		// it rather than looping against a server that is going away.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, err
+			return err
 		}
 
 		logrus.WithError(err).
-			WithField("attempt", attempt).
+			WithField("attempt", n).
 			WithField("elapsed", time.Since(started).Round(time.Second).String()).
 			WithField("retry_in", delay.String()).
 			Warn("storage: database not reachable, retrying")
 
 		select {
 		case <-ctx.Done():
-			return nil, err
+			return err
 		case <-time.After(delay):
 		}
 		if delay *= 2; delay > dialMaxDelay {
 			delay = dialMaxDelay
 		}
 	}
+}
+
+// DialWithRetry dials the database, waiting through transient failures until ctx is done.
+func DialWithRetry(ctx context.Context, dial dialFunc) (*Connection, error) {
+	var conn *Connection
+	err := retryTransient(ctx, func(ctx context.Context) error {
+		var dialErr error
+		conn, dialErr = dial(ctx)
+		return dialErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+// WaitReachable blocks until the database answers, waiting out the same
+// transient failures DialWithRetry does.
+//
+// For callers that build their own pop connection rather than going through
+// DialContext. pop's Open builds a pool and contacts nothing, so without this
+// the first real contact is a query, and a database that is merely still
+// starting takes the process down with it.
+func WaitReachable(ctx context.Context, db *pop.Connection) error {
+	sqldb, ok := popConnToStd(db)
+	if !ok || sqldb == nil {
+		// Nothing to ping. The caller's first query is then the first contact,
+		// which is where things were before this existed.
+		return nil
+	}
+	return retryTransient(ctx, sqldb.PingContext)
 }

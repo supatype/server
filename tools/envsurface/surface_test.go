@@ -427,8 +427,9 @@ func TestTheForkedNamingIsGone(t *testing.T) {
 	//
 	//   LICENSE              is the attribution the licence requires.
 	//   CHANGELOG            records what happened and must keep saying so.
-	//   go.mod / go.sum /    name a third-party module path. Renaming it means
-	//   internal/auth/api.go forking the dependency.
+	//   internal/auth/hibp/  is vendored MIT code: the notice is the licence's
+	//   LICENSE, pwned.go   condition, and the provenance line above the package
+	//                       says honestly where it came from.
 	//   web3_test / test env hold real Ed25519 and secp256k1 signatures with the
 	//                        domain inside the signed payload, so the domain
 	//                        cannot change without the wallet keys.
@@ -438,10 +439,9 @@ func TestTheForkedNamingIsGone(t *testing.T) {
 	allowed := map[string]bool{
 		"LICENSE":                           true,
 		"CHANGELOG.md":                      true,
-		"go.mod":                            true,
-		"go.sum":                            true,
-		"internal/auth/api.go":              true,
 		"internal/auth/web3_test.go":        true,
+		"internal/auth/hibp/LICENSE":        true,
+		"internal/auth/hibp/pwned.go":       true,
 		"hack/test.env":                     true,
 		"hack/test_asymmetric.env":          true,
 		"internal/config/preflight.go":      true,

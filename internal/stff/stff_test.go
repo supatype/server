@@ -1,4 +1,4 @@
-package sbff
+package stff
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func TestParseHeader(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			obsAddr, obsErr := parseSBFFHeader(tc.headerVal)
+			obsAddr, obsErr := parseSTFFHeader(tc.headerVal)
 			require.Equal(t, tc.expAddr, obsAddr)
 			require.ErrorIs(t, obsErr, tc.expErr)
 		})
@@ -146,7 +146,7 @@ func TestGetIPAddress(t *testing.T) {
 			if tc.ctxVal == nil {
 				ctx = originalReq.Context()
 			} else {
-				ctx = context.WithValue(originalReq.Context(), ctxKeySBFF, tc.ctxVal)
+				ctx = context.WithValue(originalReq.Context(), ctxKeySTFF, tc.ctxVal)
 			}
 
 			r := originalReq.WithContext(ctx)
@@ -162,7 +162,7 @@ func TestGetIPAddress(t *testing.T) {
 func TestMiddleware(t *testing.T) {
 	testCases := []struct {
 		name        string
-		sbffEnabled bool
+		stffEnabled bool
 		headerVal   string
 		expAddr     string
 		expFound    bool
@@ -170,7 +170,7 @@ func TestMiddleware(t *testing.T) {
 	}{
 		{
 			name:        "FlagDisabledHeaderEmpty",
-			sbffEnabled: false,
+			stffEnabled: false,
 			headerVal:   "",
 			expAddr:     "",
 			expFound:    false,
@@ -178,7 +178,7 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			name:        "FlagDisabledHeaderValid",
-			sbffEnabled: false,
+			stffEnabled: false,
 			headerVal:   "192.168.1.100",
 			expAddr:     "",
 			expFound:    false,
@@ -186,7 +186,7 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			name:        "FlagDisabledHeaderInvalid",
-			sbffEnabled: false,
+			stffEnabled: false,
 			headerVal:   "invalid",
 			expAddr:     "",
 			expFound:    false,
@@ -194,7 +194,7 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			name:        "FlagEnabledHeaderEmpty",
-			sbffEnabled: true,
+			stffEnabled: true,
 			headerVal:   "",
 			expAddr:     "",
 			expFound:    false,
@@ -202,7 +202,7 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			name:        "FlagEnabledHeaderValid",
-			sbffEnabled: true,
+			stffEnabled: true,
 			headerVal:   "192.168.1.100",
 			expAddr:     "192.168.1.100",
 			expFound:    true,
@@ -210,7 +210,7 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			name:        "FlagEnabledHeaderInvalid",
-			sbffEnabled: true,
+			stffEnabled: true,
 			headerVal:   "invalid",
 			expAddr:     "",
 			expFound:    false,
@@ -242,7 +242,7 @@ func TestMiddleware(t *testing.T) {
 				require.ErrorIs(t, err, tc.expErr)
 			}
 
-			cfg.SbForwardedForEnabled = tc.sbffEnabled
+			cfg.StForwardedForEnabled = tc.stffEnabled
 
 			middlewareFn := Middleware(&cfg, errCallback)
 

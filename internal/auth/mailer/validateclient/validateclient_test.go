@@ -53,7 +53,7 @@ func TestEmalValidatorService(t *testing.T) {
 		}
 
 		ev := newEmailValidator(cfg)
-		err := ev.Validate(ctx, "chris.stockton@supabase.io")
+		err := ev.Validate(ctx, "chris.stockton@supatype.io")
 		if err != nil {
 			t.Fatalf("exp nil err; got %v", err)
 		}
@@ -160,7 +160,7 @@ func TestEmalValidatorService(t *testing.T) {
 		}
 
 		ev := newEmailValidator(cfg)
-		err := ev.Validate(ctx, "chris.stockton@supabase.io")
+		err := ev.Validate(ctx, "chris.stockton@supatype.io")
 		if err == nil {
 			t.Fatal("exp non-nil err")
 		}
@@ -200,19 +200,19 @@ func TestValidateEmailExtended(t *testing.T) {
 		err     string
 	}{
 		// valid (has mx record)
-		{email: "a@supabase.io"},
-		{email: "support@supabase.io"},
-		{email: "abc@supabase.io"},
+		{email: "a@supatype.io"},
+		{email: "support@supatype.io"},
+		{email: "abc@supatype.io"},
 
-		// valid (RFC 5321 fallback, supabase.co has no mx, but valid A)
-		{email: "invalid@supabase.co"},
+		// valid (RFC 5321 fallback, www.supatype.com has no mx, but valid A)
+		{email: "invalid@www.supatype.com"},
 
 		// bad format
 		{email: "", err: "invalid_email_format"},
 		{email: "io", err: "invalid_email_format"},
-		{email: "supabase.io", err: "invalid_email_format"},
-		{email: "@supabase.io", err: "invalid_email_format"},
-		{email: "test@.supabase.io", err: "invalid_email_format"},
+		{email: "supatype.io", err: "invalid_email_format"},
+		{email: "@supatype.io", err: "invalid_email_format"},
+		{email: "test@.supatype.io", err: "invalid_email_format"},
 
 		// invalid providers check doesn't allow short gmails
 		{email: "short@gmail.com", err: "invalid_email_address"},
@@ -262,14 +262,14 @@ func TestValidateEmailExtended(t *testing.T) {
 		// various invalid emails
 		{email: "test@test.localhost", err: "invalid_email_dns"},
 		{email: "test@invalid.example.com", err: "invalid_email_dns"},
-		{email: "test@no.such.email.host.supabase.io", err: "invalid_email_dns"},
+		{email: "test@no.such.email.host.supatype.io", err: "invalid_email_dns"},
 		// this low timeout should simulate a dns timeout, which should
 		// not be treated as an invalid email.
 		{email: "validemail@probablyaaaaaaaanotarealdomain.com",
 			timeout: time.Millisecond},
 
 		// likewise for a valid email
-		{email: "timeout@supabase.io", timeout: time.Millisecond},
+		{email: "timeout@supatype.io", timeout: time.Millisecond},
 
 		// invalid dns
 		{email: "a@a", err: "invalid_email_dns"},

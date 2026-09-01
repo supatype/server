@@ -212,7 +212,7 @@ func (s *Service) RefreshTokenGrant(ctx context.Context, db *storage.Connection,
 			return nil, apierrors.NewInternalServerError("%s", err.Error())
 		}
 
-		responseHeaders.Set("sb-auth-user-id", user.ID.String())
+		responseHeaders.Set("st-auth-user-id", user.ID.String())
 
 		if user.IsBanned() {
 			return nil, apierrors.NewBadRequestError(apierrors.ErrorCodeUserBanned, "Invalid Refresh Token: User Banned")
@@ -228,7 +228,7 @@ func (s *Service) RefreshTokenGrant(ctx context.Context, db *storage.Connection,
 			return nil, apierrors.NewBadRequestError(apierrors.ErrorCodeSessionNotFound, "Invalid Refresh Token: No Valid Session Found")
 		}
 
-		responseHeaders.Set("sb-auth-session-id", session.ID.String())
+		responseHeaders.Set("st-auth-session-id", session.ID.String())
 
 		// OAuth client validation will be done inside the transaction
 		var sessionClientID *uuid.UUID
@@ -459,13 +459,13 @@ func (s *Service) RefreshTokenGrant(ctx context.Context, db *storage.Connection,
 							return apierrors.NewInternalServerError("failed to mark v1 refresh token as revoked").WithInternalError(terr)
 						}
 
-						responseHeaders.Set("sb-auth-refresh-token-counter", strconv.FormatInt(*session.RefreshTokenCounter, 10))
+						responseHeaders.Set("st-auth-refresh-token-counter", strconv.FormatInt(*session.RefreshTokenCounter, 10))
 					}
 
-					responseHeaders.Set("sb-auth-refresh-token-reuse", "false")
+					responseHeaders.Set("st-auth-refresh-token-reuse", "false")
 				}
 
-				responseHeaders.Set("sb-auth-refresh-token-prefix", issuedToken[0:5])
+				responseHeaders.Set("st-auth-refresh-token-prefix", issuedToken[0:5])
 			} else if token, ok := anyToken.(*crypto.RefreshToken); ok {
 				signingKey, _, kerr := session.GetRefreshTokenHmacKey(config.Security.DBEncryption)
 				if kerr != nil {
@@ -488,7 +488,7 @@ func (s *Service) RefreshTokenGrant(ctx context.Context, db *storage.Connection,
 						Counter:   *session.RefreshTokenCounter,
 					}).Encode(signingKey)
 
-					responseHeaders.Set("sb-auth-refresh-token-reuse", "false")
+					responseHeaders.Set("st-auth-refresh-token-reuse", "false")
 				} else if counterDifference > 0 {
 					// refresh token is being reused
 
@@ -531,7 +531,7 @@ func (s *Service) RefreshTokenGrant(ctx context.Context, db *storage.Connection,
 
 					headerValue := strings.Join(causes, ",")
 					if headerValue != "" {
-						responseHeaders.Set("sb-auth-refresh-token-reuse-cause", headerValue)
+						responseHeaders.Set("st-auth-refresh-token-reuse-cause", headerValue)
 					}
 
 					reuseAllowed := likelyNotSavedByClient || likelyConcurrentRefreshes || config.Security.RefreshTokenAllowReuse
@@ -565,7 +565,7 @@ func (s *Service) RefreshTokenGrant(ctx context.Context, db *storage.Connection,
 							return apierrors.NewInternalServerError("destroying session after detected refresh token reuse failed").WithInternalError(terr)
 						}
 
-						responseHeaders.Set("sb-auth-refresh-token-rotated", "true")
+						responseHeaders.Set("st-auth-refresh-token-rotated", "true")
 
 						return storage.NewCommitWithError(apierrors.NewBadRequestError(apierrors.ErrorCodeRefreshTokenAlreadyUsed, "Invalid Refresh Token: Already Used").WithInternalMessage("Refresh token behind current counter by %v, session %v is terminated due to refresh token reuse", counterDifference, session.ID.String()))
 					} else {
@@ -582,7 +582,7 @@ func (s *Service) RefreshTokenGrant(ctx context.Context, db *storage.Connection,
 					return apierrors.NewInternalServerError("failed saving session").WithInternalError(terr)
 				}
 
-				responseHeaders.Set("sb-auth-refresh-token-counter", strconv.FormatInt(*session.RefreshTokenCounter, 10))
+				responseHeaders.Set("st-auth-refresh-token-counter", strconv.FormatInt(*session.RefreshTokenCounter, 10))
 
 				if terr := models.NewAuditLogEntry(config.AuditLog, r, tx, user, models.TokenRefreshedAction, "", nil); terr != nil {
 					return terr
@@ -861,7 +861,7 @@ func (s *Service) IssueRefreshToken(r *http.Request, responseHeaders http.Header
 	var sessionID uuid.UUID
 	var oAuthClientID *uuid.UUID
 
-	responseHeaders.Set("sb-auth-user-id", user.ID.String())
+	responseHeaders.Set("st-auth-user-id", user.ID.String())
 
 	err := conn.Transaction(func(tx *storage.Connection) error {
 		var terr error
@@ -892,8 +892,8 @@ func (s *Service) IssueRefreshToken(r *http.Request, responseHeaders http.Header
 				Counter:   *session.RefreshTokenCounter,
 			}).Encode(signingKey)
 
-			responseHeaders.Set("sb-auth-session-id", sessionID.String())
-			responseHeaders.Set("sb-auth-refresh-token-counter", strconv.FormatInt(*session.RefreshTokenCounter, 10))
+			responseHeaders.Set("st-auth-session-id", sessionID.String())
+			responseHeaders.Set("st-auth-refresh-token-counter", strconv.FormatInt(*session.RefreshTokenCounter, 10))
 		} else {
 			rt, terr := models.GrantAuthenticatedUser(tx, user, grantParams)
 			if terr != nil {
@@ -903,8 +903,8 @@ func (s *Service) IssueRefreshToken(r *http.Request, responseHeaders http.Header
 			sessionID = *rt.SessionId
 			refreshToken = rt.Token
 
-			responseHeaders.Set("sb-auth-session-id", sessionID.String())
-			responseHeaders.Set("sb-auth-refresh-token-prefix", refreshToken[0:5])
+			responseHeaders.Set("st-auth-session-id", sessionID.String())
+			responseHeaders.Set("st-auth-refresh-token-prefix", refreshToken[0:5])
 		}
 
 		if grantParams.OAuthClientID != nil && *grantParams.OAuthClientID != uuid.Nil {

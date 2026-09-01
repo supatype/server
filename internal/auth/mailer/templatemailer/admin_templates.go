@@ -8,7 +8,7 @@ import (
 	"github.com/supatype/server/internal/conf"
 )
 
-// CanonicalPathTemplateType maps URL path segments (Supabase-compatible, e.g. magiclink) to internal template keys.
+// CanonicalPathTemplateType maps URL path segments (e.g. magiclink) to internal template keys.
 func CanonicalPathTemplateType(p string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(p)) {
 	case "invite":

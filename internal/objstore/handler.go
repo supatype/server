@@ -1,5 +1,5 @@
-// Package objstore implements a Supabase-compatible object storage HTTP handler
-// backed by the local filesystem. It is used by supatype-server in dev mode
+// Package objstore implements the object storage HTTP API, backed by the
+// local filesystem. It is used by supatype-server in dev mode
 // (SUPATYPE_STORAGE_PROVIDER=local) so that storage works out of the box with
 // no MinIO or external service required.
 //
@@ -24,8 +24,8 @@ import (
 	"github.com/supatype/server/internal/utilities"
 )
 
-// Handler returns an http.Handler that implements the Supabase-compatible
-// object storage API backed by local disk at storageRoot.
+// Handler returns an http.Handler serving the object storage API, backed by
+// local disk at storageRoot.
 //
 // jwtSecret is the HS256 secret used to validate Bearer tokens — the same
 // value as SUPATYPE_JWT_SECRET set by the CLI (local dev JWT secret).

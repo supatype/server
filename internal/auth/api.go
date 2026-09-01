@@ -23,7 +23,7 @@ import (
 	"github.com/supatype/server/internal/auth/tokens"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/observability"
-	"github.com/supatype/server/internal/sbff"
+	"github.com/supatype/server/internal/stff"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -150,11 +150,11 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 	r.UseBypass(recoverer)
 	r.UseBypass(observability.AddRequestID(globalConfig))
 	r.UseBypass(
-		sbff.Middleware(
+		stff.Middleware(
 			&globalConfig.Security,
 			func(r *http.Request, err error) {
 				log := observability.GetLogEntry(r).Entry
-				log.WithField("error", err.Error()).Warn("error processing Sb-Forwarded-For")
+				log.WithField("error", err.Error()).Warn("error processing St-Forwarded-For")
 			},
 		),
 	)

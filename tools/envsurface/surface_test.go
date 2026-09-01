@@ -408,6 +408,71 @@ func TestTheOldPrefixIsGone(t *testing.T) {
 		"tools/envsurface/surface_test.go":          true,
 	}
 
+	offenders := trackedFilesContaining(t, allowed, func(body string) bool {
+		return strings.Contains(body, "GOTRUE_")
+	})
+	if len(offenders) > 0 {
+		t.Errorf("the old prefix is back in:\n  %s", strings.Join(offenders, "\n  "))
+	}
+}
+
+// TestTheForkedNamingIsGone stops the ancestor's names coming back on the wire.
+//
+// The headers this service sets were inherited wholesale: sb-auth-* on every
+// token issue, x-sb-error-code on every error, sb-forwarded-for on the way in.
+// Nothing outside this repository ever read them, so they were renamed to st-,
+// and a reintroduced one would be a name we ship to every caller by accident.
+func TestTheForkedNamingIsGone(t *testing.T) {
+	// Each of these has to say it, and none of them can be fixed by editing.
+	//
+	//   LICENSE              is the attribution the licence requires.
+	//   CHANGELOG            records what happened and must keep saying so.
+	//   go.mod / go.sum /    name a third-party module path. Renaming it means
+	//   internal/auth/api.go forking the dependency.
+	//   web3_test / test env hold real Ed25519 and secp256k1 signatures with the
+	//                        domain inside the signed payload, so the domain
+	//                        cannot change without the wallet keys.
+	//   preflight.go / test  are the code that detects the retired name.
+	//   migrations           are already applied in deployments, and the later
+	//                        one corrects the earlier one by quoting it.
+	allowed := map[string]bool{
+		"LICENSE":                           true,
+		"CHANGELOG.md":                      true,
+		"go.mod":                            true,
+		"go.sum":                            true,
+		"internal/auth/api.go":              true,
+		"internal/auth/web3_test.go":        true,
+		"hack/test.env":                     true,
+		"hack/test_asymmetric.env":          true,
+		"internal/config/preflight.go":      true,
+		"internal/config/preflight_test.go": true,
+		"migrations/20251201000000_add_oauth_client_states_table.up.sql": true,
+		"tools/envsurface/surface_test.go":                               true,
+	}
+
+	// Lowercased before matching, so Supabase and SUPABASE are caught too.
+	needles := []string{"supabase", "sb-auth-", "x-sb-error", "sb-forwarded", "sbff"}
+
+	offenders := trackedFilesContaining(t, allowed, func(body string) bool {
+		lower := strings.ToLower(body)
+		for _, needle := range needles {
+			if strings.Contains(lower, needle) {
+				return true
+			}
+		}
+		return false
+	})
+	if len(offenders) > 0 {
+		t.Errorf("the forked naming is back in:\n  %s", strings.Join(offenders, "\n  "))
+	}
+}
+
+// trackedFilesContaining returns the tracked files, other than the allowed
+// ones, whose contents match. Only tracked files are scanned, so build
+// artifacts and local scratch cannot fail the build.
+func trackedFilesContaining(t *testing.T, allowed map[string]bool, match func(string) bool) []string {
+	t.Helper()
+
 	out, err := exec.Command("git", "-C", repoRoot, "ls-files").Output()
 	if err != nil {
 		t.Fatalf("listing tracked files: %v", err)
@@ -423,11 +488,9 @@ func TestTheOldPrefixIsGone(t *testing.T) {
 		if readErr != nil {
 			continue
 		}
-		if strings.Contains(string(body), "GOTRUE_") {
+		if match(string(body)) {
 			offenders = append(offenders, rel)
 		}
 	}
-	if len(offenders) > 0 {
-		t.Errorf("the old prefix is back in:\n  %s", strings.Join(offenders, "\n  "))
-	}
+	return offenders
 }

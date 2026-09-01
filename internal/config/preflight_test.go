@@ -121,3 +121,48 @@ func TestPreflightAgainstTheProcessEnvironment(t *testing.T) {
 		t.Errorf("message:\n%s", err)
 	}
 }
+
+// A variable that kept the SUPATYPE_ prefix but changed name is the one a
+// reader cannot spot. This one still looks current, so a deployment that sets
+// it would start cleanly and run with the forwarded-for header ignored, which
+// silently changes which IP address rate limiting counts against.
+func TestPreflightRefusesARetiredNameThatKeptThePrefix(t *testing.T) {
+	env := MapEnv{
+		"SUPATYPE_SECURITY_SB_FORWARDED_FOR_ENABLED": "true",
+		"SUPATYPE_MODE": "dev",
+	}
+	err := Preflight(env)
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	message := err.Error()
+	want := "SUPATYPE_SECURITY_SB_FORWARDED_FOR_ENABLED -> SUPATYPE_SECURITY_ST_FORWARDED_FOR_ENABLED"
+	if !strings.Contains(message, want) {
+		t.Errorf("the message must name the fix:\n%s", message)
+	}
+}
+
+// The replacement name must not itself be refused, or the fix the message asks
+// for would fail on the next start.
+func TestPreflightAcceptsTheReplacementName(t *testing.T) {
+	env := MapEnv{"SUPATYPE_SECURITY_ST_FORWARDED_FOR_ENABLED": "true"}
+	if err := Preflight(env); err != nil {
+		t.Errorf("want no error, got %v", err)
+	}
+}
+
+// Every retired name has to map to something else, or the message would tell
+// the reader to change a variable to itself.
+func TestEveryRetiredNameMapsToADifferentName(t *testing.T) {
+	for old, replacement := range retired {
+		if old == replacement {
+			t.Errorf("%s maps to itself", old)
+		}
+		if replacement == "" {
+			t.Errorf("%s maps to nothing", old)
+		}
+		if isStale(replacement) {
+			t.Errorf("%s maps to %s, which is itself retired", old, replacement)
+		}
+	}
+}

@@ -84,7 +84,7 @@ func (e *logEntry) Write(status, bytes int, header http.Header, elapsed time.Dur
 		"duration": elapsed.Nanoseconds(),
 	}
 
-	errorCode := header.Get("x-sb-error-code")
+	errorCode := header.Get("x-st-error-code")
 	if errorCode != "" {
 		fields["error_code"] = errorCode
 	}

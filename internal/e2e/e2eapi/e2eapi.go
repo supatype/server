@@ -180,7 +180,7 @@ func do(
 
 	h := httpReq.Header
 	h.Add("X-Client-Info", "auth-go/v1.0.0")
-	h.Add("X-Supabase-Api-Version", "2024-01-01")
+	h.Add("X-Supatype-Api-Version", "2024-01-01")
 	h.Add("Content-Type", "application/json")
 	h.Add("Accept", "application/json")
 

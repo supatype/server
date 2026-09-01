@@ -22,8 +22,8 @@ import (
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
-	"github.com/supatype/server/internal/sbff"
 	"github.com/supatype/server/internal/security"
+	"github.com/supatype/server/internal/stff"
 )
 
 const (
@@ -477,17 +477,17 @@ func TestTimeoutResponseWriter(t *testing.T) {
 	require.Equal(t, w1.Result(), w2.Result())
 }
 
-func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
+func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSTFF() {
 	origRateLimitHeader := ts.Config.RateLimitHeader
-	origSBFFEnabled := ts.Config.Security.SbForwardedForEnabled
+	origSTFFEnabled := ts.Config.Security.StForwardedForEnabled
 
 	defer func() {
 		ts.Config.RateLimitHeader = origRateLimitHeader
-		ts.Config.Security.SbForwardedForEnabled = origSBFFEnabled
+		ts.Config.Security.StForwardedForEnabled = origSTFFEnabled
 	}()
 
 	ts.Config.RateLimitHeader = "X-Test-Perform-Rate-Limiting"
-	ts.Config.Security.SbForwardedForEnabled = true
+	ts.Config.Security.StForwardedForEnabled = true
 
 	type headerSet struct {
 		rateLimiting   string
@@ -500,7 +500,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 		expErr       error
 	}{
 		{
-			name: "multiple SBFF values, single rate limiting value",
+			name: "multiple STFF values, single rate limiting value",
 			headerValues: []headerSet{
 				{
 					sbForwardedFor: "192.168.1.100",
@@ -514,7 +514,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 			expErr: nil,
 		},
 		{
-			name: "single SBFF value, multiple rate limiting values",
+			name: "single STFF value, multiple rate limiting values",
 			headerValues: []headerSet{
 				{
 					sbForwardedFor: "192.168.1.100",
@@ -531,7 +531,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 			),
 		},
 		{
-			name: "no SBFF value, multiple rate limiting values",
+			name: "no STFF value, multiple rate limiting values",
 			headerValues: []headerSet{
 				{
 					sbForwardedFor: "",
@@ -545,7 +545,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 			expErr: nil,
 		},
 		{
-			name: "no SBFF value, single rate limiting value",
+			name: "no STFF value, single rate limiting value",
 			headerValues: []headerSet{
 				{
 					sbForwardedFor: "",
@@ -562,7 +562,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 			),
 		},
 		{
-			name: "invalid SBFF value, multiple rate limiting values",
+			name: "invalid STFF value, multiple rate limiting values",
 			headerValues: []headerSet{
 				{
 					sbForwardedFor: "invalid",
@@ -576,7 +576,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 			expErr: nil,
 		},
 		{
-			name: "invalid SBFF value, single rate limiting value",
+			name: "invalid STFF value, single rate limiting value",
 			headerValues: []headerSet{
 				{
 					sbForwardedFor: "invalid",
@@ -594,7 +594,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 		},
 	}
 
-	// This test uses the SBFF middleware to inject the Sb-Forwarded-For IP address value, then
+	// This test uses the STFF middleware to inject the St-Forwarded-For IP address value, then
 	// wraps a handler that calls performRateLimiting and stores the error value.
 	for _, tc := range testCases {
 		lmt := tollbooth.NewLimiter(
@@ -613,7 +613,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 		errCallback := func(r *http.Request, err error) {
 		}
 
-		middleware := sbff.Middleware(&ts.Config.Security, errCallback)
+		middleware := stff.Middleware(&ts.Config.Security, errCallback)
 
 		wrappedHandler := middleware(handler)
 
@@ -625,7 +625,7 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithSBFF() {
 			}
 
 			if h.sbForwardedFor != "" {
-				r.Header.Set(sbff.HeaderName, h.sbForwardedFor)
+				r.Header.Set(stff.HeaderName, h.sbForwardedFor)
 			}
 
 			wrappedHandler.ServeHTTP(nil, r)

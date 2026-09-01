@@ -38,7 +38,7 @@
     "internal/ratelimit",
     "internal/reloader",
     "internal/restcache",
-    "internal/sbff",
+    "internal/stff",
     "internal/sqlrunner",
     "internal/static",
     "internal/studioauth",

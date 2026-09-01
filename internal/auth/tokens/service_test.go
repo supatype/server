@@ -115,9 +115,9 @@ func (ts *RefreshTokenV2Suite) TestNormalUse() {
 	require.NotNil(ts.T(), session.RefreshTokenHmacKey)
 	require.Equal(ts.T(), int64(0), *session.RefreshTokenCounter)
 
-	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-	require.Equal(ts.T(), "0", responseHeaders.Get("sb-auth-refresh-token-counter"))
+	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+	require.Equal(ts.T(), "0", responseHeaders.Get("st-auth-refresh-token-counter"))
 
 	refreshTokenToUse := at.RefreshToken
 
@@ -143,9 +143,9 @@ func (ts *RefreshTokenV2Suite) TestNormalUse() {
 		require.NotNil(ts.T(), refreshedSession.RefreshTokenHmacKey)
 		require.Equal(ts.T(), int64(i), *refreshedSession.RefreshTokenCounter)
 
-		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("sb-auth-refresh-token-counter"))
+		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("st-auth-refresh-token-counter"))
 
 		refreshTokenToUse = nrt.RefreshToken
 	}
@@ -195,9 +195,9 @@ func (ts *RefreshTokenV2Suite) TestMaliciousReuse() {
 	require.NotNil(ts.T(), session.RefreshTokenHmacKey)
 	require.Equal(ts.T(), int64(0), *session.RefreshTokenCounter)
 
-	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-	require.Equal(ts.T(), "0", responseHeaders.Get("sb-auth-refresh-token-counter"))
+	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+	require.Equal(ts.T(), "0", responseHeaders.Get("st-auth-refresh-token-counter"))
 
 	refreshTokenToUse := at.RefreshToken
 
@@ -225,9 +225,9 @@ func (ts *RefreshTokenV2Suite) TestMaliciousReuse() {
 		require.NotNil(ts.T(), refreshedSession.RefreshTokenHmacKey)
 		require.Equal(ts.T(), int64(i), *refreshedSession.RefreshTokenCounter)
 
-		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("sb-auth-refresh-token-counter"))
+		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("st-auth-refresh-token-counter"))
 
 		refreshTokenToUse = nrt.RefreshToken
 		refreshTokens = append(refreshTokens, nrt.RefreshToken)
@@ -244,8 +244,8 @@ func (ts *RefreshTokenV2Suite) TestMaliciousReuse() {
 		})
 		require.Error(ts.T(), err)
 		require.Nil(ts.T(), nrt)
-		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
+		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
 
 		refreshedSession, err := models.FindSessionByID(ts.Conn, prt.SessionID, false)
 		require.NoError(ts.T(), err)
@@ -340,9 +340,9 @@ func (ts *RefreshTokenV2Suite) TestConcurrentReuse() {
 	require.NotNil(ts.T(), session.RefreshTokenHmacKey)
 	require.Equal(ts.T(), int64(0), *session.RefreshTokenCounter)
 
-	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-	require.Equal(ts.T(), "0", responseHeaders.Get("sb-auth-refresh-token-counter"))
+	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+	require.Equal(ts.T(), "0", responseHeaders.Get("st-auth-refresh-token-counter"))
 
 	refreshTokenToUse := at.RefreshToken
 	refreshTokens := []string{at.RefreshToken}
@@ -419,7 +419,7 @@ func (ts *RefreshTokenV2Suite) TestConcurrentReuse() {
 			endTimeChan <- time.Now()
 
 			require.NoError(ts.T(), err)
-			causesChan <- responseHeaders.Get("sb-auth-refresh-token-reuse-cause")
+			causesChan <- responseHeaders.Get("st-auth-refresh-token-reuse-cause")
 
 			pnrt, err := crypto.ParseRefreshToken(nrt.RefreshToken)
 			require.NoError(ts.T(), err)
@@ -427,9 +427,9 @@ func (ts *RefreshTokenV2Suite) TestConcurrentReuse() {
 			require.Equal(ts.T(), pnrt.SessionID.String(), prt.SessionID.String())
 			require.Equal(ts.T(), int64(len(refreshTokens)), pnrt.Counter)
 
-			require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-			require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-			require.Equal(ts.T(), strconv.FormatInt(int64(len(refreshTokens)), 10), responseHeaders.Get("sb-auth-refresh-token-counter"))
+			require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+			require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+			require.Equal(ts.T(), strconv.FormatInt(int64(len(refreshTokens)), 10), responseHeaders.Get("st-auth-refresh-token-counter"))
 
 			refreshedSession, err := models.FindSessionByID(ts.Conn, pnrt.SessionID, false)
 			require.NoError(ts.T(), err)
@@ -506,9 +506,9 @@ func (ts *RefreshTokenV2Suite) TestFailToSaveReuse() {
 	require.NotNil(ts.T(), session.RefreshTokenHmacKey)
 	require.Equal(ts.T(), int64(0), *session.RefreshTokenCounter)
 
-	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-	require.Equal(ts.T(), "0", responseHeaders.Get("sb-auth-refresh-token-counter"))
+	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+	require.Equal(ts.T(), "0", responseHeaders.Get("st-auth-refresh-token-counter"))
 
 	refreshTokens := []string{at.RefreshToken}
 
@@ -528,10 +528,10 @@ func (ts *RefreshTokenV2Suite) TestFailToSaveReuse() {
 		require.Equal(ts.T(), pnrt.SessionID.String(), prt.SessionID.String())
 		require.Equal(ts.T(), int64(i), pnrt.Counter)
 
-		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("sb-auth-refresh-token-counter"))
-		require.Equal(ts.T(), "", responseHeaders.Get("sb-auth-refresh-token-reuse-cause"))
+		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("st-auth-refresh-token-counter"))
+		require.Equal(ts.T(), "", responseHeaders.Get("st-auth-refresh-token-reuse-cause"))
 
 		refreshedSession, err := models.FindSessionByID(ts.Conn, pnrt.SessionID, false)
 		require.NoError(ts.T(), err)
@@ -560,10 +560,10 @@ func (ts *RefreshTokenV2Suite) TestFailToSaveReuse() {
 		// key assertion, ensuring the refresh token returned from the "failed to save" scenario is always the currently active refresh token
 		require.Equal(ts.T(), int64(len(refreshTokens)-1), pnrt.Counter)
 
-		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-		require.Equal(ts.T(), strconv.FormatInt(int64(len(refreshTokens)-1), 10), responseHeaders.Get("sb-auth-refresh-token-counter"))
-		require.Equal(ts.T(), "fail-to-save", responseHeaders.Get("sb-auth-refresh-token-reuse-cause"))
+		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+		require.Equal(ts.T(), strconv.FormatInt(int64(len(refreshTokens)-1), 10), responseHeaders.Get("st-auth-refresh-token-counter"))
+		require.Equal(ts.T(), "fail-to-save", responseHeaders.Get("st-auth-refresh-token-reuse-cause"))
 
 		refreshedSession, err := models.FindSessionByID(ts.Conn, pnrt.SessionID, false)
 		require.NoError(ts.T(), err)
@@ -633,9 +633,9 @@ func (ts *RefreshTokenV2Suite) TestDBEncryption() {
 	// key assertion
 	require.True(ts.T(), strings.Contains(*session.RefreshTokenHmacKey, "\"key_id\":\"A\""))
 
-	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-	require.Equal(ts.T(), "0", responseHeaders.Get("sb-auth-refresh-token-counter"))
+	require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+	require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+	require.Equal(ts.T(), "0", responseHeaders.Get("st-auth-refresh-token-counter"))
 
 	refreshTokenToUse := at.RefreshToken
 
@@ -675,9 +675,9 @@ func (ts *RefreshTokenV2Suite) TestDBEncryption() {
 		require.NotNil(ts.T(), refreshedSession.RefreshTokenHmacKey)
 		require.Equal(ts.T(), int64(i), *refreshedSession.RefreshTokenCounter)
 
-		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("sb-auth-refresh-token-counter"))
+		require.Equal(ts.T(), session.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+		require.Equal(ts.T(), session.ID.String(), responseHeaders.Get("st-auth-session-id"))
+		require.Equal(ts.T(), strconv.FormatInt(int64(i), 10), responseHeaders.Get("st-auth-refresh-token-counter"))
 
 		refreshTokenToUse = nrt.RefreshToken
 		encryptedStrings = append(encryptedStrings, *refreshedSession.RefreshTokenHmacKey)
@@ -741,7 +741,7 @@ func (ts *RefreshTokenV2Suite) TestInvalidRefreshTokens() {
 	require.Error(ts.T(), err)
 	require.Nil(ts.T(), nrt)
 
-	require.Equal(ts.T(), prt.SessionID.String(), responseHeaders.Get("sb-auth-session-id"))
+	require.Equal(ts.T(), prt.SessionID.String(), responseHeaders.Get("st-auth-session-id"))
 
 	// tamper with signature
 	prt.Counter = 0
@@ -754,7 +754,7 @@ func (ts *RefreshTokenV2Suite) TestInvalidRefreshTokens() {
 	require.Error(ts.T(), err)
 	require.Nil(ts.T(), nrt)
 
-	require.Equal(ts.T(), "", responseHeaders.Get("sb-auth-session-id"))
+	require.Equal(ts.T(), "", responseHeaders.Get("st-auth-session-id"))
 
 	// remove the session
 	err = models.LogoutSession(ts.Conn, prt.SessionID)
@@ -767,7 +767,7 @@ func (ts *RefreshTokenV2Suite) TestInvalidRefreshTokens() {
 	require.Error(ts.T(), err)
 	require.Nil(ts.T(), nrt)
 
-	require.Equal(ts.T(), "", responseHeaders.Get("sb-auth-session-id"))
+	require.Equal(ts.T(), "", responseHeaders.Get("st-auth-session-id"))
 }
 
 // parseIDTokenClaims parses an ID token and returns the claims as a map
@@ -1152,9 +1152,9 @@ func (ts *RefreshTokenV2Suite) TestRefreshTokenVersionUpgrade() {
 	require.NotNil(ts.T(), refreshedSession.RefreshTokenHmacKey)
 	require.Equal(ts.T(), int64(0), *refreshedSession.RefreshTokenCounter)
 
-	require.Equal(ts.T(), refreshedSession.UserID.String(), responseHeaders.Get("sb-auth-user-id"))
-	require.Equal(ts.T(), refreshedSession.ID.String(), responseHeaders.Get("sb-auth-session-id"))
-	require.Equal(ts.T(), "0", responseHeaders.Get("sb-auth-refresh-token-counter"))
+	require.Equal(ts.T(), refreshedSession.UserID.String(), responseHeaders.Get("st-auth-user-id"))
+	require.Equal(ts.T(), refreshedSession.ID.String(), responseHeaders.Get("st-auth-session-id"))
+	require.Equal(ts.T(), "0", responseHeaders.Get("st-auth-refresh-token-counter"))
 }
 
 // TestAsRedirectURL tests that AsRedirectURL includes the Supatype Auth identifier

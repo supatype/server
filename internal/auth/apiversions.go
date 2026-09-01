@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-const APIVersionHeaderName = "X-Supabase-Api-Version"
+const APIVersionHeaderName = "X-Supatype-Api-Version"
 
 type APIVersion = time.Time
 

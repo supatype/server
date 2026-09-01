@@ -20,8 +20,8 @@ import (
 	"github.com/supatype/server/internal/auth/oauthserver"
 	"github.com/supatype/server/internal/auth/shared"
 	"github.com/supatype/server/internal/observability"
-	"github.com/supatype/server/internal/sbff"
 	"github.com/supatype/server/internal/security"
+	"github.com/supatype/server/internal/stff"
 	"github.com/supatype/server/internal/utilities"
 
 	"github.com/didip/tollbooth/v5"
@@ -114,8 +114,8 @@ func (a *API) performRateLimitingWithHeader(lmt *limiter.Limiter, req *http.Requ
 }
 
 func (a *API) performRateLimiting(lmt *limiter.Limiter, req *http.Request) error {
-	if sbffAddr, ok := sbff.GetIPAddress(req); ok {
-		if err := tollbooth.LimitByKeys(lmt, []string{sbffAddr}); err != nil {
+	if stffAddr, ok := stff.GetIPAddress(req); ok {
+		if err := tollbooth.LimitByKeys(lmt, []string{stffAddr}); err != nil {
 			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverRequestRateLimit, "Request rate limit reached")
 		}
 
@@ -303,8 +303,8 @@ func (a *API) isValidExternalHost(w http.ResponseWriter, req *http.Request) (con
 	if xForwardedHost != "" || reqHost != "" {
 		// host has been provided to the request, but it hasn't been
 		// added to the allow list, raise a log message
-		// in Supabase platform the X-Forwarded-Host and full request
-		// URL are likely sanitzied before they reach the server
+		// on a hosted platform the X-Forwarded-Host and full request
+		// URL are likely sanitised before they reach the server
 
 		fields := make(logrus.Fields)
 

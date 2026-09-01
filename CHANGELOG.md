@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.0.0](https://github.com/supatype/server/compare/v1.5.0...v2.0.0) (2026-09-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* ten wire names change. The seven sb-auth-* response headers set on every token issue and refresh become st-auth-*, x-sb-error-code on every error response becomes x-st-error-code, the sb-forwarded-for request header becomes st-forwarded-for, and X-Supabase-Api-Version becomes X-Supatype-Api-Version. A client that sent the old version header to select the 2024-01-01 error shape will now get the initial shape instead.
+* every GOTRUE_ variable is now SUPATYPE_, 573 of them. A deployment that still sets only the old names has no configuration at all, and the server refuses to start rather than running on defaults: it lists each stale variable with the name to use instead. Two variables are gone rather than renamed, because nothing ever read them under the names deployments were setting: SUPATYPE_API_API_EXTERNAL_URL is SUPATYPE_API_EXTERNAL_URL, and SUPATYPE_DB_DB_NAMESPACE is SUPATYPE_DB_NAMESPACE.
+
+### Features
+
+* name every header and variable after this service, not its ancestor ([c0f9d97](https://github.com/supatype/server/commit/c0f9d97ff67e3f4d3da79d8711c4f8ed246865c8))
+* one configuration prefix, and no GoTrue left in the service ([81331f6](https://github.com/supatype/server/commit/81331f6039a69815ad63ad2eff05565cc9bb9e84))
+
+
+### Bug Fixes
+
+* **auth:** stop warning that two supported settings are unsupported ([9632849](https://github.com/supatype/server/commit/96328492522047bd8b9f932648fa68b26005fbbe))
+* **config:** actually run the preflight that refuses the old prefix ([de41515](https://github.com/supatype/server/commit/de4151539601384683546ddf8eb0accf8f380892))
+* **functions:** write an env file through the directory it lives in ([0e481ad](https://github.com/supatype/server/commit/0e481ad4280eaf4b74538a794cb7ddf6ef5e981e))
+* **gateway:** keep the old prefix out of everything but the test that needs it ([26f1dbf](https://github.com/supatype/server/commit/26f1dbf7a253b082e6c18c86ae0f47d53b5587a7))
+* **gateway:** load the test environment rather than assume it is exported ([3103805](https://github.com/supatype/server/commit/3103805f2bf8cacc13f00a503599c9394d9ccdc4))
+* **hibp:** vendor the pwned-password client, and fix two concurrency defects ([125bd46](https://github.com/supatype/server/commit/125bd46fcca51c65d36b6cca9ed0966d6fee1e08))
+* **hooks:** one clock for a hook's time budget, and a timeout test that holds ([f80e9a0](https://github.com/supatype/server/commit/f80e9a0a16ea6c6cb9f8fb2d482cf279ae364945))
+* stop ignoring internal/auth ([f2d2319](https://github.com/supatype/server/commit/f2d23198b0b60a567807d07da1757abee8860b18))
+* stop the service naming its ancestor on the wire and in the database ([8c48b8b](https://github.com/supatype/server/commit/8c48b8b67e5d4c82180cc029b82e4603cfe6ab53))
+* **storage:** actually contact the database when dialling it ([e75bdf5](https://github.com/supatype/server/commit/e75bdf5319c0a1a269a3b1ae4e69f1f33f6983fc))
+
 ## [1.5.0](https://github.com/supatype/server/compare/v1.4.0...v1.5.0) (2026-08-27)
 
 

@@ -6,6 +6,11 @@ on:
     branches:
       - main
     tags: ["*"]
+  # Nightly, for the live job below: it watches for the outside world drifting
+  # away from what the hermetic tests assume.
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -109,3 +114,30 @@ jobs:
       - uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: coverage.out
+
+  live:
+    # The tests that use real DNS and the real Pwned Passwords API.
+    #
+    # Deliberately off pull requests. The unit tests answer their own lookups
+    # from recorded fact so they are fast and work offline, and these are the
+    # ones that notice when the recording stops matching the world: an MX
+    # record moving, a domain lapsing, the API changing shape. A failure here
+    # means something outside the repository changed, which is worth knowing
+    # daily but must never block a review of code that is fine.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Tests that reach the network
+        env:
+          SUPATYPE_TEST_LIVE_DNS: "1"
+          SUPATYPE_TEST_LIVE_NETWORK: "1"
+        run: |
+          go test -v -count=1 -run 'Live|EndToEnd' \
+            ./internal/auth/mailer/validateclient/... \
+            ./internal/auth/hibp/...

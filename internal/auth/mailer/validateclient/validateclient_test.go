@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -190,6 +191,31 @@ func TestEmalValidatorService(t *testing.T) {
 }
 
 func TestValidateEmailExtended(t *testing.T) {
+	// Answered from recorded fact rather than the internet. Six hosts are all
+	// this table ever looked up, and depending on live DNS for them made the
+	// suite fail on an offline runner and on any change to unrelated records.
+	resolver := fixtureResolver()
+	useResolver(t, resolver)
+
+	// Asserted at the end: every other case is decided by the allow and block
+	// lists or by the format rules, and a change that starts sending those to
+	// DNS would put a network call on the signup path without anyone noticing.
+	wantQueried := []string{
+		"a.a.",
+		"invalid.example.com.",
+		"no.such.email.host.supatype.io.",
+		"opaque.dnstest.supatype.io.",
+		"slow.dnstest.supatype.io.",
+		"supatype.io.",
+		"temp.dnstest.supatype.io.",
+		"www.supatype.com.",
+	}
+	t.Cleanup(func() {
+		if got := resolver.Queried(); !reflect.DeepEqual(got, wantQueried) {
+			t.Errorf("hosts sent to DNS changed:\n got %q\nwant %q", got, wantQueried)
+		}
+	})
+
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, time.Second*60)
 	defer cancel()
@@ -263,13 +289,18 @@ func TestValidateEmailExtended(t *testing.T) {
 		{email: "test@test.localhost", err: "invalid_email_dns"},
 		{email: "test@invalid.example.com", err: "invalid_email_dns"},
 		{email: "test@no.such.email.host.supatype.io", err: "invalid_email_dns"},
-		// this low timeout should simulate a dns timeout, which should
-		// not be treated as an invalid email.
-		{email: "validemail@probablyaaaaaaaanotarealdomain.com",
-			timeout: time.Millisecond},
+		// A lookup that times out says nothing about whether the address is
+		// deliverable, so it must not be rejected. This used to be attempted
+		// with a 1ms deadline against real DNS, which is a race rather than a
+		// test: on a fast resolver it answered and the timeout path never ran.
+		{email: "validemail@slow.dnstest.supatype.io"},
 
-		// likewise for a valid email
-		{email: "timeout@supatype.io", timeout: time.Millisecond},
+		// Likewise a temporary failure, such as a SERVFAIL upstream.
+		{email: "validemail@temp.dnstest.supatype.io"},
+
+		// And an error that is not a DNS error at all: it says nothing about
+		// the domain, so the address is given the benefit of the doubt.
+		{email: "validemail@opaque.dnstest.supatype.io"},
 
 		// invalid dns
 		{email: "a@a", err: "invalid_email_dns"},

@@ -105,9 +105,21 @@ const (
 	validateEmailTimeout = 3 * time.Second
 )
 
+// dnsResolver is the DNS this package needs. *net.Resolver satisfies it.
+//
+// It exists so the tests can answer their own lookups. Pointing them at real
+// domains made them depend on the internet and on DNS records that exist for
+// other reasons: a change of mail provider, or moving a website behind
+// something that adds an MX, would break a test that has nothing to do with
+// either.
+type dnsResolver interface {
+	LookupMX(ctx context.Context, name string) ([]*net.MX, error)
+	LookupHost(ctx context.Context, host string) ([]string, error)
+}
+
 var (
 	// We use the default resolver for this.
-	validateEmailResolver net.Resolver
+	validateEmailResolver dnsResolver = net.DefaultResolver
 )
 
 var (

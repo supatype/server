@@ -1,6 +1,9 @@
 package studiobootstrap
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // Row-dependence decides whether a masked-field header can speak for a whole result set or
 // only warn. Getting it wrong in the permissive direction makes a client hide values the
@@ -91,5 +94,47 @@ func TestRowAndIdentityDependenceAreDifferentQuestions(t *testing.T) {
 	ownerRule := []byte(`{"type":"owner","field":"author_id"}`)
 	if !IsIdentityDependent(ownerRule) || !IsRowDependent(ownerRule) {
 		t.Fatal("an owner rule should be both, which is why the header cannot be exact for it")
+	}
+}
+
+// The masks in a header come out of a map, so the order they are built in is
+// whatever Go's iteration gives that run. Sorting is what makes the header
+// stable across requests, and it was only ever exercised when the map happened
+// to yield an out-of-order pair: the swap inside sortMasks was covered on some
+// runs and not others, which made the coverage gate itself intermittent.
+func TestSortMasksOrdersColumns(t *testing.T) {
+	masks := []FieldMask{
+		{Column: "ssn", RowDependent: true},
+		{Column: "email"},
+		{Column: "address", RowDependent: true},
+		{Column: "dob"},
+	}
+
+	sortMasks(masks)
+
+	var columns []string
+	for _, m := range masks {
+		columns = append(columns, m.Column)
+	}
+	want := []string{"address", "dob", "email", "ssn"}
+	if !reflect.DeepEqual(columns, want) {
+		t.Errorf("columns = %v, want %v", columns, want)
+	}
+	// The rest of the mask travels with its column rather than staying put.
+	for _, m := range masks {
+		if wantDependent := m.Column == "ssn" || m.Column == "address"; m.RowDependent != wantDependent {
+			t.Errorf("%s: RowDependent = %v, want %v", m.Column, m.RowDependent, wantDependent)
+		}
+	}
+}
+
+// Sorting something already sorted, or with nothing to sort, leaves it alone.
+func TestSortMasksOnTrivialInput(t *testing.T) {
+	sortMasks(nil)
+
+	one := []FieldMask{{Column: "email"}}
+	sortMasks(one)
+	if len(one) != 1 || one[0].Column != "email" {
+		t.Errorf("one mask = %v", one)
 	}
 }

@@ -4,8 +4,13 @@ on:
   pull_request:
   push:
     branches:
-      - master
+      - main
     tags: ["*"]
+  # Nightly, for the live job below: it watches for the outside world drifting
+  # away from what the hermetic tests assume.
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,6 +32,19 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # The Valkey client is a wrapper around a real protocol, including a
+      # circuit breaker that opens on real failures. Faking valkey-go's Client
+      # means reimplementing fifteen methods and constructing ValkeyResults by
+      # hand, which tests the fake rather than the wrapper.
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -36,11 +54,16 @@ jobs:
           go-version-file: go.mod
       - name: Check gofmt
         run: |
-          set -x
-
-          if [ ! -z $(gofmt -l .) ]
-          then
-            echo 'Make sure to run "gofmt -s -w ." before commit!' && exit 1
+          # Quoted, and tested with -n against a single string. The previous form
+          # was `[ ! -z $(gofmt -l .) ]`, which word-splits the file list: with
+          # two or more unformatted files it became `[ ! -z f1 f2 ]` and failed
+          # with "too many arguments". As an `if` condition a failure reads as
+          # false, so the check passed precisely when more files were broken.
+          unformatted="$(gofmt -s -l .)"
+          if [ -n "$unformatted" ]; then
+            echo 'Not gofmt-clean. Run "make format" and commit the result:'
+            echo "$unformatted"
+            exit 1
           fi
       - name: Check go vet
         run: |
@@ -63,6 +86,16 @@ jobs:
       - name: Run migrations
         run: make migrate_dev
       - name: Lint and test
+        env:
+          # Without a DSN the Studio membership and bootstrap tests skip
+          # themselves, so five DB-backed test files never ran in CI. The
+          # database is created by hack/init_postgres.sql and is separate from
+          # the migrated one on purpose: these tests drop and recreate
+          # auth.users, which fails where the auth migrations own it.
+          SUPATYPE_TEST_DSN: postgresql://postgres:root@localhost:5432/supatype_studio_test
+          # Same reason: without an address the Valkey client's own tests skip
+          # and the package cannot reach its floor.
+          SUPATYPE_TEST_VALKEY_ADDR: 127.0.0.1:6379
         run: make test
       - name: Cleanup coverage
         run: |
@@ -76,7 +109,35 @@ jobs:
           sed -i '/^github.com\/supatype\/server\/cmd/d' coverage.out
           sed -i '/^github.com\/supatype\/server\/docs/d' coverage.out
           sed -i '/^github.com\/supatype\/server\/main/d' coverage.out
+          sed -i '/^github.com\/supatype\/server\/tools/d' coverage.out
 
       - uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: coverage.out
+
+  live:
+    # The tests that use real DNS and the real Pwned Passwords API.
+    #
+    # Deliberately off pull requests. The unit tests answer their own lookups
+    # from recorded fact so they are fast and work offline, and these are the
+    # ones that notice when the recording stops matching the world: an MX
+    # record moving, a domain lapsing, the API changing shape. A failure here
+    # means something outside the repository changed, which is worth knowing
+    # daily but must never block a review of code that is fine.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Tests that reach the network
+        env:
+          SUPATYPE_TEST_LIVE_DNS: "1"
+          SUPATYPE_TEST_LIVE_NETWORK: "1"
+        run: |
+          go test -v -count=1 -run 'Live|EndToEnd' \
+            ./internal/auth/mailer/validateclient/... \
+            ./internal/auth/hibp/...

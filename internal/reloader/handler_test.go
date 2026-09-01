@@ -53,3 +53,19 @@ func TestAtomicHandler(t *testing.T) {
 		assert.Equal(t, hr.load() == hrFunc2, true)
 	}
 }
+
+// LoadHandler is the exported reader used by serve to reach the live API, and it
+// was the one statement in this package no test touched. The package is held at
+// 100% by hack/coverage-floors.json, so it needs one.
+func TestAtomicHandlerLoadHandler(t *testing.T) {
+	type testHandler struct{ http.Handler }
+
+	first := &testHandler{http.NotFoundHandler()}
+	second := &testHandler{http.NotFoundHandler()}
+
+	hr := NewAtomicHandler(first)
+	assert.Equal(t, http.Handler(first), hr.LoadHandler())
+
+	hr.Store(second)
+	assert.Equal(t, http.Handler(second), hr.LoadHandler())
+}

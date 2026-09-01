@@ -1,7 +1,7 @@
 //lint:file-ignore U1000 ignore go-swagger template
 package docs
 
-import "github.com/supatype/server/internal/api"
+import "github.com/supatype/server/internal/auth"
 
 // swagger:route POST /otp otp otp
 // Passwordless sign-in method for email or phone.
@@ -12,7 +12,7 @@ import "github.com/supatype/server/internal/api"
 type otpParamsWrapper struct {
 	// Only an email or phone should be provided.
 	// in:body
-	Body api.OtpParams
+	Body auth.OtpParams
 }
 
 // swagger:response otpResponse

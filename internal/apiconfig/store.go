@@ -46,11 +46,19 @@ func (s *FileStore) Get(_ context.Context) (ApiConfig, error) {
 	return cfg, nil
 }
 
+// marshalConfig is a seam. ApiConfig is plain data, so marshalling it cannot
+// fail and the error branch in Set is unreachable in production. The test
+// replaces this to prove the branch reports rather than writing a truncated
+// file.
+var marshalConfig = func(cfg ApiConfig) ([]byte, error) {
+	return json.MarshalIndent(cfg, "", "  ")
+}
+
 func (s *FileStore) Set(_ context.Context, cfg ApiConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := marshalConfig(cfg)
 	if err != nil {
 		return err
 	}

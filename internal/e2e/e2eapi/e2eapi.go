@@ -12,11 +12,11 @@ import (
 	"net/url"
 
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/supatype/server/internal/api"
-	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/auth"
+	"github.com/supatype/server/internal/auth/apierrors"
+	"github.com/supatype/server/internal/auth/storage"
+	"github.com/supatype/server/internal/auth/storage/test"
 	"github.com/supatype/server/internal/conf"
-	"github.com/supatype/server/internal/storage"
-	"github.com/supatype/server/internal/storage/test"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -57,7 +57,7 @@ func (o *Instance) init() error {
 		apiVer = "1"
 	}
 
-	a := api.NewAPIWithVersion(o.Config, conn, apiVer)
+	a := auth.NewAPIWithVersion(o.Config, conn, apiVer)
 	apiSrv := httptest.NewServer(a)
 	o.addCloser(apiSrv)
 	o.APIServer = apiSrv
@@ -121,7 +121,7 @@ func (o *Instance) doAdmin(
 ) (*http.Response, error) {
 	tok := jwt.NewWithClaims(
 		jwt.SigningMethodHS256,
-		&api.AccessTokenClaims{
+		&auth.AccessTokenClaims{
 			Role: "supatype_admin",
 		},
 	)
@@ -180,7 +180,7 @@ func do(
 
 	h := httpReq.Header
 	h.Add("X-Client-Info", "auth-go/v1.0.0")
-	h.Add("X-Supabase-Api-Version", "2024-01-01")
+	h.Add("X-Supatype-Api-Version", "2024-01-01")
 	h.Add("Content-Type", "application/json")
 	h.Add("Accept", "application/json")
 
@@ -200,7 +200,7 @@ func do(
 			return nil, err
 		}
 
-		apiErr := new(api.HTTPErrorResponse20240101)
+		apiErr := new(auth.HTTPErrorResponse20240101)
 		if err := json.Unmarshal(data, apiErr); err != nil {
 			return nil, err
 		}

@@ -12,7 +12,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/supatype/server/internal/storage"
+	"github.com/supatype/server/internal/auth/storage"
 )
 
 var EmbeddedMigrations embed.FS
@@ -122,7 +122,7 @@ func migrate(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("%v", errors.Wrap(err, "running db migrations"))
 	} else {
-		log.WithField("count", count).Infof("GoTrue migrations applied successfully")
+		log.WithField("count", count).Infof("auth migrations applied successfully")
 	}
 
 	log.Debugf("after status")

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/supatype/server/internal/api/apierrors"
+	"github.com/supatype/server/internal/auth/apierrors"
 )
 
 // ValidateOAuthURL validates that a URL is safe for OAuth/OIDC operations
@@ -173,8 +173,10 @@ func FetchURLWithTimeout(ctx context.Context, urlStr string, timeout time.Durati
 		).WithInternalError(err)
 	}
 
-	// Set user agent
-	req.Header.Set("User-Agent", "Supabase-Auth/1.0")
+	// Named for the service actually making the request. This goes out to the
+	// identity provider's discovery and JWKS endpoints, so it lands in somebody
+	// else's access log under whatever name it carries.
+	req.Header.Set("User-Agent", "Supatype-Server/1.0")
 	req.Header.Set("Accept", "application/json")
 
 	// Execute request

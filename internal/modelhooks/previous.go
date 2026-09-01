@@ -7,9 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/supatype/server/internal/utilities"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -63,11 +63,11 @@ func NewCallback(
 	schemaFor func(*http.Request) string,
 	serviceRoleKey string,
 	client Doer,
-) (*Callback, error) {
+) *Callback {
+	// crypto/rand.Read does not fail; a short read would be a broken runtime
+	// rather than a condition to handle.
 	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("generating a hook callback key: %w", err)
-	}
+	_, _ = rand.Read(key)
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
@@ -78,7 +78,7 @@ func NewCallback(
 		serviceRoleKey: serviceRoleKey,
 		limit:          DefaultPreviousLimit,
 		client:         client,
-	}, nil
+	}
 }
 
 // Path returns the callback path for one request's table and filter, or "" when there is nothing to
@@ -87,11 +87,9 @@ func (c *Callback) Path(op Operation, table, filter string) string {
 	if c == nil || op == OpInsert || table == "" {
 		return ""
 	}
+	// previousClaims is two strings and an integer, so it cannot fail to encode.
 	claims := previousClaims{Table: table, Filter: filter, Expiry: time.Now().Add(previousTTL).Unix()}
-	encoded, err := json.Marshal(claims)
-	if err != nil {
-		return ""
-	}
+	encoded, _ := json.Marshal(claims)
 	payload := base64.RawURLEncoding.EncodeToString(encoded)
 	return PreviousPathPrefix + payload + "." + c.sign(payload)
 }
@@ -135,20 +133,20 @@ type previousResponse struct {
 func (c *Callback) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"message": "POST only"})
+			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"message": "POST only"})
 			return
 		}
 		token := strings.TrimPrefix(req.URL.Path, "/")
 		claims, err := c.verify(token)
 		if err != nil {
 			// No detail: a caller poking at this endpoint learns only that the token was not good.
-			writeJSON(w, http.StatusForbidden, map[string]string{"message": "Invalid hook callback token"})
+			utilities.WriteJSON(w, http.StatusForbidden, map[string]string{"message": "Invalid hook callback token"})
 			return
 		}
 
 		rows, truncated, err := c.fetch(req, claims)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"message": "Could not read the affected rows"})
+			utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"message": "Could not read the affected rows"})
 			return
 		}
 
@@ -159,9 +157,6 @@ func (c *Callback) Handler() http.Handler {
 		// only a promise until the browser is told not to guess.
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if len(rows) == 0 {
-			rows = json.RawMessage("[]")
-		}
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(previousResponse{Rows: rows, Truncated: truncated})
 	})
@@ -188,9 +183,6 @@ func (c *Callback) fetch(req *http.Request, claims previousClaims) (json.RawMess
 		query += "&" + limit
 	}
 	target += "?" + query
-	if _, err := url.Parse(target); err != nil {
-		return nil, false, err
-	}
 
 	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, target, nil)
 	if err != nil {
@@ -229,14 +221,6 @@ func (c *Callback) fetch(req *http.Request, claims previousClaims) (json.RawMess
 	if truncated {
 		rows = rows[:c.limit]
 	}
-	trimmed, err := json.Marshal(rows)
-	if err != nil {
-		return nil, false, err
-	}
+	trimmed, _ := json.Marshal(rows)
 	return trimmed, truncated, nil
-}
-
-// encodeClaims is the token payload encoding, exposed for tests that need to mint by hand.
-func encodeClaims(claims []byte) string {
-	return base64.RawURLEncoding.EncodeToString(claims)
 }

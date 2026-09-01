@@ -53,7 +53,7 @@ type Doer interface {
 
 // Dispatcher calls hook functions and turns their answers into outcomes.
 //
-// Deliberately **not** `internal/hooks/hookshttp`: that dispatcher retries, which is right for an
+// Deliberately **not** `internal/auth/hooks/hookshttp`: that dispatcher retries, which is right for an
 // auth webhook and wrong here. A retry before a write multiplies the latency the caller waits, and
 // re-invokes a handler that may already have acted. It also folds every non-2xx into an error, which
 // would lose the distinction this design turns on — a 4xx is the hook saying no, a 5xx is the hook

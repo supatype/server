@@ -11,9 +11,9 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/supatype/server/internal/auth/hooks/v0hooks"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/e2e/e2eapi"
-	"github.com/supatype/server/internal/hooks/v0hooks"
 )
 
 type Instance struct {

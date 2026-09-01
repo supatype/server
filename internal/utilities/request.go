@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/supatype/server/internal/conf"
-	"github.com/supatype/server/internal/sbff"
+	"github.com/supatype/server/internal/stff"
 )
 
 func getIPAddressWithXFF(r *http.Request) string {
@@ -46,8 +46,8 @@ func getIPAddressWithXFF(r *http.Request) string {
 
 // GetIPAddress returns the real IP address of the HTTP request.
 func GetIPAddress(r *http.Request) string {
-	if sbffAddr, ok := sbff.GetIPAddress(r); ok {
-		return sbffAddr
+	if stffAddr, ok := stff.GetIPAddress(r); ok {
+		return stffAddr
 	}
 
 	return getIPAddressWithXFF(r)

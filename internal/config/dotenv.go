@@ -1,0 +1,103 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/joho/godotenv"
+)
+
+// absPath resolves a path against the working directory.
+//
+// A seam: filepath.Abs fails only when os.Getwd does, which means the directory
+// the process is running in has been removed underneath it. That is arrangeable
+// on Linux and not on Windows, and a test that only runs on one of them is
+// worse than one that states the case.
+var absPath = filepath.Abs
+
+// DefaultManifestRelPath is the default route manifest path when SUPATYPE_MANIFEST_PATH is unset.
+const DefaultManifestRelPath = ".supatype/manifest.json"
+
+// ProjectRootFromManifestPath returns the project directory that should hold `.env` files for a
+// standard layout `…/PROJECT/.supatype/manifest.json`. For other layouts it returns the directory
+// containing the manifest file.
+func ProjectRootFromManifestPath(manifestRelOrAbs string) (string, error) {
+	p := strings.TrimSpace(manifestRelOrAbs)
+	if p == "" {
+		p = DefaultManifestRelPath
+	}
+	abs, err := absPath(p)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(abs)
+	if filepath.Base(parent) == ".supatype" {
+		return filepath.Dir(parent), nil
+	}
+	return parent, nil
+}
+
+// LoadDotEnvForServe loads `.env.local` then `.env` from several locations without overwriting keys
+// already set in the process environment (shell / container env wins over files; godotenv never
+// overwrites). Order: directory of --config (when -c points to a file), cwd, then the manifest-derived
+// project root (after cwd, SUPATYPE_MANIFEST_PATH may be set from cwd’s `.env`). Each directory is
+// loaded at most once. This never logs file contents.
+func LoadDotEnvForServe(cwd, configFilePath string) error {
+	loaded := make(map[string]struct{})
+	try := func(dir string) error {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return nil
+		}
+		abs, err := absPath(filepath.Clean(dir))
+		if err != nil {
+			return err
+		}
+		if _, dup := loaded[abs]; dup {
+			return nil
+		}
+		if err := LoadDotEnv(abs); err != nil {
+			return err
+		}
+		loaded[abs] = struct{}{}
+		return nil
+	}
+
+	if cf := strings.TrimSpace(configFilePath); cf != "" {
+		if fi, err := os.Stat(cf); err == nil && !fi.IsDir() {
+			if err := try(filepath.Dir(cf)); err != nil {
+				return err
+			}
+		}
+	}
+	if err := try(cwd); err != nil {
+		return err
+	}
+	proj, err := ProjectRootFromManifestPath(os.Getenv("SUPATYPE_MANIFEST_PATH"))
+	if err != nil {
+		return err
+	}
+	return try(proj)
+}
+
+// LoadDotEnv loads `.env.local` then `.env` in dir when present (each via godotenv.Load: never overwrites
+// already-set process environment). Loading `.env.local` first lets keys there win over `.env` for
+// values not already exported in the shell.
+// Call this before Load() so that SUPATYPE_* vars from files are visible.
+func LoadDotEnv(dir string) error {
+	// #nosec G703 -- the filename is a constant; only `dir` is tainted, and it comes from this
+	// process's own configuration (cwd, a config file's directory, or SUPATYPE_MANIFEST_PATH).
+	// Anyone who can set that already controls this process's environment, so there is no
+	// privilege boundary here to traverse.
+	for _, name := range []string{".env.local", ".env"} {
+		path := filepath.Join(dir, name)
+		if _, statErr := os.Stat(path); statErr != nil {
+			continue
+		}
+		if err := godotenv.Load(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}

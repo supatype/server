@@ -10,7 +10,8 @@ import (
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/supatype/server/internal/dbpool"
+	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/studiomembers"
 )
 
@@ -48,14 +49,16 @@ func TestBootstrapEndpoints(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run the bootstrap endpoints against Postgres")
 	}
-	t.Setenv("SUPATYPE_SQL_DATABASE_URL", dsn)
-	t.Setenv("SUPATYPE_MODE", "")
-	t.Setenv("STUDIO_OPEN_DEV", "")
+	resources, err := data.Open(context.Background(), &config.Config{SQLDatabaseURL: dsn})
+	if err != nil {
+		t.Fatalf("open resources: %v", err)
+	}
+	t.Cleanup(func() { _ = resources.Close() })
 
 	ctx := context.Background()
-	pool, err := dbpool.Pool(ctx)
+	pool, err := resources.AdminPool()
 	if err != nil {
-		t.Fatalf("open pool: %v", err)
+		t.Fatalf("admin pool: %v", err)
 	}
 	for _, stmt := range []string{
 		`CREATE SCHEMA IF NOT EXISTS _supatype`,
@@ -100,7 +103,9 @@ func TestBootstrapEndpoints(t *testing.T) {
 	cfg := Config{
 		JWTSecret:  testSecret,
 		AdminRoles: DefaultAdminRoles,
-		StudioRole: studiomembers.Lookup,
+		StudioRole: studiomembers.NewStore(resources).Lookup,
+		Members:    studiomembers.NewStore(resources),
+		Resources:  resources,
 	}
 
 	tokenFor := func(appRole string) string {

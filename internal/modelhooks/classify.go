@@ -1,8 +1,8 @@
 // Package modelhooks runs a project's schema-declared lifecycle hooks on the REST write path.
 //
 // A hook is an edge function called by this server before or after a write, so it can validate,
-// enrich, reject, or react. Separate from internal/hooks, which is GoTrue's *auth* hooks — same word,
-// different feature, and merging them would confuse both.
+// enrich, reject, or react. Separate from internal/auth/hooks, which is the auth service's own hooks:
+// same word, different feature, and merging them would confuse both.
 //
 // What a hook is not: a security boundary. It fires for writes through this API, so direct SQL, seeds
 // and migrations bypass it. Invariants belong in RLS.
@@ -27,9 +27,9 @@ const (
 	// write and, more importantly, because that is what decides the safe answer when it cannot
 	// be reached.
 	EventBeforeValidate = "beforeValidate"
-	EventAfterChange  = "afterChange"
-	EventBeforeDelete = "beforeDelete"
-	EventAfterDelete  = "afterDelete"
+	EventAfterChange    = "afterChange"
+	EventBeforeDelete   = "beforeDelete"
+	EventAfterDelete    = "afterDelete"
 )
 
 // Operation is the write a request performs, as a hook payload reports it.

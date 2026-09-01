@@ -42,7 +42,7 @@ func TestSAMLConfiguration(t *testing.T) {
 			Enabled:    true,
 			PrivateKey: validPrivateKey,
 		}
-		err := c.PopulateFields("https://projectref.supabase.co")
+		err := c.PopulateFields("https://projectref.supatype.com")
 		require.NoError(t, err)
 
 		isSet := (c.Certificate.KeyUsage & x509.KeyUsageDataEncipherment) != 0
@@ -58,7 +58,7 @@ func TestSAMLConfiguration(t *testing.T) {
 			PrivateKey:               validPrivateKey,
 			AllowEncryptedAssertions: true,
 		}
-		err := c.PopulateFields("https://projectref.supabase.co")
+		err := c.PopulateFields("https://projectref.supatype.com")
 		require.NoError(t, err)
 
 		isSet := (c.Certificate.KeyUsage & x509.KeyUsageDataEncipherment) != 0
@@ -91,7 +91,7 @@ func TestSAMLConfiguration(t *testing.T) {
 			Enabled:    true,
 			PrivateKey: base64.StdEncoding.EncodeToString([]byte("INVALID")),
 		}
-		err := c.PopulateFields("https://projectref.supabase.co")
+		err := c.PopulateFields("https://projectref.supatype.com")
 		require.Error(t, err)
 	})
 
@@ -100,7 +100,7 @@ func TestSAMLConfiguration(t *testing.T) {
 			Enabled:    true,
 			PrivateKey: validPrivateKey,
 		}
-		certTemplate, err := c.populateFields("https://projectref.supabase.co")
+		certTemplate, err := c.populateFields("https://projectref.supatype.com")
 		require.NoError(t, err)
 
 		certTemplate.SerialNumber = big.NewInt(-1)
@@ -113,7 +113,7 @@ func TestSAMLConfiguration(t *testing.T) {
 			Enabled:    true,
 			PrivateKey: validPrivateKey,
 		}
-		err := c.PopulateFields("https://projectref.supabase.co")
+		err := c.PopulateFields("https://projectref.supatype.com")
 		require.NoError(t, err)
 
 		err = c.parseCertificateDer([]byte{0x0, 0x0})
@@ -204,10 +204,10 @@ func TestSAMLConfigurationDeterministicCertificate(t *testing.T) {
 		PrivateKey: a.PrivateKey,
 	}
 
-	err := a.PopulateFields("https://projectref.supabase.co")
+	err := a.PopulateFields("https://projectref.supatype.com")
 	require.NoError(t, err)
 
-	err = b.PopulateFields("https://projectref.supabase.co")
+	err = b.PopulateFields("https://projectref.supatype.com")
 	require.NoError(t, err)
 
 	require.Equal(t, a.Certificate.Raw, b.Certificate.Raw, "Certificate generation should be deterministic")

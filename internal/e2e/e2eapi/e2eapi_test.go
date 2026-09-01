@@ -15,9 +15,9 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/server/internal/api"
+	"github.com/supatype/server/internal/auth"
+	"github.com/supatype/server/internal/auth/models"
 	"github.com/supatype/server/internal/e2e"
-	"github.com/supatype/server/internal/models"
 )
 
 func TestInstance(t *testing.T) {
@@ -32,7 +32,7 @@ func TestInstance(t *testing.T) {
 			defer inst.Close()
 
 			email := "e2eapitest_" + uuid.Must(uuid.NewV4()).String() + "@localhost"
-			req := &api.SignupParams{
+			req := &auth.SignupParams{
 				Email:    email,
 				Password: "password",
 			}
@@ -49,7 +49,7 @@ func TestInstance(t *testing.T) {
 			defer inst.Close()
 
 			email := "e2eapitest_" + uuid.Must(uuid.NewV4()).String() + "@localhost"
-			req := &api.InviteParams{
+			req := &auth.InviteParams{
 				Email: email,
 			}
 			res := new(models.User)
@@ -135,7 +135,7 @@ func TestDo(t *testing.T) {
 	})
 
 	// Covers status code >= 400 error handling switch statement
-	t.Run("api.HTTPErrorResponse_to_apierrors.HTTPError", func(t *testing.T) {
+	t.Run("auth.HTTPErrorResponse_to_apierrors.HTTPError", func(t *testing.T) {
 		res := make(chan string)
 		err := Do(ctx, http.MethodGet, inst.APIServer.URL+"/user", nil, &res)
 		require.Error(t, err)

@@ -56,7 +56,7 @@ type initGaugeFunc func(
 ) (metric.Int64Gauge, error)
 
 func initGaugeOtel(name string, options ...metric.Int64GaugeOption) (metric.Int64Gauge, error) {
-	return otel.Meter("gotrue").Int64Gauge(name, options...)
+	return otel.Meter("supatype-auth").Int64Gauge(name, options...)
 }
 
 func initMetrics(ctx context.Context, vi *versionInfo) error {

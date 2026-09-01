@@ -21,6 +21,18 @@ const (
 	logRingSize    = 1000 // max log lines retained in memory
 )
 
+// command builds the child process.
+//
+// A seam: the supervisor's behaviour — draining both streams into the ring
+// buffer, restarting on a crash, stopping on cancellation — is worth testing,
+// and requiring a Deno installation to test it would mean not testing it.
+//
+// #nosec G204 -- the path is validated by validateCommandPath before this is
+// reached, and the arguments are fixed literals.
+var command = func(ctx context.Context, path string, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, path, args...)
+}
+
 // LogLine is a captured line from the Deno process stdout/stderr.
 type LogLine struct {
 	Timestamp time.Time
@@ -190,8 +202,7 @@ func (m *Manager) run(ctx context.Context) error {
 		m.serveEntry,
 	)
 
-	// #nosec G204 -- denoPath and serveEntry are validated above; remaining args are fixed literals.
-	cmd := exec.CommandContext(ctx, m.denoPath, args...)
+	cmd := command(ctx, m.denoPath, args...)
 	cmd.Env = envForDenoProcess(m.port, m.env)
 
 	// Capture stdout and stderr into the ring buffer.
@@ -255,11 +266,4 @@ func envForDenoProcess(port int, extra []string) []string {
 	out = append(out, extra...)
 	out = append(out, fmt.Sprintf("PORT=%d", port))
 	return out
-}
-
-func min(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
 }

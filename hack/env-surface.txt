@@ -1,0 +1,1300 @@
+# Environment surface of supatype-server. Generated; do not hand-edit.
+#
+# Regenerate with:  go run ./tools/envsurface -update
+#
+# Every name here is one the process actually reads.
+#
+#   struct   derived by envconfig from a config struct. envconfig looks up the
+#            prefixed key and then falls back to the bare name from an explicit
+#            tag, so both names appear and both are live.
+#   call     a literal, a package constant, or a member of a literal slice being
+#            ranged over, passed to os.Getenv or os.LookupEnv.
+#   dynamic  a read this tool could not resolve statically. Recorded on purpose:
+#            it marks a hole in the lock rather than hiding one.
+#
+# This file is a behaviour lock for the coherence refactor. A diff here means the
+# configuration surface changed, which is either the point of the commit or a bug
+# in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
+# change nothing else about what the service reads.
+#
+# total: 638 names
+
+DATABASE_URL
+    struct internal/conf.GlobalConfiguration
+    struct internal/config.Config
+LOG_LEVEL
+    struct internal/config.Config
+MAU_EMAIL_SALT
+    struct internal/config.Config
+OTEL_EXPORTER_OTLP_PROTOCOL
+    struct internal/conf.GlobalConfiguration
+OTEL_EXPORTER_PROMETHEUS_HOST
+    struct internal/conf.GlobalConfiguration
+OTEL_EXPORTER_PROMETHEUS_PORT
+    struct internal/conf.GlobalConfiguration
+PORT
+    struct internal/conf.GlobalConfiguration
+POSTGRES_PASSWORD
+    struct internal/config.Config
+REQUEST_ID_HEADER
+    struct internal/conf.GlobalConfiguration
+RP_ID
+    struct internal/conf.GlobalConfiguration
+SECRETS
+    struct internal/conf.GlobalConfiguration
+STORAGE_PATH
+    struct internal/config.Config
+STORAGE_PROVIDER
+    struct internal/config.Config
+STUDIO_ADMIN_ROLES
+    struct internal/config.Config
+STUDIO_OPEN_DEV
+    struct internal/config.Config
+SUPATYPE_ACME_HTTP_ADDR
+    struct internal/config.Config
+SUPATYPE_ADMIN_CONFIG_PATH
+    struct internal/config.Config
+SUPATYPE_ALLOW_SECRET_READBACK
+    struct internal/config.Config
+SUPATYPE_ANON_KEY
+    struct internal/config.Config
+SUPATYPE_API_CONFIG_PATH
+    struct internal/config.Config
+SUPATYPE_API_ENDPOINT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_API_EXTERNAL_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_API_HOST
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_API_MAX_REQUEST_DURATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_API_PORT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_API_REQUEST_ID_HEADER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_APP_MODE
+    struct internal/config.Config
+SUPATYPE_APP_SPA_FALLBACK
+    struct internal/config.Config
+SUPATYPE_APP_STATIC_DIR
+    struct internal/config.Config
+SUPATYPE_APP_UPSTREAM
+    struct internal/config.Config
+SUPATYPE_AUDIT_LOG_DISABLE_POSTGRES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_BLOCK_BOT_UA
+    struct internal/config.Config
+SUPATYPE_CLOUD_ACTIVITY_ENABLED
+    struct internal/config.Config
+SUPATYPE_CLOUD_ACTIVITY_URL
+    struct internal/config.Config
+SUPATYPE_CONTROL_PLANE_URL
+    struct internal/config.Config
+SUPATYPE_CORS_ALLOWED_HEADERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_CORS_ALLOW_ORIGINS
+    struct internal/config.Config
+SUPATYPE_CUSTOM_OAUTH_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_CUSTOM_OAUTH_MAX_PROVIDERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_ADVISOR_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_ADVISOR_OBSERVATION_INTERVAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_ADVISOR_SAMPLING_INTERVAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_CLEANUP_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_CONN_MAX_IDLE_TIME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_CONN_MAX_LIFETIME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_CONN_PERCENTAGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_CREDENTIALS_KEK
+    struct internal/config.Config
+SUPATYPE_DB_DATABASE_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_DRIVER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_HEALTH_CHECK_PERIOD
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_MAX_IDLE_POOL_SIZE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_MAX_POOL_SIZE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_MIGRATIONS_PATH
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_NAMESPACE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_SCHEMA
+    struct internal/config.Config
+SUPATYPE_DENO_FUNCTIONS_DIR
+    struct internal/config.Config
+SUPATYPE_DENO_PATH
+    struct internal/config.Config
+SUPATYPE_DENO_PORT
+    struct internal/config.Config
+SUPATYPE_DENO_SERVE_SCRIPT
+    struct internal/config.Config
+SUPATYPE_DISABLE_SIGNUP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXPERIMENTAL_PROVIDERS_WITH_OWN_LINKING_DOMAIN
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ALLOWED_ID_TOKEN_ISSUERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ANONYMOUS_USERS_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_APPLE_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_AZURE_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_BITBUCKET_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_DISCORD_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_EMAIL_AUTHORIZED_ADDRESSES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_EMAIL_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_EMAIL_MAGIC_LINK_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FACEBOOK_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FIGMA_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLOW_STATE_EXPIRY_DURATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_FLY_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITHUB_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GITLAB_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_GOOGLE_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_IOS_BUNDLE_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KAKAO_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_KEYCLOAK_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_OIDC_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_LINKEDIN_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_NOTION_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_OIDC_PROVIDER_CACHE_TTL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_PHONE_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_REDIRECTURL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_OIDC_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SLACK_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SNAPCHAT_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_SPOTIFY_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITCH_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_TWITTER_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_VERCEL_MARKETPLACE_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WEB3_ETHEREUM_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WEB3_ETHEREUM_MAXIMUM_VALIDITY_DURATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WEB3_SOLANA_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WEB3_SOLANA_MAXIMUM_VALIDITY_DURATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_WORKOS_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_X_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_API_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_CLIENT_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_EMAIL_OPTIONAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_REDIRECT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_SKIP_NONCE_CHECK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_EXTERNAL_ZOOM_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_FUNCTIONS_WORKER_URL
+    struct internal/config.Config
+SUPATYPE_GRAPHQL_URL
+    struct internal/config.Config
+SUPATYPE_HEALTH_SELF_BASE_URL
+    struct internal/config.Config
+SUPATYPE_HOOK_AFTER_USER_CREATED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_AFTER_USER_CREATED_HOOKNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_AFTER_USER_CREATED_SECRETS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_AFTER_USER_CREATED_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_BEFORE_USER_CREATED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_BEFORE_USER_CREATED_HOOKNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_BEFORE_USER_CREATED_SECRETS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_BEFORE_USER_CREATED_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_CUSTOM_ACCESS_TOKEN_HOOKNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_CUSTOM_ACCESS_TOKEN_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_MFA_VERIFICATION_ATTEMPT_HOOKNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_MFA_VERIFICATION_ATTEMPT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_HOOKNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_EMAIL_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_EMAIL_HOOKNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_EMAIL_SECRETS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_EMAIL_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_SMS_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_SMS_HOOKNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_SMS_SECRETS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_HOOK_SEND_SMS_URI
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_INDEX_WORKER_ENSURE_USER_SEARCH_INDEXES_EXIST
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_INDEX_WORKER_MAX_USERS_THRESHOLD
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_INTERNAL_HMAC_SECRET
+    struct internal/config.Config
+SUPATYPE_INTERNAL_HTTP_TIMEOUT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_ADMIN_GROUP_NAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_ADMIN_ROLES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_AUD
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_DEFAULT_GROUP_NAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_EXP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_ISSUER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_KEYS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_KEY_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_JWT_SECRET
+    struct internal/conf.GlobalConfiguration
+    struct internal/config.Config
+SUPATYPE_JWT_VALID_METHODS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_LOG_DISABLE_COLORS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_LOG_FIELDS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_LOG_FILE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_LOG_LEVEL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_LOG_QUOTE_EMPTY_FIELDS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_LOG_SQL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_LOG_TSFORMAT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_AUTOCONFIRM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_EMAIL_BACKGROUND_SENDING
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_EMAIL_VALIDATION_BLOCKED_MX
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_EMAIL_VALIDATION_EXTENDED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_EMAIL_VALIDATION_SERVICE_HEADERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_EMAIL_VALIDATION_SERVICE_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_EXTERNAL_HOSTS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_MAILER_PROVIDER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_NOTIFICATIONS_EMAIL_CHANGED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_NOTIFICATIONS_IDENTITY_LINKED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_NOTIFICATIONS_IDENTITY_UNLINKED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_NOTIFICATIONS_MFA_FACTOR_ENROLLED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_NOTIFICATIONS_MFA_FACTOR_UNENROLLED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_NOTIFICATIONS_PHONE_CHANGED_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_OTP_EXP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_OTP_LENGTH
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SECURE_EMAIL_CHANGE_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_CONFIRMATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_EMAIL_CHANGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_EMAIL_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_IDENTITY_LINKED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_IDENTITY_UNLINKED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_INVITE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_MAGIC_LINK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_MFA_FACTOR_ENROLLED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_MFA_FACTOR_UNENROLLED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_PASSWORD_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_PHONE_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_REAUTHENTICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_RECOVERY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_RESEND_API_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_RESEND_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_SES_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_CONFIRMATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_EMAIL_CHANGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_EMAIL_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_IDENTITY_LINKED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_IDENTITY_UNLINKED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_INVITE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_MAGIC_LINK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_MFA_FACTOR_ENROLLED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_MFA_FACTOR_UNENROLLED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_PASSWORD_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_PHONE_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_REAUTHENTICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_RECOVERY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATE_MAX_AGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATE_MAX_SIZE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATE_RELOADING_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATE_RELOADING_MAX_IDLE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATE_RETRY_INTERVAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_CONFIRMATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_EMAIL_CHANGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_EMAIL_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_IDENTITY_LINKED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_IDENTITY_UNLINKED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_INVITE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_MAGIC_LINK
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_MFA_FACTOR_ENROLLED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_MFA_FACTOR_UNENROLLED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_PASSWORD_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_PHONE_CHANGED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_REAUTHENTICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_RECOVERY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MANAGED_PROJECT_REF
+    struct internal/config.Config
+SUPATYPE_MANIFEST_PATH
+    call internal/config/dotenv.go:77
+    struct internal/config.Config
+SUPATYPE_METRICS_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_METRICS_EXPORTER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_METRICS_OTEL_EXPORTER_OTLP_PROTOCOL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_METRICS_OTEL_EXPORTER_PROMETHEUS_HOST
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_METRICS_OTEL_EXPORTER_PROMETHEUS_PORT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_CHALLENGE_EXPIRY_DURATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_FACTOR_EXPIRY_DURATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_MAX_ENROLLED_FACTORS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_MAX_VERIFIED_FACTORS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_ENROLL_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_MAX_FREQUENCY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_OTP_LENGTH
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_SMSTEMPLATE_MODE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_SMSTEMPLATE_NAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_SMSTEMPLATE_PARSENAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_SMSTEMPLATE_ROOT_NODES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_SMSTEMPLATE_ROOT_NODETYPE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_SMSTEMPLATE_ROOT_POS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_TEMPLATE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_PHONE_VERIFY_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_RATE_LIMIT_CHALLENGE_AND_VERIFY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_TOTP_ENROLL_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_TOTP_VERIFY_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_WEB_AUTHN_ENROLL_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MFA_WEB_AUTHN_VERIFY_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MODE
+    struct internal/config.Config
+SUPATYPE_NONPROD
+    struct internal/config.Config
+SUPATYPE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_OAUTH_SERVER_AUTHORIZATION_PATH
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_OAUTH_SERVER_AUTHORIZATION_TTL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_OAUTH_SERVER_DEFAULT_SCOPE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_OAUTH_SERVER_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_OPERATOR_TOKEN
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_OUTER_LOG_LEVEL
+    struct internal/config.Config
+SUPATYPE_PASSKEY_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSKEY_MAX_PASSKEYS_PER_USER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_HIBP_BLOOM_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_HIBP_BLOOM_FALSE_POSITIVES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_HIBP_BLOOM_ITEMS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_HIBP_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_HIBP_FAIL_CLOSED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_HIBP_USER_AGENT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_MIN_LENGTH
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PASSWORD_REQUIRED_CHARACTERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_POSTGREST_URL
+    struct internal/config.Config
+SUPATYPE_PROFILER_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PROFILER_HOST
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_PROFILER_PORT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_ANONYMOUS_USERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_EMAIL_SENT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_HEADER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_OTP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_O_AUTH_DYNAMIC_CLIENT_REGISTER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_SMS_SENT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_SSO
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_TOKEN_REFRESH
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_VERIFY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RATE_LIMIT_WEB3
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_REALTIME_URL
+    struct internal/config.Config
+SUPATYPE_RELOADING_GRACE_PERIOD_INTERVAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RELOADING_NOTIFY_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RELOADING_POLLERENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RELOADING_POLLER_INTERVAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RELOADING_SIGNAL_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RELOADING_SIGNAL_NUMBER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RESEND_API_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_RESEND_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_ALLOW_ENCRYPTED_ASSERTIONS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_AUTHORITYKEYID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_BASICCONSTRAINTSVALID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_CRLDISTRIBUTIONPOINTS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_DNSNAMES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EMAILADDRESSES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EXCLUDEDDNSDOMAINS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EXCLUDEDEMAILADDRESSES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EXCLUDEDIPRANGES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EXCLUDEDURIDOMAINS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EXTENSIONS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EXTKEYUSAGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_EXTRAEXTENSIONS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_INHIBITANYPOLICY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_INHIBITANYPOLICYZERO
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_INHIBITPOLICYMAPPING
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_INHIBITPOLICYMAPPINGZERO
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_IPADDRESSES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISCA
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_COMMONNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_COUNTRY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_EXTRANAMES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_LOCALITY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_NAMES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_ORGANIZATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_ORGANIZATIONALUNIT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_POSTALCODE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_PROVINCE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_SERIALNUMBER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUER_STREETADDRESS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_ISSUINGCERTIFICATEURL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_KEYUSAGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_MAXPATHLEN
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_MAXPATHLENZERO
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_NOTAFTER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_NOTBEFORE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_OCSPSERVER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_PERMITTEDDNSDOMAINS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_PERMITTEDDNSDOMAINSCRITICAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_PERMITTEDEMAILADDRESSES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_PERMITTEDIPRANGES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_PERMITTEDURIDOMAINS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_POLICIES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_POLICYIDENTIFIERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_POLICYMAPPINGS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_PUBLICKEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_PUBLICKEYALGORITHM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_RAW
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_RAWISSUER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_RAWSUBJECT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_RAWSUBJECTPUBLICKEYINFO
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_RAWTBSCERTIFICATE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_REQUIREEXPLICITPOLICY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_REQUIREEXPLICITPOLICYZERO
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SERIALNUMBER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SIGNATURE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SIGNATUREALGORITHM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECTKEYID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_COMMONNAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_COUNTRY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_EXTRANAMES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_LOCALITY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_NAMES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_ORGANIZATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_ORGANIZATIONALUNIT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_POSTALCODE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_PROVINCE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_SERIALNUMBER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_SUBJECT_STREETADDRESS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_UNHANDLEDCRITICALEXTENSIONS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_UNKNOWNEXTKEYUSAGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_URIS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_CERTIFICATE_VERSION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_EXTERNAL_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_PRIVATE_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RATE_LIMIT_ASSERTION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RELAY_STATE_VALIDITY_PERIOD
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_D
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_E
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_N
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_CRTVALUES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_DP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_DQ
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_QINV
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPRIVATEKEY_PRIMES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPUBLICKEY_E
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_RSAPUBLICKEY_N
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_CAPTCHA_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_CAPTCHA_PROVIDER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_CAPTCHA_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_CAPTCHA_TIMEOUT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_DB_ENCRYPTION_DECRYPTION_KEYS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPTION_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPTION_KEY_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_MANUAL_LINKING_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_REFRESH_TOKEN_ALGORITHM_VERSION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_REFRESH_TOKEN_ALLOW_REUSE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_REFRESH_TOKEN_UPGRADE_PERCENTAGE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_ST_FORWARDED_FOR_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SERVICE_ROLE_KEY
+    struct internal/config.Config
+SUPATYPE_SESSIONS_ALLOW_LOW_AAL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SESSIONS_INACTIVITY_TIMEOUT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SESSIONS_SINGLE_PER_USER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SESSIONS_TAGS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SESSIONS_TIMEBOX
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SES_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SITE_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_AUTOCONFIRM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_MAX_FREQUENCY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_MESSAGEBIRD_ACCESS_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_MESSAGEBIRD_ORIGINATOR
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_OTP_EXP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_OTP_LENGTH
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_PROVIDER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_SMSTEMPLATE_MODE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_SMSTEMPLATE_NAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_SMSTEMPLATE_PARSENAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_SMSTEMPLATE_ROOT_NODES
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_SMSTEMPLATE_ROOT_NODETYPE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_SMSTEMPLATE_ROOT_POS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TEMPLATE
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TEST_OTP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TEST_OTP_VALID_UNTIL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TEXTLOCAL_API_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TEXTLOCAL_SENDER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TWILIO_ACCOUNT_SID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TWILIO_AUTH_TOKEN
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TWILIO_CONTENT_SID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TWILIO_MESSAGE_SERVICE_SID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TWILIO_VERIFY_ACCOUNT_SID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TWILIO_VERIFY_AUTH_TOKEN
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_VONAGE_API_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_VONAGE_API_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMS_VONAGE_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_ADMIN_EMAIL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_HEADERS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_HOST
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_LOGGING_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_MAX_FREQUENCY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_PASS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_PORT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_SENDER_NAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SMTP_USER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SQLRUNNER_INSECURE
+    struct internal/config.Config
+SUPATYPE_SQL_DATABASE_URL
+    struct internal/config.Config
+SUPATYPE_STATIC_CACHE_HASHED_ASSETS
+    struct internal/config.Config
+SUPATYPE_STATIC_CACHE_HTML
+    struct internal/config.Config
+SUPATYPE_STATIC_CACHE_PREFIXES_JSON
+    struct internal/config.Config
+SUPATYPE_STORAGE_URL
+    struct internal/config.Config
+SUPATYPE_TENANT_HMAC_SECRET
+    struct internal/config.Config
+SUPATYPE_TLS_ACME_CACHE_DIR
+    struct internal/config.Config
+SUPATYPE_TLS_DOMAIN
+    struct internal/config.Config
+SUPATYPE_TRACING_ENABLED
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_TRACING_EXPORTER
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_TRACING_HOST
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_TRACING_OTEL_EXPORTER_OTLP_PROTOCOL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_TRACING_PORT
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_TRACING_SERVICE_NAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_TRACING_TAGS
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_URIALLOWLISTMAP
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_URI_ALLOW_LIST
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_URL
+    struct internal/config.Config
+SUPATYPE_VALKEY_ADDR
+    struct internal/config.Config
+SUPATYPE_VITE_DEV_URL
+    struct internal/config.Config
+SUPATYPE_WEBAUTHN_CHALLENGE_EXPIRY_DURATION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_WEBAUTHN_RP_DISPLAY_NAME
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_WEBAUTHN_RP_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_WEBAUTHN_RP_ORIGINS
+    struct internal/conf.GlobalConfiguration
+VALKEY_ADDR
+    struct internal/config.Config

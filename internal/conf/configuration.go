@@ -107,9 +107,15 @@ type DBAdvisorConfiguration struct {
 
 // DBConfiguration holds all the database related configuration.
 type DBConfiguration struct {
-	Driver    string `json:"driver" required:"true"`
-	URL       string `json:"url" envconfig:"DATABASE_URL" required:"true"`
-	Namespace string `json:"namespace" envconfig:"DB_NAMESPACE" default:"auth"`
+	Driver string `json:"driver" required:"true"`
+	URL    string `json:"url" envconfig:"DATABASE_URL" required:"true"`
+	// Namespace is the schema the auth tables live in.
+	//
+	// The explicit envconfig tag is gone deliberately. With it, the derived name
+	// was SUPATYPE_DB_DB_NAMESPACE, and deployments had been setting
+	// SUPATYPE_DB_NAMESPACE instead, which nothing read. It worked only because
+	// the value they wanted is the default.
+	Namespace string `json:"namespace" default:"auth"`
 
 	// Percentage of DB conns the auth server may use in
 	// integer form i.e.: [1, 100] -> [1%, 100%]
@@ -186,15 +192,15 @@ type WebAuthnConfiguration struct {
 
 func (w *WebAuthnConfiguration) Validate() error {
 	if w.RPID == "" {
-		return errors.New("conf: GOTRUE_WEBAUTHN_RP_ID is required when passkeys are enabled")
+		return errors.New("conf: SUPATYPE_WEBAUTHN_RP_ID is required when passkeys are enabled")
 	}
 
 	if w.RPDisplayName == "" {
-		return errors.New("conf: GOTRUE_WEBAUTHN_RP_DISPLAY_NAME is required when passkeys are enabled")
+		return errors.New("conf: SUPATYPE_WEBAUTHN_RP_DISPLAY_NAME is required when passkeys are enabled")
 	}
 
 	if len(w.RPOrigins) == 0 {
-		return errors.New("conf: GOTRUE_WEBAUTHN_RP_ORIGINS is required when passkeys are enabled")
+		return errors.New("conf: SUPATYPE_WEBAUTHN_RP_ORIGINS is required when passkeys are enabled")
 	}
 
 	for _, origin := range w.RPOrigins {
@@ -222,11 +228,16 @@ type PasskeyConfiguration struct {
 }
 
 type APIConfiguration struct {
-	Host               string
-	Port               string `envconfig:"PORT" default:"8081"`
-	Endpoint           string
-	RequestIDHeader    string        `envconfig:"REQUEST_ID_HEADER"`
-	ExternalURL        string        `json:"external_url" envconfig:"API_EXTERNAL_URL" required:"true"`
+	Host            string
+	Port            string `envconfig:"PORT" default:"8081"`
+	Endpoint        string
+	RequestIDHeader string `envconfig:"REQUEST_ID_HEADER"`
+	// ExternalURL is the public address this API answers on.
+	//
+	// The explicit tag is gone for the same reason as DB.Namespace: with it, the
+	// derived name was SUPATYPE_API_API_EXTERNAL_URL, and callers were setting
+	// two spellings, only one of which was read.
+	ExternalURL        string        `json:"external_url" split_words:"true" required:"true"`
 	MaxRequestDuration time.Duration `json:"max_request_duration" split_words:"true" default:"10s"`
 }
 
@@ -377,6 +388,10 @@ type GlobalConfiguration struct {
 	Metrics       MetricsConfig
 	SMTP          SMTPConfiguration
 	AuditLog      AuditLogConfiguration `split_words:"true"`
+
+	// InternalHTTPTimeout bounds outbound calls to identity and SMS providers.
+	// Same story as the captcha timeout: it used to be read in a package init.
+	InternalHTTPTimeout time.Duration `split_words:"true" default:"10s"`
 
 	RateLimitHeader                     string  `split_words:"true"`
 	RateLimitEmailSent                  Rate    `split_words:"true" default:"30"`
@@ -561,8 +576,16 @@ func (c *SMTPConfiguration) NormalizedHeaders() map[string][]string {
 }
 
 type MailerConfiguration struct {
-	Autoconfirm                 bool `json:"autoconfirm"`
-	AllowUnverifiedEmailSignIns bool `json:"allow_unverified_email_sign_ins" split_words:"true" default:"false"`
+	Autoconfirm bool `json:"autoconfirm"`
+
+	// Credentials for the hosted mail providers. These were read straight from
+	// the environment inside the mailer factory, under unprefixed names that
+	// belonged to nobody, so they were invisible to anything describing this
+	// service's configuration.
+	ResendAPIKey                string `json:"-" envconfig:"SUPATYPE_RESEND_API_KEY"`
+	ResendFrom                  string `json:"-" envconfig:"SUPATYPE_RESEND_FROM"`
+	SESFrom                     string `json:"-" envconfig:"SUPATYPE_SES_FROM"`
+	AllowUnverifiedEmailSignIns bool   `json:"allow_unverified_email_sign_ins" split_words:"true" default:"false"`
 
 	Subjects      EmailContentConfiguration  `json:"subjects"`
 	Templates     EmailContentConfiguration  `json:"templates"`
@@ -718,6 +741,10 @@ type CaptchaConfiguration struct {
 	Enabled  bool   `json:"enabled" default:"false"`
 	Provider string `json:"provider" default:"hcaptcha"`
 	Secret   string `json:"provider_secret"`
+	// Timeout bounds the call to the captcha provider. It was read straight from
+	// the environment inside a package init, which meant a bad value crashed the
+	// process before configuration was loaded and could report anything useful.
+	Timeout time.Duration `json:"timeout" default:"10s"`
 }
 
 func (c *CaptchaConfiguration) Validate() error {
@@ -796,7 +823,7 @@ type SecurityConfiguration struct {
 	UpdatePasswordRequireReauthentication bool                 `json:"update_password_require_reauthentication" split_words:"true"`
 	UpdatePasswordRequireCurrentPassword  bool                 `json:"update_password_require_current_password" split_words:"true"`
 	ManualLinkingEnabled                  bool                 `json:"manual_linking_enabled" split_words:"true" default:"false"`
-	SbForwardedForEnabled                 bool                 `json:"sb_forwarded_for_enabled" split_words:"true" default:"false"`
+	StForwardedForEnabled                 bool                 `json:"st_forwarded_for_enabled" split_words:"true" default:"false"`
 
 	DBEncryption DatabaseEncryptionConfiguration `json:"database_encryption" split_words:"true"`
 }
@@ -1048,10 +1075,17 @@ func LoadGlobal(filename string) (*GlobalConfiguration, error) {
 	return config, nil
 }
 
+// EnvPrefix is the prefix for every variable in this struct.
+//
+// It replaced a prefix inherited from the upstream project this service was
+// forked from, which named 573 variables after a component Supatype does not
+// have.
+// One prefix for the whole service means a deployment's configuration reads as
+// one thing rather than as two products sharing a process.
+const EnvPrefix = "supatype"
+
 func loadGlobal(config *GlobalConfiguration) error {
-	// although the package is called "auth" it used to be called "gotrue"
-	// so environment configs will remain to be called "GOTRUE"
-	if err := envconfig.Process("gotrue", config); err != nil {
+	if err := envconfig.Process(EnvPrefix, config); err != nil {
 		return err
 	}
 
@@ -1172,7 +1206,7 @@ func (config *GlobalConfiguration) ApplyDefaults() error {
 	}
 
 	if config.Mailer.Autoconfirm && config.Mailer.AllowUnverifiedEmailSignIns {
-		return errors.New("cannot enable both GOTRUE_MAILER_AUTOCONFIRM and GOTRUE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS")
+		return errors.New("cannot enable both SUPATYPE_MAILER_AUTOCONFIRM and SUPATYPE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS")
 	}
 
 	if config.Mailer.URLPaths.Invite == "" {

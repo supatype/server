@@ -15,10 +15,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/gateway"
 	"github.com/supatype/server/internal/modes"
-	"github.com/supatype/server/internal/serverconf"
 	"github.com/supatype/server/internal/utilities"
-	"github.com/supatype/server/server"
 )
 
 var serveCmd = cobra.Command{
@@ -30,29 +30,29 @@ var serveCmd = cobra.Command{
 }
 
 func serve(ctx context.Context) {
-	// Build the full server surface + background workers. server.New performs
-	// the bootstrap (config, DB, API, manifest, Valkey, Deno, mux); this binary
+	// Build the full server surface + background workers. gateway.New performs
+	// the bootstrap (authCfg, DB, API, manifest, Valkey, Deno, mux); this binary
 	// owns the listener/TLS/graceful-shutdown loop below.
-	server.ConfigFile = configFile
-	server.WatchDir = watchDir
-	handler, drain, err := server.New(ctx)
+	gateway.ConfigFile = configFile
+	gateway.WatchDir = watchDir
+	handler, drain, err := gateway.New(ctx)
 	if err != nil {
 		logrus.WithError(err).Fatal("unable to start server")
 	}
 	defer drain()
 
-	// Listener parameters. server.New has already loaded config files and
+	// Listener parameters. gateway.New has already loaded authCfg files and
 	// `.env` into the process environment, so these reads are consistent.
-	config, err := conf.LoadGlobalFromEnv()
+	authCfg, err := conf.LoadGlobalFromEnv()
 	if err != nil {
-		logrus.WithError(err).Fatal("unable to load config")
+		logrus.WithError(err).Fatal("unable to load authCfg")
 	}
-	srvCfg, err := serverconf.Load()
+	srvCfg, err := config.Load()
 	if err != nil {
-		logrus.WithError(err).Fatal("serve: failed to load server config")
+		logrus.WithError(err).Fatal("serve: failed to load server authCfg")
 	}
 
-	addr := net.JoinHostPort(config.API.Host, config.API.Port)
+	addr := net.JoinHostPort(authCfg.API.Host, authCfg.API.Port)
 	logrus.WithField("version", utilities.Version).Infof("supatype-server API listening on: %s", addr)
 
 	baseCtx, baseCancel := context.WithCancel(context.Background())
@@ -63,7 +63,7 @@ func serve(ctx context.Context) {
 
 	var acmeHTTPSrv *http.Server
 
-	// Determine TLS config for standalone mode.
+	// Determine TLS authCfg for standalone mode.
 	var tlsCfg *tls.Config
 	if srvCfg.Mode == "standalone" && srvCfg.TLSDomain != "" {
 		acm, err := modes.NewACMEManager(srvCfg.TLSDomain, srvCfg.TLSACMECacheDir)
@@ -135,7 +135,7 @@ func serve(ctx context.Context) {
 	if err != nil {
 		log.WithError(err).Fatal("http server listen failed")
 	}
-	fmt.Fprintf(os.Stderr, "[supatype-server] listening on %s (mode=%s)\n", addr, os.Getenv("SUPATYPE_MODE"))
+	fmt.Fprintf(os.Stderr, "[supatype-server] listening on %s (mode=%s)\n", addr, srvCfg.Mode)
 	err = httpSrv.Serve(listener)
 	if err == http.ErrServerClosed {
 		log.Info("http server closed")

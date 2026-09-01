@@ -7,10 +7,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/supatype/server/internal/conf"
-	"github.com/supatype/server/internal/sbff"
+	"github.com/supatype/server/internal/stff"
 )
 
-func TestGetIPAddressWithSBFF(t *tst.T) {
+func TestGetIPAddressWithSTFF(t *tst.T) {
 	testCases := []struct {
 		name       string
 		remoteAddr string
@@ -18,19 +18,19 @@ func TestGetIPAddressWithSBFF(t *tst.T) {
 		expAddr    string
 	}{
 		{
-			name:       "ValidSBFF",
+			name:       "ValidSTFF",
 			remoteAddr: "60.60.60.60",
 			headerVal:  "192.168.1.100",
 			expAddr:    "192.168.1.100",
 		},
 		{
-			name:       "MissingSBFF",
+			name:       "MissingSTFF",
 			remoteAddr: "60.60.60.60",
 			headerVal:  "",
 			expAddr:    "60.60.60.60",
 		},
 		{
-			name:       "InvalidSBFF",
+			name:       "InvalidSTFF",
 			remoteAddr: "60.60.60.60",
 			headerVal:  "invalid",
 			expAddr:    "60.60.60.60",
@@ -38,7 +38,7 @@ func TestGetIPAddressWithSBFF(t *tst.T) {
 	}
 
 	config := conf.SecurityConfiguration{
-		SbForwardedForEnabled: true,
+		StForwardedForEnabled: true,
 	}
 
 	for _, tc := range testCases {
@@ -51,7 +51,7 @@ func TestGetIPAddressWithSBFF(t *tst.T) {
 			errCallback := func(r *http.Request, err error) {
 			}
 
-			middleware := sbff.Middleware(&config, errCallback)
+			middleware := stff.Middleware(&config, errCallback)
 
 			wrappedHandler := middleware(handler)
 
@@ -60,7 +60,7 @@ func TestGetIPAddressWithSBFF(t *tst.T) {
 			r.RemoteAddr = tc.remoteAddr
 
 			if tc.headerVal != "" {
-				r.Header.Set(sbff.HeaderName, tc.headerVal)
+				r.Header.Set(stff.HeaderName, tc.headerVal)
 			}
 
 			wrappedHandler.ServeHTTP(nil, r)

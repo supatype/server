@@ -6,7 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/supatype/server/internal/dbpool"
+	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data"
 )
 
 const (
@@ -23,18 +24,22 @@ const (
 // Run the DB-backed packages with `-p 1`: they share one database and the same
 // `_supatype` table names, so `go test`'s default per-package parallelism has
 // them dropping each other's tables mid-run.
-func setupMembership(t *testing.T, seed string) context.Context {
+func setupMembership(t *testing.T, seed string) (context.Context, Store) {
 	t.Helper()
 	dsn := os.Getenv("SUPATYPE_TEST_DSN")
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run membership mutations against Postgres")
 	}
-	t.Setenv("SUPATYPE_SQL_DATABASE_URL", dsn)
+	resources, err := data.Open(context.Background(), &config.Config{SQLDatabaseURL: dsn})
+	if err != nil {
+		t.Fatalf("open resources: %v", err)
+	}
+	t.Cleanup(func() { _ = resources.Close() })
 
 	ctx := context.Background()
-	pool, err := dbpool.Pool(ctx)
+	pool, err := resources.AdminPool()
 	if err != nil {
-		t.Fatalf("open pool: %v", err)
+		t.Fatalf("admin pool: %v", err)
 	}
 
 	stmts := []string{
@@ -74,12 +79,12 @@ func setupMembership(t *testing.T, seed string) context.Context {
 			t.Fatalf("setup %q: %v", stmt, err)
 		}
 	}
-	return ctx
+	return ctx, NewStore(resources)
 }
 
-func roleOf(t *testing.T, userID string) string {
+func roleOf(t *testing.T, store Store, userID string) string {
 	t.Helper()
-	role, ok := Lookup(userID)
+	role, ok := store.Lookup(userID)
 	if !ok {
 		return ""
 	}
@@ -89,82 +94,82 @@ func roleOf(t *testing.T, userID string) string {
 // Nobody may change their own role: self-promotion is the escalation this design
 // exists to prevent, and self-demotion is a footgun.
 func TestSetRoleRefusesSelfChange(t *testing.T) {
-	ctx := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
 		VALUES ('`+adminA+`', 'admin'), ('`+adminB+`', 'admin')`)
 
-	if err := SetRole(ctx, adminA, adminA, "editor"); err == nil {
+	if err := store.SetRole(ctx, adminA, adminA, "editor"); err == nil {
 		t.Fatal("expected a self-change to be refused")
 	}
-	if err := Revoke(ctx, adminA, adminA); err == nil {
+	if err := store.Revoke(ctx, adminA, adminA); err == nil {
 		t.Fatal("expected self-revocation to be refused")
 	}
-	if role := roleOf(t, adminA); role != "admin" {
+	if role := roleOf(t, store, adminA); role != "admin" {
 		t.Fatalf("role changed despite refusal: %q", role)
 	}
 }
 
 // Demoting or removing the last admin would leave nobody able to grant access.
 func TestLastAdminIsProtected(t *testing.T) {
-	ctx := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
 		VALUES ('`+adminA+`', 'admin')`)
 
-	if err := SetRole(ctx, plainUsr, adminA, "editor"); !errors.Is(err, ErrLastAdmin) {
+	if err := store.SetRole(ctx, plainUsr, adminA, "editor"); !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("expected ErrLastAdmin, got %v", err)
 	}
-	if err := Revoke(ctx, plainUsr, adminA); !errors.Is(err, ErrLastAdmin) {
+	if err := store.Revoke(ctx, plainUsr, adminA); !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("expected ErrLastAdmin on revoke, got %v", err)
 	}
-	if role := roleOf(t, adminA); role != "admin" {
+	if role := roleOf(t, store, adminA); role != "admin" {
 		t.Fatalf("last admin lost their role: %q", role)
 	}
 
 	// With a second admin present, the first may be demoted.
-	if err := SetRole(ctx, adminA, plainUsr, "admin"); err != nil {
+	if err := store.SetRole(ctx, adminA, plainUsr, "admin"); err != nil {
 		t.Fatalf("promote second admin: %v", err)
 	}
-	if err := SetRole(ctx, plainUsr, adminA, "editor"); err != nil {
+	if err := store.SetRole(ctx, plainUsr, adminA, "editor"); err != nil {
 		t.Fatalf("demotion should be allowed once another admin exists: %v", err)
 	}
-	if role := roleOf(t, adminA); role != "editor" {
+	if role := roleOf(t, store, adminA); role != "editor" {
 		t.Fatalf("expected editor after demotion, got %q", role)
 	}
 }
 
 // A grant is only meaningful for a user of this project.
 func TestSetRoleRejectsUnknownUser(t *testing.T) {
-	ctx := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
 		VALUES ('`+adminA+`', 'admin')`)
 
-	if err := SetRole(ctx, adminA, stranger, "editor"); !errors.Is(err, ErrUnknownUser) {
+	if err := store.SetRole(ctx, adminA, stranger, "editor"); !errors.Is(err, ErrUnknownUser) {
 		t.Fatalf("expected ErrUnknownUser, got %v", err)
 	}
-	if err := SetRole(ctx, adminA, "", "editor"); !errors.Is(err, ErrUnknownUser) {
+	if err := store.SetRole(ctx, adminA, "", "editor"); !errors.Is(err, ErrUnknownUser) {
 		t.Fatalf("expected ErrUnknownUser for a blank id, got %v", err)
 	}
 }
 
 func TestSetRoleUpsertsAndAudits(t *testing.T) {
-	ctx := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
 		VALUES ('`+adminA+`', 'admin')`)
 
-	if err := SetRole(ctx, adminA, plainUsr, "editor"); err != nil {
+	if err := store.SetRole(ctx, adminA, plainUsr, "editor"); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if role := roleOf(t, plainUsr); role != "editor" {
+	if role := roleOf(t, store, plainUsr); role != "editor" {
 		t.Fatalf("expected editor, got %q", role)
 	}
 
 	// Second call updates in place rather than failing on the unique index.
-	if err := SetRole(ctx, adminA, plainUsr, "developer"); err != nil {
+	if err := store.SetRole(ctx, adminA, plainUsr, "developer"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if role := roleOf(t, plainUsr); role != "developer" {
+	if role := roleOf(t, store, plainUsr); role != "developer" {
 		t.Fatalf("expected developer, got %q", role)
 	}
 
-	Audit(ctx, adminA, plainUsr, "set_role", "developer")
+	store.Audit(ctx, adminA, plainUsr, "set_role", "developer")
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := store.pool()
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -183,10 +188,10 @@ func TestSetRoleUpsertsAndAudits(t *testing.T) {
 // An admin must be able to clear a stale cloud grant from self-host, where that
 // account can never sign in.
 func TestRevokeClearsEitherIdentity(t *testing.T) {
-	ctx := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
 		VALUES ('`+adminA+`', 'admin'), ('`+adminB+`', 'admin')`)
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := store.pool()
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -196,7 +201,7 @@ func TestRevokeClearsEitherIdentity(t *testing.T) {
 		t.Fatalf("seed cloud grant: %v", err)
 	}
 
-	if err := Revoke(ctx, adminA, cloudAcc); err != nil {
+	if err := store.Revoke(ctx, adminA, cloudAcc); err != nil {
 		t.Fatalf("revoke cloud grant: %v", err)
 	}
 	var remaining int
@@ -211,10 +216,10 @@ func TestRevokeClearsEitherIdentity(t *testing.T) {
 }
 
 func TestListReportsBothIdentitySpaces(t *testing.T) {
-	ctx := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
 		VALUES ('`+adminA+`', 'admin')`)
 
-	pool, err := dbpool.Pool(ctx)
+	pool, err := store.pool()
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -224,7 +229,7 @@ func TestListReportsBothIdentitySpaces(t *testing.T) {
 		t.Fatalf("seed cloud grant: %v", err)
 	}
 
-	members, err := List(ctx)
+	members, err := store.List(ctx)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

@@ -102,7 +102,7 @@ Available commands:
 
 `supatype-server` reads:
 
-- Auth/API config from `.env` and `GOTRUE_*` environment variables.
+- Auth/API config from `.env` and `SUPATYPE_*` environment variables.
 - Server/gateway config from `SUPATYPE_*` variables.
 - Optional route manifest (default `.supatype/manifest.json`).
 

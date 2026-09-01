@@ -202,13 +202,13 @@ func TestValidateEmailExtended(t *testing.T) {
 	// DNS would put a network call on the signup path without anyone noticing.
 	wantQueried := []string{
 		"a.a.",
+		"a.dnstest.supatype.io.",
 		"invalid.example.com.",
-		"no.such.email.host.supatype.io.",
+		"mx.dnstest.supatype.io.",
+		"nx.dnstest.supatype.io.",
 		"opaque.dnstest.supatype.io.",
 		"slow.dnstest.supatype.io.",
-		"supatype.io.",
 		"temp.dnstest.supatype.io.",
-		"www.supatype.com.",
 	}
 	t.Cleanup(func() {
 		if got := resolver.Queried(); !reflect.DeepEqual(got, wantQueried) {
@@ -226,12 +226,12 @@ func TestValidateEmailExtended(t *testing.T) {
 		err     string
 	}{
 		// valid (has mx record)
-		{email: "a@supatype.io"},
-		{email: "support@supatype.io"},
-		{email: "abc@supatype.io"},
+		{email: "a@mx.dnstest.supatype.io"},
+		{email: "support@mx.dnstest.supatype.io"},
+		{email: "abc@mx.dnstest.supatype.io"},
 
-		// valid (RFC 5321 fallback, www.supatype.com has no mx, but valid A)
-		{email: "invalid@www.supatype.com"},
+		// valid (RFC 5321 fallback, a.dnstest.supatype.io has no mx, but valid A)
+		{email: "invalid@a.dnstest.supatype.io"},
 
 		// bad format
 		{email: "", err: "invalid_email_format"},
@@ -288,7 +288,7 @@ func TestValidateEmailExtended(t *testing.T) {
 		// various invalid emails
 		{email: "test@test.localhost", err: "invalid_email_dns"},
 		{email: "test@invalid.example.com", err: "invalid_email_dns"},
-		{email: "test@no.such.email.host.supatype.io", err: "invalid_email_dns"},
+		{email: "test@nx.dnstest.supatype.io", err: "invalid_email_dns"},
 		// A lookup that times out says nothing about whether the address is
 		// deliverable, so it must not be rejected. This used to be attempted
 		// with a 1ms deadline against real DNS, which is a race rather than a

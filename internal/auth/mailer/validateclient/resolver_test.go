@@ -92,17 +92,29 @@ func useResolver(t *testing.T, r dnsResolver) {
 	t.Cleanup(func() { validateEmailResolver = previous })
 }
 
-// These are the only names the validation table actually reaches DNS for, and
-// the answers here are what the real resolver gave when they were recorded.
-// TestLiveDNSStillMatchesTheFixture re-checks the two that describe the
-// outside world, so this cannot quietly drift out of date.
+// These are the only names the validation table reaches DNS for, and the
+// answers here are what the real resolver gives for them.
+//
+// They live under dnstest.supatype.io, a subtree that exists for no other
+// reason, so nothing here depends on production mail or a website: changing
+// the mail provider, or moving a site behind a CDN that adds an MX, can no
+// longer fail a test about email addresses.
+//
+// Three of them are real records. TestLiveDNSStillMatchesTheFixture checks
+// them against the authoritative nameservers, so this cannot quietly drift.
+// The three failure names below are answered only by the fake, because a
+// resolver cannot be asked to time out on demand.
 const (
-	// Has MX records, so it is deliverable.
-	fixtureHostWithMX = "supatype.io."
+	// MX 10 mail.dnstest.supatype.io, and no A record: deliverable.
+	fixtureHostWithMX = "mx.dnstest.supatype.io."
 
-	// No MX, but it resolves. RFC 5321 says treat the host as its own MX, so
-	// this must still be accepted.
-	fixtureHostAOnly = "www.supatype.com."
+	// An A record and deliberately no MX. RFC 5321 says treat the host as its
+	// own MX, so this must still be accepted.
+	fixtureHostAOnly = "a.dnstest.supatype.io."
+
+	// Deliberately absent. Its NXDOMAIN is the fixture, so nothing must ever
+	// be created at this name.
+	fixtureHostAbsent = "nx.dnstest.supatype.io."
 
 	// A lookup that fails in a way that says nothing about deliverability. A
 	// timeout must never be read as "this address is invalid".
@@ -121,11 +133,11 @@ const (
 func fixtureResolver() *fakeResolver {
 	return &fakeResolver{
 		mx: map[string][]*net.MX{
-			// Namecheap's forwarders, which is what this domain really answers.
-			fixtureHostWithMX: {{Host: "eforward1.registrar-servers.com.", Pref: 10}},
+			fixtureHostWithMX: {{Host: "mail.dnstest.supatype.io.", Pref: 10}},
 		},
 		hosts: map[string][]string{
-			fixtureHostAOnly: {"172.67.206.128", "104.21.61.55"},
+			// RFC 5737 TEST-NET-1, so the address can never be routed to.
+			fixtureHostAOnly: {"192.0.2.1"},
 		},
 		err: map[string]error{
 			fixtureHostTimeout: &net.DNSError{
@@ -156,7 +168,7 @@ func liveDNS(t *testing.T) bool {
 	return true
 }
 
-// TestLiveDNSStillMatchesTheFixture checks the two claims fixtureResolver
+// TestLiveDNSStillMatchesTheFixture checks the three claims fixtureResolver
 // makes about the outside world.
 //
 // The unit tests are hermetic, which is what makes them trustworthy, and also
@@ -171,12 +183,14 @@ func TestLiveDNSStillMatchesTheFixture(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Deliverable: MX records present.
 	mxs, err := net.DefaultResolver.LookupMX(ctx, fixtureHostWithMX)
 	if err != nil || len(mxs) == 0 {
 		t.Errorf("%s is the fixture's deliverable host and should still have MX records: %d found, err %v",
 			fixtureHostWithMX, len(mxs), err)
 	}
 
+	// The RFC 5321 fallback: no MX, but the host resolves.
 	if _, err := net.DefaultResolver.LookupMX(ctx, fixtureHostAOnly); !isHostNotFound(err) {
 		t.Errorf("%s is the fixture's no-MX host, but the lookup no longer says not-found: %v",
 			fixtureHostAOnly, err)
@@ -185,6 +199,13 @@ func TestLiveDNSStillMatchesTheFixture(t *testing.T) {
 	if err != nil || len(addrs) == 0 {
 		t.Errorf("%s must still resolve for the RFC 5321 fallback case: %d addresses, err %v",
 			fixtureHostAOnly, len(addrs), err)
+	}
+
+	// Absent, and it has to stay that way: its NXDOMAIN is the fixture, so
+	// creating any record at this name would silently delete a test case.
+	if _, err := net.DefaultResolver.LookupHost(ctx, fixtureHostAbsent); !isHostNotFound(err) {
+		t.Errorf("%s must not exist, but the lookup no longer says not-found: %v",
+			fixtureHostAbsent, err)
 	}
 }
 

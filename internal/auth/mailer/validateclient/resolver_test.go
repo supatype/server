@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -209,8 +208,21 @@ func TestLiveDNSStillMatchesTheFixture(t *testing.T) {
 	}
 }
 
+// realDeliverableDomain is a domain that genuinely receives mail.
+//
+// Deliberately production, unlike the dnstest fixtures above. Those prove the
+// validator's branches against records shaped by hand; this proves it still
+// says yes to an address a person could actually be sent an email at, with a
+// real mail provider's MX behind it. A synthetic MX pointing at a host that
+// does not exist cannot make that claim.
+//
+// Naming production here is safe because it is opt-in: if the mail provider
+// changes, this fails in the nightly job, not on somebody's pull request.
+const realDeliverableDomain = "supatype.io"
+
 // TestLiveResolverAcceptsARealAddress drives the real resolver through the
-// validator, so the seam cannot hide a break in the actual lookup path.
+// validator against a domain that really does receive mail, so the seam cannot
+// hide a break in the actual lookup path.
 func TestLiveResolverAcceptsARealAddress(t *testing.T) {
 	if !liveDNS(t) {
 		return
@@ -225,7 +237,33 @@ func TestLiveResolverAcceptsARealAddress(t *testing.T) {
 	defer cancel()
 
 	ev := newEmailValidator(cfg)
-	if err := ev.Validate(ctx, "a@"+strings.TrimSuffix(fixtureHostWithMX, ".")); err != nil {
-		t.Errorf("a real deliverable domain should validate: %v", err)
+	if err := ev.Validate(ctx, "a@"+realDeliverableDomain); err != nil {
+		t.Errorf("%s receives mail, so an address there must validate: %v", realDeliverableDomain, err)
+	}
+}
+
+// TestLiveRealDomainHasMailBehindIt reports the reason separately from the
+// test above.
+//
+// If the MX records go, the validator test fails and reads as though the
+// validator broke. This one says plainly that the domain stopped receiving
+// mail, which is a different thing to go and look at.
+func TestLiveRealDomainHasMailBehindIt(t *testing.T) {
+	if !liveDNS(t) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	mxs, err := net.DefaultResolver.LookupMX(ctx, realDeliverableDomain)
+	if err != nil {
+		t.Fatalf("looking up MX for %s: %v", realDeliverableDomain, err)
+	}
+	if len(mxs) == 0 {
+		t.Fatalf("%s has no MX records, so it no longer receives mail", realDeliverableDomain)
+	}
+	for _, mx := range mxs {
+		t.Logf("%s MX %d %s", realDeliverableDomain, mx.Pref, mx.Host)
 	}
 }

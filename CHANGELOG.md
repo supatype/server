@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1](https://github.com/supatype/server/compare/v2.0.0...v2.0.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **migrate:** wait for a database that is still starting instead of exiting ([5bbbb2f](https://github.com/supatype/server/commit/5bbbb2f36dfb9c69f433591e4fe1808500566dbf))
+* **migrate:** wait for a database that is still starting instead of exiting ([e596f0e](https://github.com/supatype/server/commit/e596f0ea2e51e1d5aa376bb7c671a79212d8597b))
+
 ## [2.0.0](https://github.com/supatype/server/compare/v1.5.0...v2.0.0) (2026-09-01)
 
 

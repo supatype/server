@@ -83,6 +83,15 @@ func migrate(cmd *cobra.Command, args []string) {
 		log.Fatalf("%+v", errors.Wrap(err, "checking database connection"))
 	}
 
+	// Open builds a pool and contacts nothing, so without this the first real
+	// contact is the search_path query below, and it exits the process. A
+	// database that is still starting is a timing problem, not a configuration
+	// one: serving waits it out through DialWithRetry, and migrating did not,
+	// which lost the container on any host slow enough to open the gap.
+	if err := storage.WaitReachable(cmd.Context(), db); err != nil {
+		log.Fatalf("%+v", errors.Wrap(err, "waiting for the database"))
+	}
+
 	storage.TightenPoolForMigration(db)
 
 	// Persist default search_path for this database so every pooled connection

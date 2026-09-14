@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.1.0](https://github.com/supatype/server/compare/v2.0.1...v2.1.0) (2026-09-14)
+
+
+### Features
+
+* **functions:** relay the worker's log stream, and read its structured lines ([8a64034](https://github.com/supatype/server/commit/8a64034a26cfad3be0792ec25d1528e1763a8abe))
+* **studioauth:** signed, expiring preview links ([17a8b39](https://github.com/supatype/server/commit/17a8b396915747b4d86ec083373906964d611414))
+* **studioauth:** tell Studio whether this caller sees drafts ([48c3aba](https://github.com/supatype/server/commit/48c3aba88adc0c3a0f3f4ff93d1e7711ea167453))
+* **studio:** preview links that can be revoked one at a time ([79df06f](https://github.com/supatype/server/commit/79df06fd396b9f3cd44fbb76d17b96ca402caa44))
+
+
+### Bug Fixes
+
+* **coverage:** keep the studioauth note in the one comment key the gate allows ([0c1935c](https://github.com/supatype/server/commit/0c1935c42c81c842eb6bfa60248189ba92d5b996))
+* **functions:** list only what the worker will actually serve ([411d9d5](https://github.com/supatype/server/commit/411d9d5c39f79c2d7a14072e41754c8ecfb456e5))
+
 ## [2.0.1](https://github.com/supatype/server/compare/v2.0.0...v2.0.1) (2026-09-03)
 
 

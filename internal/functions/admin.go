@@ -50,6 +50,10 @@ func Handler(cfg *config.Config, functionsDir string, manager LogSource) http.Ha
 
 	r.Get("/list", listFunctions(functionsDir))
 	r.Get("/{name}/logs", functionLogs(manager))
+	// The live tail, relayed from the external worker. `RecentLogs` above only answers when this
+	// server supervises Deno itself, which it does not in Compose or on cloud: the read API was
+	// there and nothing wrote to it.
+	r.Get("/logs/tail", tailFunctionLogs(newLogStream(cfg.FunctionsWorkerURL)))
 	shared, perFunction := sharedEnvFile(functionsDir), functionEnvFile(functionsDir)
 	r.Get("/env", listEnv(shared))
 	r.Post("/env", setEnv(shared))
@@ -107,7 +111,10 @@ func listFunctions(dir string) http.HandlerFunc {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				utilities.WriteJSON(w, http.StatusOK, []functionMeta{})
+				// The same shape as the success path. This answered a bare array, so a caller
+				// reading `data` got one thing when the project had functions and another when it
+				// had none, which is the case least likely to be exercised before release.
+				utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": []functionMeta{}})
 				return
 			}
 			utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -117,16 +124,25 @@ func listFunctions(dir string) http.HandlerFunc {
 		funcs := make([]functionMeta, 0)
 		for _, e := range entries {
 			name := e.Name()
-			// A function is either a .ts file or a directory containing index.ts.
+			// The same rules the worker discovers routes by, because a name listed here that the
+			// worker will not serve is a function somebody can select and invoke and only then be
+			// told does not exist. `deno.d.ts`, the ambient types the CLI writes beside the
+			// functions, was listed as a function called "deno.d" for exactly that reason.
+			//
+			// An underscore prefix is the convention for code that is shared rather than served:
+			// `_shared/` holds helpers, and the worker reserves the prefix for its own routes.
+			if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+				continue
+			}
 			if e.IsDir() {
+				// A directory is a function when it has an entrypoint, and something else when it
+				// does not.
 				if _, err := os.Stat(filepath.Join(dir, name, "index.ts")); err != nil {
 					continue
 				}
 			} else {
-				if strings.HasPrefix(name, ".") {
-					continue
-				}
-				if !strings.HasSuffix(name, ".ts") {
+				// `.d.ts` declares types for an editor and defines no handler at all.
+				if !strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".d.ts") {
 					continue
 				}
 				name = strings.TrimSuffix(name, ".ts")

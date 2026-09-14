@@ -85,6 +85,27 @@ func Routes() []Route {
 			Log:     "mux: Studio membership API mounted at /admin/studio-members",
 		},
 		{Pattern: "/admin/studio-members/*", Verb: HandleExact, Build: buildStudioMembers},
+		// Signed preview links. Mounted beside Studio membership rather than under
+		// /admin/v1 for the same reason: this is authenticated as a project user
+		// with a Studio role, not with the service-role key.
+		{
+			Pattern: "/admin/preview-links",
+			Verb:    HandleExact,
+			Build:   buildPreviewLinks,
+			Log:     "mux: preview link API mounted at /admin/preview-links",
+		},
+		// Revoking one link and listing them both live under the collection, so the subtree is
+		// mounted rather than each verb being named here.
+		{Pattern: "/admin/preview-links/*", Verb: HandleExact, Build: buildPreviewLinks},
+		// Exchanging a link for a short-lived token. Deliberately NOT under /admin: the whole point
+		// of a preview link is that its holder has no account, so this is the one preview route that
+		// cannot require one. The code is the credential.
+		{
+			Pattern: "/preview-links/resolve",
+			Verb:    POST,
+			Build:   buildPreviewResolve,
+			Log:     "mux: preview link exchange mounted at /preview-links/resolve",
+		},
 		{
 			Pattern: "/sql",
 			Verb:    POST,

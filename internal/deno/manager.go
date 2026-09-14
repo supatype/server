@@ -3,6 +3,7 @@ package deno
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -124,6 +125,47 @@ func (m *Manager) RecentLogs(since time.Time, n int) []LogLine {
 	return result
 }
 
+// structuredLine is one line as the functions router writes it.
+//
+// The router emits JSON so that cloud's Promtail pipeline can label each line by project, level and
+// request. This server reads the same output when it supervises Deno itself, and a line taken
+// verbatim would put the raw JSON in front of somebody in Studio.
+type structuredLine struct {
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+}
+
+// parseLine turns a router line into its parts, falling back to the whole line as the message.
+//
+// The fallback is not a nicety: Deno itself writes to this stream — a compile error, a panic, a
+// warning about a permission — and none of that is JSON. Dropping those would hide exactly the
+// output somebody is looking for when a function will not start.
+func parseLine(level, raw string) (string, string, time.Time) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "{") {
+		return level, raw, time.Now().UTC()
+	}
+
+	var parsed structuredLine
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil || parsed.Message == "" {
+		return level, raw, time.Now().UTC()
+	}
+
+	at := time.Now().UTC()
+	if parsed.Timestamp != "" {
+		if t, err := time.Parse(time.RFC3339, parsed.Timestamp); err == nil {
+			at = t.UTC()
+		}
+	}
+	// The router's own level is better than the stream it arrived on: it knows a warning from an
+	// error, where stdout and stderr only know two.
+	if parsed.Level != "" {
+		level = parsed.Level
+	}
+	return level, parsed.Message, at
+}
+
 func (m *Manager) appendLog(level, message string) {
 	m.logMu.Lock()
 	defer m.logMu.Unlock()
@@ -132,10 +174,11 @@ func (m *Manager) appendLog(level, message string) {
 		// Drop oldest entry.
 		m.logBuf = m.logBuf[1:]
 	}
+	parsedLevel, parsedMessage, at := parseLine(level, message)
 	m.logBuf = append(m.logBuf, LogLine{
-		Timestamp: time.Now().UTC(),
-		Level:     level,
-		Message:   message,
+		Timestamp: at,
+		Level:     parsedLevel,
+		Message:   parsedMessage,
 	})
 }
 

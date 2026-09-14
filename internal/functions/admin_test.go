@@ -127,8 +127,11 @@ func TestListFunctionsWithNoDirectory(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if strings.TrimSpace(rec.Body.String()) != "[]" {
-		t.Errorf("body = %q, want an empty list", rec.Body.String())
+	// The same shape as a directory that does exist. This asserted a bare `[]`, so the route
+	// answered one shape when the project had functions and another when it had none — and the
+	// second is the case least likely to be exercised before release.
+	if strings.TrimSpace(rec.Body.String()) != `{"data":[]}` {
+		t.Errorf("body = %q, want an empty list in the usual envelope", rec.Body.String())
 	}
 }
 

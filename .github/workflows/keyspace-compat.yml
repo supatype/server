@@ -1,0 +1,114 @@
+name: Keyspace compatibility
+
+# The client in internal/data/keyspace speaks RESP, and RESP has two servers
+# under this product: Valkey, which the Test workflow runs it against on every
+# pull request, and pg_keyspace inside the project's own Postgres, which is what
+# it will mostly be talking to. A wrapper that passes against one of them is not
+# evidence about the other — the circuit breaker, the SCAN cursor contract, the
+# TTL sentinels and the expiring-set commands are all places two implementations
+# of the same protocol can legitimately differ.
+#
+# This is the second half of that pair. It runs nightly and on demand rather
+# than on pull requests, for the same reason the live job in test.yml does: it
+# depends on an image published from another repository, so a failure here means
+# the world outside this repository moved, which is worth knowing daily and must
+# never block a review of code that is fine.
+#
+# Move it onto `pull_request` once supatype/postgres:develop carries the
+# SUPATYPE_KEYSPACE_* entrypoint support — from then on the failure modes are
+# this repository's own and belong in front of a reviewer.
+
+on:
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "postgres image to run the keyspace against"
+        default: "supatype/postgres:develop"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ${{ inputs.image || 'supatype/postgres:develop' }}
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Not a service container: readiness here is not "the port answers".
+      # Initialisation runs against a temporary server on the Unix socket, so a
+      # socket probe reports ready mid-migration, and the RESP worker starts
+      # asynchronously after the postmaster — logging persisted=false on its
+      # first pass, before the extension exists. Both conditions have to be
+      # waited for explicitly, which a health-cmd cannot express.
+      - name: Start pg_keyspace
+        run: |
+          docker run -d --name keyspace \
+            -e POSTGRES_PASSWORD=testpassword \
+            -e POSTGRES_DB=supatype \
+            -e SUPATYPE_KEYSPACE_ENABLED=1 \
+            -e SUPATYPE_KEYSPACE_DURABILITY=ephemeral \
+            -e SUPATYPE_KEYSPACE_DURABILITY_OVERRIDES='tenant:=durable' \
+            -e SUPATYPE_KEYSPACE_KEYS=10000 \
+            -e SUPATYPE_KEYSPACE_RING_MB=4 \
+            -p 6379:6379 \
+            "$IMAGE"
+
+          for _ in $(seq 1 60); do
+            if docker exec keyspace pg_isready -h 127.0.0.1 -U supatype_admin -q 2>/dev/null; then break; fi
+            sleep 2
+          done
+          for _ in $(seq 1 30); do
+            if docker logs keyspace 2>&1 | grep -q "persisted=true"; then break; fi
+            sleep 2
+          done
+
+          logs=$(docker logs keyspace 2>&1)
+          case "$logs" in
+            *"RESP listening"*) ;;
+            *) echo "FAIL: no RESP listener in the log"; echo "$logs" | tail -40; exit 1 ;;
+          esac
+
+      # The durability rule this service's key layout is built around, checked
+      # against the extension that implements it rather than against our reading
+      # of its README. `tenant:=durable` is the rule cloud runs, and it is only
+      # correct while the response cache is filed somewhere else: if these two
+      # ever resolve to the same tier, every cached REST GET is a WAL write.
+      - name: The two key heads resolve to different tiers
+        run: |
+          docker exec -e PGPASSWORD=testpassword keyspace \
+            psql -U supatype_admin -d supatype -tA -c "
+              SELECT CASE
+                WHEN supacache.key_durability('tenant:proj-1:config') = 'durable'
+                 AND supacache.key_durability('cache:rest:proj-1:abc123') = 'ephemeral'
+                THEN 'ok' ELSE 'FAIL' END" | grep -qx ok \
+            || {
+              echo "FAIL: the response cache and the tenant config resolved to the same durability tier"
+              docker exec -e PGPASSWORD=testpassword keyspace \
+                psql -U supatype_admin -d supatype -c "
+                  SELECT supacache.key_durability('tenant:proj-1:config') AS tenant_config,
+                         supacache.key_durability('cache:rest:proj-1:abc123') AS response_cache"
+              exit 1
+            }
+
+      # The same suite the Test workflow runs against Valkey. -race because the
+      # circuit breaker is shared mutable state and this is the run that sees a
+      # real server's timing.
+      - name: The client surface, against pg_keyspace
+        env:
+          SUPATYPE_TEST_KEYSPACE_ADDR: 127.0.0.1:6379
+        run: go test -race -count=1 -v ./internal/data/keyspace/...
+
+      - name: Show the keyspace log on failure
+        if: failure()
+        run: docker logs keyspace 2>&1 | tail -100

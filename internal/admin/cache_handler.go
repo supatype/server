@@ -41,7 +41,15 @@ type cacheEntryDetail struct {
 	BodyJSON    json.RawMessage `json:"body_json,omitempty"`
 }
 
-func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc keyspace.Client) {
+func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc keyspace.Client, stats *restcache.Counter) {
+	// Mounted before the availability check, and outside offeredOnly, because
+	// both of the cases those refuse are cases this route has something to say
+	// about. A free-tier project's report is how it is shown what its own
+	// traffic would have been served from cache, and a deployment whose
+	// keyspace is missing has a count of bypasses that explains the latency it
+	// is seeing.
+	mux.HandleFunc("/cache/stats", only(http.MethodGet, cacheStats(cfg, stats)))
+
 	if !vc.Available() {
 		mux.HandleFunc("/cache", cacheUnavailable)
 		mux.HandleFunc("/cache/", cacheUnavailable)
@@ -115,6 +123,16 @@ func entryKey(w http.ResponseWriter, r *http.Request, prefix string) (string, bo
 		return "", false
 	}
 	return key, true
+}
+
+// cacheStats reports what the response cache did for this tenant, per table.
+//
+// Scoped by the same tenant resolution the entry routes use, so one project's
+// admin API cannot read another's numbers on a pod serving many.
+func cacheStats(cfg *config.Config, stats *restcache.Counter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		utilities.WriteJSON(w, http.StatusOK, stats.Snapshot(restcache.TenantRef(r, cfg.ManagedProjectRef)))
+	}
 }
 
 func cacheUnavailable(w http.ResponseWriter, _ *http.Request) {

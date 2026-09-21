@@ -14,6 +14,7 @@ import (
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/studioauth"
 	"github.com/supatype/server/internal/studiobootstrap"
@@ -44,6 +45,12 @@ type Deps struct {
 	APIStore apiconfig.Store
 	// Cache is never nil; see data.Resources.Cache.
 	Cache keyspace.Client
+	// CacheStats counts what the response cache did, per table. It is the only
+	// source of that number: pg_keyspace counts per keyspace and worker, and
+	// the key it counts is opaque to it, so the table has to be counted here
+	// where it is still in the clear. Both the REST mount that fills it and the
+	// admin route that reports it read this one counter.
+	CacheStats *restcache.Counter
 	// Studio is the Studio auth configuration, including membership.
 	Studio studioauth.Config
 	// Hooks runs a project's schema-declared model hooks around a REST write.
@@ -82,6 +89,7 @@ func NewDeps(
 		SendEmail:    sendEmailHook,
 		APIStore:     apiconfig.NewFileStore(cfg.ApiConfigPath),
 		Cache:        resources.Cache(),
+		CacheStats:   restcache.NewCounter(),
 		Baseline:     manifestFor(nil),
 	}
 	d.Studio = newStudioConfig(cfg, resources)

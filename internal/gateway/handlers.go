@@ -52,7 +52,7 @@ func badGateway(w http.ResponseWriter, message string) {
 }
 
 func buildAdminAPI(d *Deps) http.Handler {
-	return admin.Handler(d.APIStore, d.Config, d.Cache)
+	return admin.Handler(d.APIStore, d.Config, d.Cache, d.CacheStats)
 }
 
 func buildSQLRunner(d *Deps) http.Handler {
@@ -110,6 +110,7 @@ func buildREST(d *Deps) http.Handler {
 				SchemaFor:      d.RestSchema,
 				MaxRowsFor:     d.RestMaxRows,
 				IdentityScoped: d.IdentityScopedTables,
+				Stats:          d.CacheStats,
 			},
 			d.Hooks(restProxyHandler(d)),
 		),

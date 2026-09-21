@@ -60,7 +60,7 @@ func api(t *testing.T, cfg *config.Config, cache keyspace.Client) (http.Handler,
 		cfg.ServiceRoleKey = serviceKey
 	}
 	store := newMemStore()
-	return Handler(store, cfg, cache), store
+	return Handler(store, cfg, cache, restcache.NewCounter()), store
 }
 
 // devConfig is the mode in which the admin API needs no token.
@@ -133,7 +133,7 @@ func TestEveryRouteNeedsTheServiceRole(t *testing.T) {
 // anything or an empty bearer.
 func TestNoKeyConfiguredFailsClosed(t *testing.T) {
 	// Built directly, because the helper fills the key in.
-	handler := Handler(newMemStore(), &config.Config{Mode: "standalone"}, keyspacetest.New())
+	handler := Handler(newMemStore(), &config.Config{Mode: "standalone"}, keyspacetest.New(), restcache.NewCounter())
 
 	rec := call(t, handler, http.MethodGet, "/config/rest", serviceKey, "")
 	if rec.Code != http.StatusForbidden {
@@ -295,7 +295,7 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 
 		store := newMemStore()
 		store.getErr = keyspacetest.ErrFailed
-		handler := Handler(store, devConfig(), keyspacetest.New())
+		handler := Handler(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
 
 		for _, method := range []string{http.MethodGet, http.MethodPatch} {
 			rec := call(t, handler, method, path, "", `{}`)
@@ -306,7 +306,7 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 
 		store = newMemStore()
 		store.setErr = keyspacetest.ErrFailed
-		handler = Handler(store, devConfig(), keyspacetest.New())
+		handler = Handler(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
 		if rec := call(t, handler, http.MethodPatch, path, "", `{}`); rec.Code != http.StatusInternalServerError {
 			t.Errorf("%s unwritable: status = %d, want 500", name, rec.Code)
 		}
@@ -1361,5 +1361,123 @@ func TestARecordThatCannotBeEncoded(t *testing.T) {
 	}
 	if err := saveManagedSecret(ctx, keyspacetest.New(), kek(t), "default", 1, "pw"); err == nil {
 		t.Error("saveManagedSecret: want an error")
+	}
+}
+
+// ─── Cache statistics ─────────────────────────────────────────────────────────
+
+// The statistics route answers for the tenant that asked, and only for it.
+func TestCacheStatsAreScopedToTheAskingTenant(t *testing.T) {
+	counter := restcache.NewCounter()
+	counter.Record("proj-1", "posts", restcache.OutcomeHit, "")
+	counter.Record("proj-1", "posts", restcache.OutcomeBypass, restcache.ReasonTier)
+	counter.Record("proj-2", "profiles", restcache.OutcomeHit, "")
+
+	cfg := devConfig()
+	cfg.ManagedProjectRef = "proj-1"
+	handler := Handler(newMemStore(), cfg, keyspacetest.New(), counter)
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Tenant != "proj-1" {
+		t.Errorf("tenant = %q", report.Tenant)
+	}
+	if len(report.Tables) != 1 || report.Tables[0].Table != "posts" {
+		t.Fatalf("tables = %+v, want this tenant's alone", report.Tables)
+	}
+	if report.Tables[0].Hits != 1 || report.Tables[0].BypassReasons[restcache.ReasonTier] != 1 {
+		t.Errorf("row = %+v", report.Tables[0])
+	}
+	if report.Since.IsZero() {
+		t.Error("a cumulative count with no window is not a fact anyone can use")
+	}
+}
+
+// A free-tier project is exactly the one that needs these numbers — they are
+// what it is being shown it is missing — so the route is not behind the grant
+// that refuses the entry routes.
+func TestCacheStatsAreServedToATenantWithoutTheCache(t *testing.T) {
+	denied := false
+	cache := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &denied})
+
+	counter := restcache.NewCounter()
+	counter.Record("proj-1", "posts", restcache.OutcomeBypass, restcache.ReasonTier)
+
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
+	handler := Handler(newMemStore(), cfg, cache, counter)
+
+	// The entry route refuses this tenant.
+	if rec := call(t, handler, http.MethodGet, "/cache", serviceKey, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("/cache: status = %d, want the tenant to be refused", rec.Code)
+	}
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", serviceKey, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/cache/stats: %d %s", rec.Code, rec.Body.String())
+	}
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Tables[0].BypassReasons[restcache.ReasonTier] != 1 {
+		t.Errorf("the free tier cannot see what it is missing: %+v", report.Tables)
+	}
+}
+
+// With no keyspace the other cache routes answer 503; the statistics still have
+// something to say, because a bypass is counted whether or not a cache exists.
+func TestCacheStatsSurviveAMissingKeyspace(t *testing.T) {
+	counter := restcache.NewCounter()
+	counter.Record("local", "posts", restcache.OutcomeBypass, restcache.ReasonUnavailable)
+
+	handler := Handler(newMemStore(), devConfig(), keyspace.Unavailable(), counter)
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats: %d %s", rec.Code, rec.Body.String())
+	}
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Tables[0].BypassReasons[restcache.ReasonUnavailable] != 1 {
+		t.Errorf("row = %+v", report.Tables)
+	}
+}
+
+// A deployment that keeps no counter still answers, with nothing in it. A 404
+// would be a screen's problem to interpret; an empty report is a state it can
+// already render.
+func TestCacheStatsWithNoCounter(t *testing.T) {
+	handler := Handler(newMemStore(), devConfig(), keyspacetest.New(), nil)
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats: %d %s", rec.Code, rec.Body.String())
+	}
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Tables) != 0 || report.Totals.Hits != 0 {
+		t.Errorf("report = %+v", report)
+	}
+}
+
+// Every other route in this package refuses the wrong method rather than
+// treating it as the one it knows.
+func TestCacheStatsRefusesAnythingButGET(t *testing.T) {
+	handler := Handler(newMemStore(), devConfig(), keyspacetest.New(), restcache.NewCounter())
+
+	rec := call(t, handler, http.MethodDelete, "/cache/stats", "", "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", rec.Code)
 	}
 }

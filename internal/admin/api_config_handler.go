@@ -49,8 +49,12 @@ func inRange(name string, value, low, high int) error {
 }
 
 // Handler returns a mux covering all /admin/v1 routes.
-// Mount it with r.Mount("/admin/v1", Handler(store, cfg, cache)).
-func Handler(store apiconfig.Store, cfg *config.Config, vc keyspace.Client) http.Handler {
+// Mount it with r.Mount("/admin/v1", Handler(store, cfg, cache, stats)).
+//
+// stats may be nil, which serves the cache-statistics route with an empty
+// report rather than removing it: a screen that asks for numbers should be told
+// there are none, not given a 404 to interpret.
+func Handler(store apiconfig.Store, cfg *config.Config, vc keyspace.Client, stats *restcache.Counter) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, vc))
@@ -60,7 +64,7 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc keyspace.Client) http
 	mux.HandleFunc("/database/credentials/first-view", only(http.MethodPost, credentialFirstViewHandler(cfg, vc)))
 	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, vc)))
 
-	mountCacheRoutes(mux, cfg, vc)
+	mountCacheRoutes(mux, cfg, vc, stats)
 
 	return RequireServiceRole(cfg, mux)
 }

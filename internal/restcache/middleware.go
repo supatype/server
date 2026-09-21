@@ -32,14 +32,22 @@ type Deps struct {
 	SchemaFor      func(*http.Request) string
 	MaxRowsFor     func(*http.Request) string
 	IdentityScoped IdentityScoped
+
+	// Stats counts what the cache did, per table. Nil is allowed and means the
+	// outcomes are not counted; see Counter.
+	Stats *Counter
 }
 
 // plan is what the cache decided to do with one request.
+//
+// tenant and table are carried even though the key already contains both: the
+// key is a hash, and the counter needs them in the clear.
 type plan struct {
-	key   string
-	ttl   int
-	table string
-	scope string
+	key    string
+	ttl    int
+	tenant string
+	table  string
+	scope  string
 }
 
 // Middleware caches opt-in GET/HEAD /rest/v1 responses in the keyspace.
@@ -56,6 +64,7 @@ func Middleware(d Deps, next http.Handler) http.Handler {
 
 		served, healthy := tryServeHit(req.Context(), d.Cache, w, req, p.key, p.ttl)
 		if healthy && served {
+			d.Stats.Record(p.tenant, p.table, OutcomeHit, "")
 			return
 		}
 		d.serveAndStore(w, req, next, p, healthy)
@@ -76,27 +85,51 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 	clientMaxAge := ParseClientMaxAge(req.Header)
 	asked := clientMaxAge > 0
 
-	if !ServerCacheOffered(req.Context(), d.Config, d.Cache, req) {
+	// Resolved before the first refusal so a bypass can be attributed. Both are
+	// string work on what is already in hand, and the tenant ref is what every
+	// count is filed under.
+	tenant := TenantRef(req, d.Config.ManagedProjectRef)
+	table := RestTableFromPath(req.URL.Path)
+
+	// A request that did not ask to be cached is not counted anywhere below:
+	// every bypass recorded here is one a caller wanted and did not get.
+	bypass := func(reason string) {
+		if asked {
+			d.Stats.Record(tenant, table, OutcomeBypass, reason)
+		}
+	}
+
+	if offered, reason := serverCacheOffer(req.Context(), d.Config, d.Cache, req); !offered {
+		bypass(reason)
 		return plan{}, false, asked
 	}
 
 	restCfg, err := d.Store.Get(req.Context())
 	if err != nil {
+		// Counted but not reported in the header, which is not an inconsistency:
+		// the caller was not refused, the request simply went uncached, while
+		// the operator reading the report is the one who needs to see that it
+		// keeps happening.
 		logrus.WithError(err).Warn("restcache: api config read failed — bypass")
+		bypass(ReasonConfigUnreadable)
 		return plan{}, false, false
 	}
 
-	table := RestTableFromPath(req.URL.Path)
 	tableCfg, tableAllowed := restCfg.Rest.TableCacheAllowed(table)
 	ttl := EffectiveTTL(restCfg.Rest.CacheMaxTTL, clientMaxAge, tableAllowed)
 	if ttl <= 0 || d.Cache == nil {
+		if d.Cache == nil {
+			bypass(ReasonUnavailable)
+		} else {
+			bypass(ReasonTableNotCached)
+		}
 		return plan{}, false, asked && d.Cache == nil
 	}
 
 	usePublic := d.publicScope(req, table, tableCfg.AllowPublic)
 	return plan{
 		key: BuildKey(keyParts{
-			Tenant:   TenantRef(req, d.Config.ManagedProjectRef),
+			Tenant:   tenant,
 			Schema:   d.SchemaFor(req),
 			Method:   req.Method,
 			Path:     req.URL.Path,
@@ -107,9 +140,10 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 			Language: req.Header.Get("Accept-Language"),
 			MaxRows:  d.MaxRowsFor(req),
 		}),
-		ttl:   ttl,
-		table: table,
-		scope: cacheScopeLabel(usePublic),
+		ttl:    ttl,
+		tenant: tenant,
+		table:  table,
+		scope:  cacheScopeLabel(usePublic),
 	}, true, false
 }
 
@@ -182,8 +216,9 @@ func (d Deps) serveAndStore(w http.ResponseWriter, req *http.Request, next http.
 	}
 
 	label := "MISS"
+	reason := ""
 	if !healthy {
-		label = "BYPASS"
+		label, reason = "BYPASS", ReasonCacheUnhealthy
 	}
 	if storable(rec) {
 		entry := Entry{
@@ -199,9 +234,17 @@ func (d Deps) serveAndStore(w http.ResponseWriter, req *http.Request, next http.
 		}
 		if err := storeEntry(req.Context(), d.Cache, p.key, entry, p.ttl); err != nil {
 			logrus.WithError(err).Warn("restcache: keyspace SET failed")
-			label = "BYPASS"
+			label, reason = "BYPASS", ReasonStoreFailed
 		}
 		w.Header().Set("Vary", VaryHeader(req))
+	}
+
+	// The counter follows the header rather than the internals: what a caller
+	// was told happened is what the report should say happened.
+	if label == "MISS" {
+		d.Stats.Record(p.tenant, p.table, OutcomeMiss, "")
+	} else {
+		d.Stats.Record(p.tenant, p.table, OutcomeBypass, reason)
 	}
 
 	w.Header().Set(statusHeader, label)

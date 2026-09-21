@@ -79,9 +79,17 @@ check-gosec:
 vulncheck: check-govulncheck # Check for known vulnerabilities
 	govulncheck $(CHECK_FILES)
 
+# Pinned for the third time, for the third tool, for the same reason: `@latest`
+# resolved to golang.org/x/vuln v1.8.0, whose go directive is 1.26.0, while
+# go.mod pins 1.25.13 and CI sets GOTOOLCHAIN=local. `go install` then refuses
+# before it has downloaded anything, and every build in the repository went red
+# on a day nobody touched it. v1.7.0 is the newest release whose go directive
+# 1.25.0 satisfies. Raise this with the go directive, together.
+GOVULNCHECK_VERSION ?= v1.7.0
+
 check-govulncheck:
 	@command -v govulncheck >/dev/null 2>&1 \
-		|| go install golang.org/x/vuln/cmd/govulncheck@latest
+		|| go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 
 unused: | check-staticcheck # Look for unused code
 	@echo "Unused code:"

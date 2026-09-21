@@ -122,7 +122,7 @@ func (c *conn) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, 
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 
-	key := fmt.Sprintf("tenant:%s:config", ref)
+	key := TenantConfigKey(ref)
 	data, err := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build()).AsBytes()
 	if err != nil {
 		if vkgo.IsValkeyNil(err) {

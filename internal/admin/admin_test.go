@@ -1112,14 +1112,14 @@ func TestATenantWithoutTheCache(t *testing.T) {
 func TestTenantCachePrefix(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/cache", nil)
 
-	if got := tenantCachePrefix(&config.Config{}, req); got != "tenant:local:rest:" {
+	if got := tenantCachePrefix(&config.Config{}, req); got != "cache:rest:local:" {
 		t.Errorf("with nothing configured: %q", got)
 	}
-	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "tenant:proj-1:rest:" {
+	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "cache:rest:proj-1:" {
 		t.Errorf("with a configured project: %q", got)
 	}
 	req.Header.Set("X-Supatype-Tenant", "routed")
-	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "tenant:routed:rest:" {
+	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "cache:rest:routed:" {
 		t.Errorf("with a routed tenant: %q", got)
 	}
 }

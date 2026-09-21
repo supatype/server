@@ -1,4 +1,4 @@
-package valkey
+package keyspace
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"github.com/supatype/server/internal/proxy"
 )
 
-// RouteManifestKey returns the Valkey key for a full route manifest override
+// RouteManifestKey returns the keyspace key for a full route manifest override
 // (same JSON shape as .supatype/manifest.json).
 func RouteManifestKey(ref string) string {
 	return fmt.Sprintf("tenant:%s:manifest", ref)

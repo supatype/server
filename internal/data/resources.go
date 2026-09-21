@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
 // ErrNoDatabase is returned when a feature needs the admin pool and no
@@ -40,10 +40,10 @@ var ErrNoDatabase = errors.New("data: no database configured (SUPATYPE_SQL_DATAB
 // headroom that saturation takes deliberate abuse rather than ordinary use.
 const adminMaxConns = 10
 
-// openValkey is the Valkey constructor, indirected so tests can exercise the
-// path where a cache connects. valkey.New dials eagerly, so without this the
-// only reachable branch in a unit test is the failure one.
-var openValkey = valkey.New
+// openKeyspace is the keyspace constructor, indirected so tests can exercise
+// the path where a cache connects. keyspace.New dials eagerly, so without this
+// the only reachable branch in a unit test is the failure one.
+var openKeyspace = keyspace.New
 
 // newPool is the pgxpool constructor, indirected for the same reason: once
 // ParseConfig has succeeded and MaxConns is a sane constant, it has no reason
@@ -58,7 +58,7 @@ type Resources struct {
 	// cache is reached through Cache, which is nil-safe in both directions: a nil
 	// Resources and an unset field both yield the unavailable client, so no
 	// consumer needs a nil check of its own.
-	cache valkey.Client
+	cache keyspace.Client
 
 	// admin serves the Studio SQL runner and Studio membership. It is nil when
 	// no connection string was configured; reach it through AdminPool.
@@ -71,21 +71,21 @@ type Resources struct {
 
 // Open acquires the resources described by cfg.
 //
-// A Valkey that is configured but unreachable is fatal only in managed mode,
+// A keyspace that is configured but unreachable is fatal only in managed mode,
 // where the tenant manifest lives in it; elsewhere the caches degrade and the
 // service runs. A database that is merely absent is never fatal here: the
 // features that need it report ErrNoDatabase per request.
 func Open(ctx context.Context, cfg *config.Config) (*Resources, error) {
-	r := &Resources{cache: valkey.Unavailable()}
+	r := &Resources{cache: keyspace.Unavailable()}
 
-	if addr := strings.TrimSpace(cfg.ValkeyAddr); addr != "" {
-		client, err := openValkey(addr)
+	if addr := cfg.KeyspaceAddress(); addr != "" {
+		client, err := openKeyspace(addr)
 		if err != nil {
 			managed := strings.TrimSpace(cfg.Mode) == "managed"
 			if managed {
-				return nil, fmt.Errorf("data: Valkey connect failed in managed mode: %w", err)
+				return nil, fmt.Errorf("data: keyspace connect failed in managed mode: %w", err)
 			}
-			logrus.WithError(err).Warn("data: Valkey connect failed, caches will bypass")
+			logrus.WithError(err).Warn("data: keyspace connect failed, caches will bypass")
 		} else {
 			r.cache = client
 			r.onClose(func() error { client.Close(); return nil })
@@ -122,10 +122,10 @@ func openAdminPool(_ context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Cache returns the Valkey client, never nil.
-func (r *Resources) Cache() valkey.Client {
+// Cache returns the keyspace client, never nil.
+func (r *Resources) Cache() keyspace.Client {
 	if r == nil || r.cache == nil {
-		return valkey.Unavailable()
+		return keyspace.Unavailable()
 	}
 	return r.cache
 }
@@ -175,6 +175,6 @@ func (r *Resources) Close() error {
 	}
 	r.closers = nil
 	r.admin = nil
-	r.cache = valkey.Unavailable()
+	r.cache = keyspace.Unavailable()
 	return errors.Join(errs...)
 }

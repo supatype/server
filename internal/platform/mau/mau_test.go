@@ -174,7 +174,7 @@ func TestRecord(t *testing.T) {
 }
 
 func TestRecordReportsStoreFailure(t *testing.T) {
-	store := &recordingStore{err: errors.New("valkey down")}
+	store := &recordingStore{err: errors.New("keyspace down")}
 	r := Recorder{Store: store}
 	if err := r.Record(context.Background(), "org", "proj", map[string]any{"id": "u"}); err == nil {
 		t.Fatal("want the store failure reported to the caller")

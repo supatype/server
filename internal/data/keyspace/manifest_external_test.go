@@ -1,4 +1,4 @@
-package valkey_test
+package keyspace_test
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/data/valkey/valkeytest"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 	"github.com/supatype/server/internal/proxy"
 )
 
@@ -29,10 +29,10 @@ func fileManifest() *proxy.RouteManifest {
 }
 
 // storing returns a cache holding this tenant config and manifest override.
-func storing(t *testing.T, cfg *valkey.TenantConfig, override *proxy.RouteManifest) *valkeytest.Client {
+func storing(t *testing.T, cfg *keyspace.TenantConfig, override *proxy.RouteManifest) *keyspacetest.Client {
 	t.Helper()
 
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	if cfg != nil {
 		cache.WithTenant(ref, cfg)
 	}
@@ -41,20 +41,20 @@ func storing(t *testing.T, cfg *valkey.TenantConfig, override *proxy.RouteManife
 		if err != nil {
 			t.Fatal(err)
 		}
-		cache.Put(valkey.RouteManifestKey(ref), raw, 60)
+		cache.Put(keyspace.RouteManifestKey(ref), raw, 60)
 	}
 	return cache
 }
 
 func TestRouteManifestKey(t *testing.T) {
-	if got := valkey.RouteManifestKey("proj-1"); got != "tenant:proj-1:manifest" {
+	if got := keyspace.RouteManifestKey("proj-1"); got != "tenant:proj-1:manifest" {
 		t.Errorf("key = %q", got)
 	}
 }
 
 // Nothing in the cache leaves the file manifest as it was.
 func TestMergeWithNothingStored(t *testing.T) {
-	got, err := valkey.LoadMergedManagedManifest(context.Background(), valkeytest.New(), ref, fileManifest())
+	got, err := keyspace.LoadMergedManagedManifest(context.Background(), keyspacetest.New(), ref, fileManifest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,10 +67,10 @@ func TestMergeWithNothingStored(t *testing.T) {
 // tenant's own manifest overrides that. Getting the order wrong sends a
 // tenant's requests at another tenant's upstream.
 func TestTheLayeringOrder(t *testing.T) {
-	cfg := &valkey.TenantConfig{PostgRESTURL: "http://config-rest", Schema: "config"}
+	cfg := &keyspace.TenantConfig{PostgRESTURL: "http://config-rest", Schema: "config"}
 	override := &proxy.RouteManifest{PostgRESTURL: "http://override-rest"}
 
-	got, err := valkey.LoadMergedManagedManifest(context.Background(), storing(t, cfg, override), ref, fileManifest())
+	got, err := keyspace.LoadMergedManagedManifest(context.Background(), storing(t, cfg, override), ref, fileManifest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,17 +88,17 @@ func TestTheLayeringOrder(t *testing.T) {
 // The merge reads the tenant's config and its manifest, so a failure reading
 // either is a failure to route: guessing would send requests somewhere.
 func TestMergeReportsWhatItCannotRead(t *testing.T) {
-	badConfig := valkeytest.New()
-	badConfig.TenantErr = valkeytest.ErrFailed
+	badConfig := keyspacetest.New()
+	badConfig.TenantErr = keyspacetest.ErrFailed
 
-	badManifest := valkeytest.New()
-	badManifest.GetErr = valkeytest.ErrFailed
+	badManifest := keyspacetest.New()
+	badManifest.GetErr = keyspacetest.ErrFailed
 
-	for name, cache := range map[string]*valkeytest.Client{
+	for name, cache := range map[string]*keyspacetest.Client{
 		"the tenant config": badConfig,
 		"the manifest":      badManifest,
 	} {
-		if _, err := valkey.LoadMergedManagedManifest(context.Background(), cache, ref, fileManifest()); err == nil {
+		if _, err := keyspace.LoadMergedManagedManifest(context.Background(), cache, ref, fileManifest()); err == nil {
 			t.Errorf("%s could not be read and no error came back", name)
 		}
 	}
@@ -108,10 +108,10 @@ func TestMergeReportsWhatItCannotRead(t *testing.T) {
 // tenant that pushed a broken manifest should hear about it, not silently get
 // the previous routing.
 func TestAnOverrideThatWillNotParse(t *testing.T) {
-	cache := valkeytest.New()
-	cache.Put(valkey.RouteManifestKey(ref), []byte("{not json"), 60)
+	cache := keyspacetest.New()
+	cache.Put(keyspace.RouteManifestKey(ref), []byte("{not json"), 60)
 
-	if _, err := valkey.LoadMergedManagedManifest(context.Background(), cache, ref, fileManifest()); err == nil {
+	if _, err := keyspace.LoadMergedManagedManifest(context.Background(), cache, ref, fileManifest()); err == nil {
 		t.Error("want an error")
 	}
 }
@@ -119,10 +119,10 @@ func TestAnOverrideThatWillNotParse(t *testing.T) {
 // ─── The per-tenant cache ─────────────────────────────────────────────────────
 
 // The second request for a tenant is answered from memory, which is the point:
-// otherwise every request costs a round trip to Valkey.
+// otherwise every request costs a round trip to the keyspace.
 func TestTheCacheServesRepeatsFromMemory(t *testing.T) {
-	cache := storing(t, &valkey.TenantConfig{Schema: "app"}, nil)
-	c := valkey.NewTenantManifestCache(cache, time.Minute, fileManifest)
+	cache := storing(t, &keyspace.TenantConfig{Schema: "app"}, nil)
+	c := keyspace.NewTenantManifestCache(cache, time.Minute, fileManifest)
 
 	for i := 0; i < 5; i++ {
 		got, err := c.Get(context.Background(), ref)
@@ -142,7 +142,7 @@ func TestTheCacheServesRepeatsFromMemory(t *testing.T) {
 // Each caller gets its own copy, so one request mutating what it was given
 // cannot change what the next request sees.
 func TestTheCacheHandsOutCopies(t *testing.T) {
-	c := valkey.NewTenantManifestCache(storing(t, &valkey.TenantConfig{Schema: "app"}, nil), time.Minute, fileManifest)
+	c := keyspace.NewTenantManifestCache(storing(t, &keyspace.TenantConfig{Schema: "app"}, nil), time.Minute, fileManifest)
 	ctx := context.Background()
 
 	first, err := c.Get(ctx, ref)
@@ -164,8 +164,8 @@ func TestTheCacheHandsOutCopies(t *testing.T) {
 // An expired entry is refetched, so a tenant that changes its routing is not
 // stuck with the old one for ever.
 func TestTheCacheExpires(t *testing.T) {
-	cache := storing(t, &valkey.TenantConfig{Schema: "app"}, nil)
-	c := valkey.NewTenantManifestCache(cache, time.Nanosecond, fileManifest)
+	cache := storing(t, &keyspace.TenantConfig{Schema: "app"}, nil)
+	c := keyspace.NewTenantManifestCache(cache, time.Nanosecond, fileManifest)
 	ctx := context.Background()
 
 	if _, err := c.Get(ctx, ref); err != nil {
@@ -181,10 +181,10 @@ func TestTheCacheExpires(t *testing.T) {
 }
 
 // Flushing is what a manifest file change triggers, so the next request has to
-// go back to Valkey.
+// go back to the keyspace.
 func TestFlushDropsEverything(t *testing.T) {
-	cache := storing(t, &valkey.TenantConfig{Schema: "app"}, nil)
-	c := valkey.NewTenantManifestCache(cache, time.Hour, fileManifest)
+	cache := storing(t, &keyspace.TenantConfig{Schema: "app"}, nil)
+	c := keyspace.NewTenantManifestCache(cache, time.Hour, fileManifest)
 	ctx := context.Background()
 
 	if _, err := c.Get(ctx, ref); err != nil {
@@ -202,14 +202,14 @@ func TestFlushDropsEverything(t *testing.T) {
 // Flushing nothing is a no-op rather than a panic: the cache is nil in every
 // mode but managed.
 func TestFlushOnNoCache(t *testing.T) {
-	var c *valkey.TenantManifestCache
+	var c *keyspace.TenantManifestCache
 	c.Flush()
 }
 
 // A request with no tenant gets the file manifest, which is the single-tenant
 // case, and it gets a copy of it.
 func TestNoTenantGetsTheFileManifest(t *testing.T) {
-	c := valkey.NewTenantManifestCache(valkeytest.New(), time.Minute, fileManifest)
+	c := keyspace.NewTenantManifestCache(keyspacetest.New(), time.Minute, fileManifest)
 
 	got, err := c.Get(context.Background(), "")
 	if err != nil {
@@ -227,8 +227,8 @@ func TestNoTenantGetsTheFileManifest(t *testing.T) {
 // A ttl of zero or less is a mistake, not a request for no caching, so it takes
 // the default rather than fetching on every request.
 func TestATTLOfZeroTakesTheDefault(t *testing.T) {
-	cache := storing(t, &valkey.TenantConfig{Schema: "app"}, nil)
-	c := valkey.NewTenantManifestCache(cache, 0, fileManifest)
+	cache := storing(t, &keyspace.TenantConfig{Schema: "app"}, nil)
+	c := keyspace.NewTenantManifestCache(cache, 0, fileManifest)
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -244,17 +244,17 @@ func TestATTLOfZeroTakesTheDefault(t *testing.T) {
 // A failure is not cached, so the next request tries again rather than serving
 // an error for the whole TTL.
 func TestAFailureIsNotCached(t *testing.T) {
-	cache := valkeytest.New()
-	cache.TenantErr = valkeytest.ErrFailed
-	c := valkey.NewTenantManifestCache(cache, time.Hour, fileManifest)
+	cache := keyspacetest.New()
+	cache.TenantErr = keyspacetest.ErrFailed
+	c := keyspace.NewTenantManifestCache(cache, time.Hour, fileManifest)
 	ctx := context.Background()
 
-	if _, err := c.Get(ctx, ref); !errors.Is(err, valkeytest.ErrFailed) {
+	if _, err := c.Get(ctx, ref); !errors.Is(err, keyspacetest.ErrFailed) {
 		t.Fatalf("err = %v", err)
 	}
 
 	cache.TenantErr = nil
-	cache.WithTenant(ref, &valkey.TenantConfig{Schema: "app"})
+	cache.WithTenant(ref, &keyspace.TenantConfig{Schema: "app"})
 	got, err := c.Get(ctx, ref)
 	if err != nil {
 		t.Fatalf("the failure was cached: %v", err)
@@ -265,10 +265,10 @@ func TestAFailureIsNotCached(t *testing.T) {
 }
 
 // Concurrent requests for the same tenant collapse into one fetch, which is
-// what stops a cold cache stampeding Valkey on a busy pod.
+// what stops a cold cache stampeding the keyspace on a busy pod.
 func TestConcurrentRequestsCollapseIntoOneFetch(t *testing.T) {
-	cache := storing(t, &valkey.TenantConfig{Schema: "app"}, nil)
-	c := valkey.NewTenantManifestCache(cache, time.Hour, fileManifest)
+	cache := storing(t, &keyspace.TenantConfig{Schema: "app"}, nil)
+	c := keyspace.NewTenantManifestCache(cache, time.Hour, fileManifest)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {

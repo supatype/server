@@ -52,7 +52,7 @@ func TenantRef(req *http.Request, managedProjectRef string) string {
 	return "local"
 }
 
-// RestKeyPrefix returns the Valkey SCAN prefix for a tenant's REST cache keys.
+// RestKeyPrefix returns the keyspace SCAN prefix for a tenant's REST cache keys.
 func RestKeyPrefix(tenant string) string {
 	return fmt.Sprintf("tenant:%s:rest:", tenant)
 }
@@ -70,7 +70,7 @@ type keyParts struct {
 	MaxRows  string
 }
 
-// BuildKey returns a Valkey key tenant:{ref}:rest:{hash}.
+// BuildKey returns a keyspace key tenant:{ref}:rest:{hash}.
 func BuildKey(p keyParts) string {
 	var b strings.Builder
 	b.WriteString(p.Tenant)

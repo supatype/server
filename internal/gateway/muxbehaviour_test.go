@@ -460,18 +460,18 @@ func signedAPIKey(t *testing.T, role string) string {
 	return signed
 }
 
-// A nil valkey.Client is a nil interface, which has no methods: the first
+// A nil keyspace.Client is a nil interface, which has no methods: the first
 // Available() call panics rather than behaving as "no cache". buildOuterMux
 // normalises it once, at the boundary, which is what lets every consumer below
 // drop its own nil check. This is a regression test for that panic.
-func TestBuildOuterMuxToleratesANilValkeyClient(t *testing.T) {
+func TestBuildOuterMuxToleratesANilKeyspaceClient(t *testing.T) {
 	clearAmbientEnv(t)
 	cfg := &config.Config{Mode: "standalone"}
 	manifest := &proxy.RouteManifest{Schema: "public"}
 
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("building the mux with no Valkey panicked: %v", r)
+			t.Fatalf("building the mux with no keyspace panicked: %v", r)
 		}
 	}()
 
@@ -481,8 +481,8 @@ func TestBuildOuterMuxToleratesANilValkeyClient(t *testing.T) {
 		func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") },
 		http.NotFoundHandler(),
 		nil,
-		"nil-valkey-test",
-		nil, // no Valkey configured
+		"nil-keyspace-test",
+		nil, // no keyspace configured
 		nil,
 	)
 
@@ -491,6 +491,6 @@ func TestBuildOuterMuxToleratesANilValkeyClient(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/cache", nil))
 	if rec.Code == 0 || rec.Code == http.StatusInternalServerError {
-		t.Errorf("GET /admin/v1/cache with no Valkey returned %d", rec.Code)
+		t.Errorf("GET /admin/v1/cache with no keyspace returned %d", rec.Code)
 	}
 }

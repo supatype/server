@@ -13,7 +13,7 @@ import (
 
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/utilities"
@@ -50,7 +50,7 @@ func inRange(name string, value, low, high int) error {
 
 // Handler returns a mux covering all /admin/v1 routes.
 // Mount it with r.Mount("/admin/v1", Handler(store, cfg, cache)).
-func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.Handler {
+func Handler(store apiconfig.Store, cfg *config.Config, vc keyspace.Client) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, vc))
@@ -67,7 +67,7 @@ func Handler(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.H
 
 // ─── REST configuration ───────────────────────────────────────────────────────
 
-func restConfigRoute(store apiconfig.Store, cfg *config.Config, vc valkey.Client) http.HandlerFunc {
+func restConfigRoute(store apiconfig.Store, cfg *config.Config, vc keyspace.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -92,7 +92,7 @@ type restPatch struct {
 	CacheTables *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 }
 
-func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, vc valkey.Client) {
+func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, vc keyspace.Client) {
 	var body restPatch
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")

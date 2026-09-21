@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
 func TestOpenWithNothingConfigured(t *testing.T) {
@@ -19,10 +19,10 @@ func TestOpenWithNothingConfigured(t *testing.T) {
 	t.Cleanup(func() { _ = r.Close() })
 
 	if r.Cache() == nil {
-		t.Fatal("Valkey must never be nil")
+		t.Fatal("the keyspace client must never be nil")
 	}
 	if r.Cache().Available() {
-		t.Error("Valkey should report unavailable")
+		t.Error("the keyspace client should report unavailable")
 	}
 	if r.HasDatabase() {
 		t.Error("HasDatabase should be false")
@@ -57,22 +57,22 @@ func TestOpenRejectsAnUnparseableDSN(t *testing.T) {
 	}
 }
 
-// A configured but unreachable Valkey is fatal only in managed mode, where the
+// A configured but unreachable keyspace is fatal only in managed mode, where the
 // tenant manifest lives in it. Elsewhere the caches degrade and the service runs.
-func TestValkeyFailureIsFatalOnlyInManagedMode(t *testing.T) {
+func TestKeyspaceFailureIsFatalOnlyInManagedMode(t *testing.T) {
 	const unreachable = "127.0.0.1:1"
 
-	r, err := Open(context.Background(), &config.Config{Mode: "standalone", ValkeyAddr: unreachable})
+	r, err := Open(context.Background(), &config.Config{Mode: "standalone", KeyspaceAddr: unreachable})
 	if err != nil {
-		t.Fatalf("standalone must survive an unreachable Valkey: %v", err)
+		t.Fatalf("standalone must survive an unreachable keyspace: %v", err)
 	}
 	t.Cleanup(func() { _ = r.Close() })
 	if r.Cache().Available() {
-		t.Error("an unreachable Valkey should leave the unavailable client in place")
+		t.Error("an unreachable keyspace should leave the unavailable client in place")
 	}
 
-	if _, err := Open(context.Background(), &config.Config{Mode: "managed", ValkeyAddr: unreachable}); err == nil {
-		t.Error("managed mode must refuse to start without the Valkey it needs")
+	if _, err := Open(context.Background(), &config.Config{Mode: "managed", KeyspaceAddr: unreachable}); err == nil {
+		t.Error("managed mode must refuse to start without the keyspace it needs")
 	}
 }
 
@@ -127,10 +127,10 @@ func TestCloseRunsInReverseAndReportsEveryFailure(t *testing.T) {
 	}
 }
 
-// fakeCache stands in for a connected Valkey so the path where a cache is
+// fakeCache stands in for a connected keyspace so the path where a cache is
 // acquired, registered for teardown and handed out can be exercised without one.
 type fakeCache struct {
-	valkey.Client
+	keyspace.Client
 	closed int
 }
 
@@ -138,12 +138,12 @@ func (f *fakeCache) Available() bool { return true }
 func (f *fakeCache) Close()          { f.closed++ }
 
 func TestOpenAcquiresAndClosesTheCache(t *testing.T) {
-	cache := &fakeCache{Client: valkey.Unavailable()}
-	original := openValkey
-	openValkey = func(string) (valkey.Client, error) { return cache, nil }
-	t.Cleanup(func() { openValkey = original })
+	cache := &fakeCache{Client: keyspace.Unavailable()}
+	original := openKeyspace
+	openKeyspace = func(string) (keyspace.Client, error) { return cache, nil }
+	t.Cleanup(func() { openKeyspace = original })
 
-	r, err := Open(context.Background(), &config.Config{ValkeyAddr: "valkey:6379"})
+	r, err := Open(context.Background(), &config.Config{KeyspaceAddr: "db:6379"})
 	if err != nil {
 		t.Fatal(err)
 	}

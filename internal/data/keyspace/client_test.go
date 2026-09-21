@@ -1,4 +1,4 @@
-package valkey
+package keyspace
 
 import (
 	"context"
@@ -14,15 +14,20 @@ import (
 // The client is a wrapper around a real protocol, with a circuit breaker that
 // opens on real failures. Faking valkey-go's Client means reimplementing fifteen
 // methods and building ValkeyResults by hand, which would test the fake. These
-// run against a real Valkey; CI provides one.
+// run against a real keyspace; CI provides one.
 
-// connectedClient returns a client against the test Valkey, or skips.
+// connectedClient returns a client against the test keyspace, or skips.
 func connectedClient(t *testing.T) *conn {
 	t.Helper()
 
-	addr := strings.TrimSpace(os.Getenv("SUPATYPE_TEST_VALKEY_ADDR"))
+	addr := strings.TrimSpace(os.Getenv("SUPATYPE_TEST_KEYSPACE_ADDR"))
 	if addr == "" {
-		t.Skip("SUPATYPE_TEST_VALKEY_ADDR is not set")
+		// The Valkey-era name, still read for the same reason the config still
+		// accepts it: it is in shells and CI files this change does not reach.
+		addr = strings.TrimSpace(os.Getenv("SUPATYPE_TEST_VALKEY_ADDR"))
+	}
+	if addr == "" {
+		t.Skip("SUPATYPE_TEST_KEYSPACE_ADDR is not set")
 	}
 
 	client, err := New(addr)
@@ -389,7 +394,7 @@ func TestAddToExpiringSetReportsAFailedExpiry(t *testing.T) {
 
 // ─── The circuit breaker ──────────────────────────────────────────────────────
 
-// The breaker is what stops a failing Valkey turning every request into a
+// The breaker is what stops a failing keyspace turning every request into a
 // 100ms wait. It is pure state, so it is tested as such.
 func TestTheCircuitOpensAfterRepeatedFailures(t *testing.T) {
 	c := &conn{}
@@ -435,7 +440,7 @@ func TestFailuresDoNotAccumulateAcrossSuccesses(t *testing.T) {
 }
 
 // After the open period one request is let through to find out whether the
-// service is back. Exactly one: a thundering herd against a recovering Valkey
+// service is back. Exactly one: a thundering herd against a recovering keyspace
 // is what the breaker exists to prevent.
 func TestOnlyOneProbeIsAllowedThrough(t *testing.T) {
 	c := &conn{}

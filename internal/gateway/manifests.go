@@ -4,12 +4,12 @@ package gateway
 //
 // A standalone deployment has one, read from a file and re-read when the file
 // changes. A managed pod serving a single project merges that file with what
-// the control plane published to Valkey. A managed pod serving many projects
+// the control plane published to the keyspace. A managed pod serving many projects
 // resolves one per calling tenant instead.
 //
 // Answering from the wrong one sends a tenant's REST traffic to another
 // tenant's schema, so the rules live here rather than inside the bootstrap,
-// where nothing could reach them without a database and a Valkey.
+// where nothing could reach them without a database and a keyspace.
 
 import (
 	"context"
@@ -25,7 +25,7 @@ import (
 // gateway trusts it only because the tenant HMAC middleware ran first.
 const tenantHeader = "X-Supatype-Tenant"
 
-// tenantManifests is the per-tenant lookup — *valkey.TenantManifestCache in a
+// tenantManifests is the per-tenant lookup — *keyspace.TenantManifestCache in a
 // running server, and an interface here so the rules above can be tested
 // without one.
 type tenantManifests interface {
@@ -77,9 +77,9 @@ func (l *liveManifests) Reapply(file *proxy.RouteManifest) {
 	if l.merge != nil {
 		merged, err := l.merge(context.Background(), file)
 		if err != nil {
-			// The previous live manifest is kept: a Valkey that is briefly away
+			// The previous live manifest is kept: a keyspace that is briefly away
 			// is not a reason to serve every tenant the file's defaults.
-			logrus.WithError(err).Warn("serve: Valkey manifest merge failed — keeping previous live manifest")
+			logrus.WithError(err).Warn("serve: keyspace manifest merge failed — keeping previous live manifest")
 			return
 		}
 		l.live.Store(merged)
@@ -102,7 +102,7 @@ func (l *liveManifests) For(req *http.Request) *proxy.RouteManifest {
 			m, err := l.tenant.Get(req.Context(), ref)
 			switch {
 			case err != nil:
-				logrus.WithError(err).WithField("tenant", ref).Debug("serve: tenant manifest from Valkey failed")
+				logrus.WithError(err).WithField("tenant", ref).Debug("serve: tenant manifest from the keyspace failed")
 			case m != nil:
 				return m
 			}

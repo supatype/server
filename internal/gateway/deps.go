@@ -8,7 +8,7 @@ import (
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
@@ -43,7 +43,7 @@ type Deps struct {
 	// mount reads.
 	APIStore apiconfig.Store
 	// Cache is never nil; see data.Resources.Cache.
-	Cache valkey.Client
+	Cache keyspace.Client
 	// Studio is the Studio auth configuration, including membership.
 	Studio studioauth.Config
 	// Hooks runs a project's schema-declared model hooks around a REST write.

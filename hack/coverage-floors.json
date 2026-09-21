@@ -18,7 +18,7 @@
     "internal/auth/storage/test",
     "internal/config",
     "internal/data",
-    "internal/data/valkey",
+    "internal/data/keyspace",
     "internal/deno",
     "internal/e2e",
     "internal/e2e/e2eapi",

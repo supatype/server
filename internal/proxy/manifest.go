@@ -54,7 +54,7 @@ type RouteManifest struct {
 	FunctionWorkerURLs map[string]string `json:"function_worker_urls,omitempty"`
 
 	// CorsAllowedOrigins lists allowed browser Origin values (exact match).
-	// Merged from Valkey tenant config / manifest in managed mode; may be
+	// Merged from the keyspace tenant config / manifest in managed mode; may be
 	// combined with SUPATYPE_CORS_ALLOW_ORIGINS on the server.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 

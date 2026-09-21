@@ -12,7 +12,7 @@ import (
 // the log endpoint rather than answering with none.
 //
 // The same trap has already been hit once in this service, converting the
-// Valkey client to an interface, which is why the conversion happens here where
+// keyspace client to an interface, which is why the conversion happens here where
 // the concrete type is still visible.
 func TestFunctionLogsIsNilWhenThereIsNoWorker(t *testing.T) {
 	d := &Deps{}

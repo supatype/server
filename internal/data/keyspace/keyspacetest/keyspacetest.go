@@ -1,4 +1,4 @@
-// Package valkeytest provides an in-memory valkey.Client for tests.
+// Package keyspacetest provides an in-memory keyspace.Client for tests.
 //
 // Four packages had each grown their own stub of the cache — restcache, admin,
 // the gateway and the platform middleware — and each stubbed only the methods
@@ -10,7 +10,7 @@
 // This one stores. It also lets a test say "this call fails", because the
 // interesting behaviour in every consumer is what happens when the cache is
 // there but will not answer.
-package valkeytest
+package keyspacetest
 
 import (
 	"context"
@@ -20,10 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
-// Client is an in-memory valkey.Client.
+// Client is an in-memory keyspace.Client.
 //
 // Safe for concurrent use, because the consumers are HTTP middlewares and their
 // tests run under -race.
@@ -31,7 +31,7 @@ type Client struct {
 	mu sync.Mutex
 
 	values  map[string]entry
-	tenants map[string]*valkey.TenantConfig
+	tenants map[string]*keyspace.TenantConfig
 	// sets records AddToExpiringSet members per key, which is how the MAU tally
 	// is counted.
 	sets map[string]map[string]time.Time
@@ -97,7 +97,7 @@ func (e entry) live() bool {
 func New() *Client {
 	return &Client{
 		values:    map[string]entry{},
-		tenants:   map[string]*valkey.TenantConfig{},
+		tenants:   map[string]*keyspace.TenantConfig{},
 		sets:      map[string]map[string]time.Time{},
 		cursors:   map[uint64]string{},
 		vanishing: map[string]bool{},
@@ -106,7 +106,7 @@ func New() *Client {
 
 // WithTenant registers a tenant configuration and returns the client, so a test
 // can set one up in a single expression.
-func (c *Client) WithTenant(ref string, cfg *valkey.TenantConfig) *Client {
+func (c *Client) WithTenant(ref string, cfg *keyspace.TenantConfig) *Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.tenants[ref] = cfg
@@ -160,7 +160,7 @@ func (c *Client) SetMembers(key string) []string {
 
 func (c *Client) Available() bool { return !c.Unavailable }
 
-func (c *Client) GetTenantConfig(_ context.Context, ref string) (*valkey.TenantConfig, error) {
+func (c *Client) GetTenantConfig(_ context.Context, ref string) (*keyspace.TenantConfig, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.TenantErr != nil {
@@ -284,6 +284,6 @@ func (c *Client) AddToExpiringSet(_ context.Context, key, member string, expireA
 func (c *Client) Close() {}
 
 // ErrFailed is a convenient failure for the *Err fields.
-var ErrFailed = errors.New("valkeytest: failing as instructed")
+var ErrFailed = errors.New("keyspacetest: failing as instructed")
 
-var _ valkey.Client = (*Client)(nil)
+var _ keyspace.Client = (*Client)(nil)

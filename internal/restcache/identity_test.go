@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/data/valkey/valkeytest"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 )
 
 // The cache key's auth component decides who shares an entry with whom, so the
@@ -302,14 +302,14 @@ func TestRestKeyPrefixMatchesTheKeysBuilt(t *testing.T) {
 // grant decides, and anything that cannot be read is a refusal.
 func TestServerCacheOffered(t *testing.T) {
 	enabled, disabled := true, false
-	withGrant := valkeytest.New().WithTenant("proj-1", &valkey.TenantConfig{RestCacheEnabled: &enabled})
-	withoutGrant := valkeytest.New().WithTenant("proj-1", &valkey.TenantConfig{RestCacheEnabled: &disabled})
-	unreadable := valkeytest.New()
-	unreadable.TenantErr = valkeytest.ErrFailed
+	withGrant := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
+	withoutGrant := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &disabled})
+	unreadable := keyspacetest.New()
+	unreadable.TenantErr = keyspacetest.ErrFailed
 
 	for name, tc := range map[string]struct {
 		cfg   *config.Config
-		cache valkey.Client
+		cache keyspace.Client
 		want  bool
 	}{
 		"no config at all":              {nil, nil, true},
@@ -333,7 +333,7 @@ func TestServerCacheOffered(t *testing.T) {
 // routed tenant, so a tenant header is enough.
 func TestServerCacheOfferedUsesTheRoutedTenant(t *testing.T) {
 	enabled := true
-	cache := valkeytest.New().WithTenant("routed", &valkey.TenantConfig{RestCacheEnabled: &enabled})
+	cache := keyspacetest.New().WithTenant("routed", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
 
 	req := httptest.NewRequest(http.MethodGet, "/posts", nil)
 	req.Header.Set("X-Supatype-Tenant", "routed")
@@ -350,9 +350,9 @@ func TestServerCacheOfferedUsesTheRoutedTenant(t *testing.T) {
 func TestStoreEntryReportsAMarshalFailure(t *testing.T) {
 	original := marshalEntry
 	t.Cleanup(func() { marshalEntry = original })
-	marshalEntry = func(any) ([]byte, error) { return nil, valkeytest.ErrFailed }
+	marshalEntry = func(any) ([]byte, error) { return nil, keyspacetest.ErrFailed }
 
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	if err := storeEntry(context.Background(), cache, "key", Entry{}, 30); err == nil {
 		t.Fatal("want an error")
 	}

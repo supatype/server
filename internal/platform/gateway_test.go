@@ -460,5 +460,5 @@ func TestAFailingStoreIsSurvivable(t *testing.T) {
 type failingStore struct{}
 
 func (failingStore) AddToExpiringSet(context.Context, string, string, time.Time) error {
-	return fmt.Errorf("valkey unavailable")
+	return fmt.Errorf("keyspace unavailable")
 }

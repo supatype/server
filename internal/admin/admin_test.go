@@ -13,8 +13,8 @@ import (
 
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/data/valkey/valkeytest"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 	"github.com/supatype/server/internal/restcache"
 )
 
@@ -54,7 +54,7 @@ func (s *memStore) Set(_ context.Context, cfg apiconfig.ApiConfig) error {
 //
 // Outside dev mode the service-role key is filled in unless the test is about
 // its absence, so a test that forgets it gets a 403 it did not mean to assert.
-func api(t *testing.T, cfg *config.Config, cache valkey.Client) (http.Handler, *memStore) {
+func api(t *testing.T, cfg *config.Config, cache keyspace.Client) (http.Handler, *memStore) {
 	t.Helper()
 	if cfg.Mode != "dev" && cfg.ServiceRoleKey == "" {
 		cfg.ServiceRoleKey = serviceKey
@@ -95,7 +95,7 @@ func errorOf(t *testing.T, rec *httptest.ResponseRecorder) string {
 // nothing reaches it without the service role.
 func TestEveryRouteNeedsTheServiceRole(t *testing.T) {
 	cfg := &config.Config{Mode: "standalone", ServiceRoleKey: serviceKey}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	routes := []struct{ method, path string }{
 		{http.MethodGet, "/config/rest"},
@@ -133,7 +133,7 @@ func TestEveryRouteNeedsTheServiceRole(t *testing.T) {
 // anything or an empty bearer.
 func TestNoKeyConfiguredFailsClosed(t *testing.T) {
 	// Built directly, because the helper fills the key in.
-	handler := Handler(newMemStore(), &config.Config{Mode: "standalone"}, valkeytest.New())
+	handler := Handler(newMemStore(), &config.Config{Mode: "standalone"}, keyspacetest.New())
 
 	rec := call(t, handler, http.MethodGet, "/config/rest", serviceKey, "")
 	if rec.Code != http.StatusForbidden {
@@ -146,7 +146,7 @@ func TestNoKeyConfiguredFailsClosed(t *testing.T) {
 
 // Dev mode is a local machine, where there is no key to have.
 func TestDevModeNeedsNoToken(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	if rec := call(t, handler, http.MethodGet, "/config/rest", "", ""); rec.Code != http.StatusOK {
 		t.Errorf("status = %d (%s)", rec.Code, rec.Body.String())
@@ -156,7 +156,7 @@ func TestDevModeNeedsNoToken(t *testing.T) {
 // ─── REST configuration ───────────────────────────────────────────────────────
 
 func TestGetAndPatchRestConfig(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 
 	rec := call(t, handler, http.MethodGet, "/config/rest", "", "")
 	if rec.Code != http.StatusOK {
@@ -186,7 +186,7 @@ func TestGetAndPatchRestConfig(t *testing.T) {
 // A patch naming nothing changes nothing but still writes, which is how a
 // caller confirms the current state.
 func TestAnEmptyPatchLeavesTheConfigAlone(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 	store.cfg.Rest.Schema = "app"
 
 	if rec := call(t, handler, http.MethodPatch, "/config/rest", "", `{}`); rec.Code != http.StatusOK {
@@ -200,7 +200,7 @@ func TestAnEmptyPatchLeavesTheConfigAlone(t *testing.T) {
 // The schema is interpolated into a header PostgREST acts on, and the bounds
 // are what the API documents. Anything outside either is the caller's mistake.
 func TestRestConfigRefusals(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct {
 		body string
@@ -233,7 +233,7 @@ func TestRestConfigRefusals(t *testing.T) {
 
 // The names PostgREST accepts, and this must not refuse.
 func TestSchemaNamesThatAreFine(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for _, schema := range []string{"public", "_private", "app_v2", "a$b", strings.Repeat("a", 63)} {
 		body := `{"schema":"` + schema + `"}`
@@ -246,7 +246,7 @@ func TestSchemaNamesThatAreFine(t *testing.T) {
 // ─── GraphQL configuration ────────────────────────────────────────────────────
 
 func TestGetAndPatchGraphQLConfig(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 
 	if rec := call(t, handler, http.MethodGet, "/config/graphql", "", ""); rec.Code != http.StatusOK {
 		t.Fatalf("get: %d", rec.Code)
@@ -265,7 +265,7 @@ func TestGetAndPatchGraphQLConfig(t *testing.T) {
 // Query depth is what stops a nested query costing the database everything, so
 // the bound is enforced rather than documented.
 func TestGraphQLConfigRefusals(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct{ body, want string }{
 		"not JSON":           {"{", "invalid JSON"},
@@ -290,12 +290,12 @@ func TestGraphQLConfigRefusals(t *testing.T) {
 // answered as though it worked.
 func TestAStoreThatWillNotWork(t *testing.T) {
 	for name, path := range map[string]string{"rest": "/config/rest", "graphql": "/config/graphql"} {
-		unreadable, _ := api(t, devConfig(), valkeytest.New())
+		unreadable, _ := api(t, devConfig(), keyspacetest.New())
 		_ = unreadable
 
 		store := newMemStore()
-		store.getErr = valkeytest.ErrFailed
-		handler := Handler(store, devConfig(), valkeytest.New())
+		store.getErr = keyspacetest.ErrFailed
+		handler := Handler(store, devConfig(), keyspacetest.New())
 
 		for _, method := range []string{http.MethodGet, http.MethodPatch} {
 			rec := call(t, handler, method, path, "", `{}`)
@@ -305,8 +305,8 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 		}
 
 		store = newMemStore()
-		store.setErr = valkeytest.ErrFailed
-		handler = Handler(store, devConfig(), valkeytest.New())
+		store.setErr = keyspacetest.ErrFailed
+		handler = Handler(store, devConfig(), keyspacetest.New())
 		if rec := call(t, handler, http.MethodPatch, path, "", `{}`); rec.Code != http.StatusInternalServerError {
 			t.Errorf("%s unwritable: status = %d, want 500", name, rec.Code)
 		}
@@ -316,7 +316,7 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 // ─── Methods ──────────────────────────────────────────────────────────────────
 
 func TestMethodsThatAreNotAllowed(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct{ method, path string }{
 		"POST to rest config":       {http.MethodPost, "/config/rest"},
@@ -360,7 +360,7 @@ func TestCredentialStatusPerMode(t *testing.T) {
 		"self-host with no password": {&config.Config{Mode: "standalone", AllowSecretReadback: true}, "self_host", false},
 		"local":                      {&config.Config{Mode: "dev"}, "local", true},
 	} {
-		handler, _ := api(t, tc.cfg, valkeytest.New())
+		handler, _ := api(t, tc.cfg, keyspacetest.New())
 		rec := call(t, handler, http.MethodGet, "/database/credentials/status", serviceKey, "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
@@ -383,7 +383,7 @@ func TestCredentialStatusPerMode(t *testing.T) {
 // is gone.
 func TestTheManagedPasswordIsShownOnce(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	// Nothing has been generated yet.
 	rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
@@ -436,7 +436,7 @@ func TestTheManagedPasswordIsShownOnce(t *testing.T) {
 // not what the new first-view returns.
 func TestRotatingTwice(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	reveal := func() string {
 		t.Helper()
@@ -465,7 +465,7 @@ func TestRotatingTwice(t *testing.T) {
 // password it is refused rather than half done.
 func TestRotationIsManagedModeOnly(t *testing.T) {
 	for _, mode := range []string{"dev", "standalone"} {
-		handler, _ := api(t, &config.Config{Mode: mode, ServiceRoleKey: serviceKey}, valkeytest.New())
+		handler, _ := api(t, &config.Config{Mode: mode, ServiceRoleKey: serviceKey}, keyspacetest.New())
 		rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
 		if rec.Code != http.StatusNotImplemented {
 			t.Errorf("%s: status = %d, want 501", mode, rec.Code)
@@ -484,7 +484,7 @@ func TestSelfHostFirstView(t *testing.T) {
 		"readback disabled":  {&config.Config{Mode: "standalone", PostgresPassword: "pw"}, http.StatusForbidden},
 		"nothing configured": {&config.Config{Mode: "standalone", AllowSecretReadback: true}, http.StatusNotFound},
 	} {
-		handler, _ := api(t, tc.cfg, valkeytest.New())
+		handler, _ := api(t, tc.cfg, keyspacetest.New())
 		rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
 		if rec.Code != tc.want {
 			t.Errorf("%s: status = %d, want %d (%s)", name, rec.Code, tc.want, rec.Body.String())
@@ -502,7 +502,7 @@ func TestLocalFirstView(t *testing.T) {
 		"a configured password": {&config.Config{Mode: "dev", PostgresPassword: "mine"}, "mine"},
 		"the local default":     {&config.Config{Mode: "dev"}, "postgres"},
 	} {
-		handler, _ := api(t, tc.cfg, valkeytest.New())
+		handler, _ := api(t, tc.cfg, keyspacetest.New())
 		rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d", name, rec.Code)
@@ -523,8 +523,8 @@ func TestLocalFirstView(t *testing.T) {
 // set. Answering "pending" invites an operator to rotate a password that is
 // already in use.
 func TestACacheThatWillNotAnswerIsNotPending(t *testing.T) {
-	cache := valkeytest.New()
-	cache.GetErr = valkeytest.ErrFailed
+	cache := keyspacetest.New()
+	cache.GetErr = keyspacetest.ErrFailed
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
 	handler, _ := api(t, cfg, cache)
 
@@ -543,7 +543,7 @@ func TestACacheThatWillNotAnswerIsNotPending(t *testing.T) {
 // With no cache at all there is nowhere to keep a managed password, which is a
 // misconfiguration rather than a tenant with none.
 func TestManagedModeWithNoCache(t *testing.T) {
-	handler, _ := api(t, &config.Config{Mode: "managed"}, valkey.Unavailable())
+	handler, _ := api(t, &config.Config{Mode: "managed"}, keyspace.Unavailable())
 
 	rec := call(t, handler, http.MethodGet, "/database/credentials/status", serviceKey, "")
 	if rec.Code != http.StatusInternalServerError {
@@ -553,7 +553,7 @@ func TestManagedModeWithNoCache(t *testing.T) {
 
 // Metadata that will not parse is reported, not treated as a fresh tenant.
 func TestCredentialMetadataThatWillNotParse(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.Put("tenant:default:dbcred:meta", []byte("{not json"), 0)
 	handler, _ := api(t, &config.Config{Mode: "managed"}, cache)
 
@@ -565,8 +565,8 @@ func TestCredentialMetadataThatWillNotParse(t *testing.T) {
 
 // A write that fails must not leave the caller thinking a rotation happened.
 func TestARotationThatCannotBeStored(t *testing.T) {
-	cache := valkeytest.New()
-	cache.SetErr = valkeytest.ErrFailed
+	cache := keyspacetest.New()
+	cache.SetErr = keyspacetest.ErrFailed
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t), ServiceRoleKey: serviceKey}, cache)
 
 	rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
@@ -670,7 +670,7 @@ func TestASecretThatWillNotDecode(t *testing.T) {
 // A stored secret that is not JSON is reported rather than read as an empty
 // one, which would decrypt to nothing and be handed out as the password.
 func TestAStoredSecretThatIsNotJSON(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.Put("tenant:default:dbcred:secret:v1", []byte("{not json"), 0)
 
 	if _, err := loadManagedSecret(context.Background(), cache, kek(t), "default", 1); err == nil {
@@ -718,7 +718,7 @@ func TestTenantRef(t *testing.T) {
 // Two tenants rotate independently.
 func TestTwoTenantsDoNotShareAPassword(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	reveal := func(tenant string) string {
 		t.Helper()
@@ -752,7 +752,7 @@ func TestTwoTenantsDoNotShareAPassword(t *testing.T) {
 // ─── The cache API ────────────────────────────────────────────────────────────
 
 // storedEntry writes a cache entry the admin API will list.
-func storedEntry(t *testing.T, cache *valkeytest.Client, key, table string) {
+func storedEntry(t *testing.T, cache *keyspacetest.Client, key, table string) {
 	t.Helper()
 	raw, err := json.Marshal(restcache.Entry{
 		StatusCode: http.StatusOK,
@@ -770,7 +770,7 @@ func storedEntry(t *testing.T, cache *valkeytest.Client, key, table string) {
 }
 
 func TestListingAndFlushingTheCache(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"one", "posts")
 	storedEntry(t, cache, prefix+"two", "comments")
@@ -823,7 +823,7 @@ func TestListingAndFlushingTheCache(t *testing.T) {
 }
 
 func TestGettingAndDeletingOneEntry(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	key := prefix + "one"
 	storedEntry(t, cache, key, "posts")
@@ -856,7 +856,7 @@ func TestGettingAndDeletingOneEntry(t *testing.T) {
 // A body that is not JSON is still previewable, and a long one is truncated
 // rather than returned whole.
 func TestTheBodyPreview(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	key := restcache.RestKeyPrefix("local") + "big"
 	raw, err := json.Marshal(restcache.Entry{
 		StatusCode: http.StatusOK,
@@ -885,7 +885,7 @@ func TestTheBodyPreview(t *testing.T) {
 // A key outside the tenant's prefix is refused, or one tenant's admin API
 // reads another's cached rows.
 func TestAKeyOutsideTheTenantIsRefused(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	other := restcache.RestKeyPrefix("someone-else") + "one"
 	storedEntry(t, cache, other, "posts")
 	handler, _ := api(t, devConfig(), cache)
@@ -900,7 +900,7 @@ func TestAKeyOutsideTheTenantIsRefused(t *testing.T) {
 }
 
 func TestCacheEntryKeyRefusals(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct {
 		path string
@@ -921,7 +921,7 @@ func TestCacheEntryKeyRefusals(t *testing.T) {
 }
 
 func TestAnEntryThatIsNotThere(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 	key := restcache.RestKeyPrefix("local") + "ghost"
 
 	rec := call(t, handler, http.MethodGet, "/cache/entries/"+CacheKeyParam(key), "", "")
@@ -933,7 +933,7 @@ func TestAnEntryThatIsNotThere(t *testing.T) {
 // An entry that will not decode is skipped in a listing — one bad entry must
 // not hide the rest — but reported when asked for directly.
 func TestACorruptEntry(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"good", "posts")
 	cache.Put(prefix+"bad", []byte("{not json"), 60)
@@ -959,7 +959,7 @@ func TestACorruptEntry(t *testing.T) {
 // The listing is bounded and hands back a cursor, so a tenant with more entries
 // than one page is paged rather than truncated silently.
 func TestTheListingIsPagedByCursor(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 5; i++ {
 		storedEntry(t, cache, prefix+string(rune('a'+i)), "posts")
@@ -982,7 +982,7 @@ func TestTheListingIsPagedByCursor(t *testing.T) {
 // A limit outside the bounds is a mistake, not a request to return everything
 // or nothing.
 func TestTheListingLimitIsBounded(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 3; i++ {
 		storedEntry(t, cache, prefix+string(rune('a'+i)), "posts")
@@ -1008,23 +1008,23 @@ func TestTheListingLimitIsBounded(t *testing.T) {
 func TestTheCacheAPIReportsAFailingCache(t *testing.T) {
 	prefix := restcache.RestKeyPrefix("local")
 
-	scanFails := valkeytest.New()
-	scanFails.ScanErr = valkeytest.ErrFailed
+	scanFails := keyspacetest.New()
+	scanFails.ScanErr = keyspacetest.ErrFailed
 
-	getFails := valkeytest.New()
+	getFails := keyspacetest.New()
 	storedEntry(t, getFails, prefix+"one", "posts")
-	getFails.GetErr = valkeytest.ErrFailed
+	getFails.GetErr = keyspacetest.ErrFailed
 
-	ttlFails := valkeytest.New()
+	ttlFails := keyspacetest.New()
 	storedEntry(t, ttlFails, prefix+"one", "posts")
-	ttlFails.TTLErr = valkeytest.ErrFailed
+	ttlFails.TTLErr = keyspacetest.ErrFailed
 
-	delFails := valkeytest.New()
+	delFails := keyspacetest.New()
 	storedEntry(t, delFails, prefix+"one", "posts")
-	delFails.DelErr = valkeytest.ErrFailed
+	delFails.DelErr = keyspacetest.ErrFailed
 
 	for name, tc := range map[string]struct {
-		cache  *valkeytest.Client
+		cache  *keyspacetest.Client
 		method string
 		path   string
 	}{
@@ -1048,7 +1048,7 @@ func TestTheCacheAPIReportsAFailingCache(t *testing.T) {
 // than deleting it: removing an entry without knowing which table it belongs to
 // would flush more than was asked for.
 func TestAFlushByTableSkipsWhatItCannotRead(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"one", "posts")
 	cache.Put(prefix+"unreadable", []byte("{not json"), 60)
@@ -1065,14 +1065,14 @@ func TestAFlushByTableSkipsWhatItCannotRead(t *testing.T) {
 // With no cache configured the routes exist and say so, rather than 404ing as
 // though the admin API did not have them.
 func TestTheCacheAPIWithNoCacheConfigured(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkey.Unavailable())
+	handler, _ := api(t, devConfig(), keyspace.Unavailable())
 
 	for _, path := range []string{"/cache", "/cache/entries/abc"} {
 		rec := call(t, handler, http.MethodGet, path, "", "")
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s: status = %d, want 503", path, rec.Code)
 		}
-		if got := errorOf(t, rec); got != "valkey not configured" {
+		if got := errorOf(t, rec); got != "keyspace not configured" {
 			t.Errorf("%s: error = %q", path, got)
 		}
 	}
@@ -1082,7 +1082,7 @@ func TestTheCacheAPIWithNoCacheConfigured(t *testing.T) {
 // and on the config fields that would enable it.
 func TestATenantWithoutTheCache(t *testing.T) {
 	disabled := false
-	cache := valkeytest.New().WithTenant("proj-1", &valkey.TenantConfig{RestCacheEnabled: &disabled})
+	cache := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &disabled})
 	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
 	handler, _ := api(t, cfg, cache)
 
@@ -1126,7 +1126,7 @@ func TestTenantCachePrefix(t *testing.T) {
 
 // The key a caller sends back has to be the one the listing gave them.
 func TestCacheKeyParamRoundTrips(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	key := restcache.RestKeyPrefix("local") + "one"
 	storedEntry(t, cache, key, "posts")
 	handler, _ := api(t, devConfig(), cache)
@@ -1150,7 +1150,7 @@ func TestCacheKeyParamRoundTrips(t *testing.T) {
 
 // An entry route takes only a read and a delete.
 func TestAnUnsupportedMethodOnOneEntry(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 	key := restcache.RestKeyPrefix("local") + "one"
 
 	rec := call(t, handler, http.MethodPatch, "/cache/entries/"+CacheKeyParam(key), "", "")
@@ -1163,7 +1163,7 @@ func TestAnUnsupportedMethodOnOneEntry(t *testing.T) {
 // failing the listing, and left alone by a flush narrowed to one table: it is
 // already gone, and nothing can say which table it was.
 func TestAnEntryThatVanishesMidListing(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"live", "posts")
 	// The scan sees the key and the read does not, which is what expiring
@@ -1193,7 +1193,7 @@ func TestAnEntryThatVanishesMidListing(t *testing.T) {
 // A flush walks every page, or a tenant with more entries than one scan returns
 // keeps some of them.
 func TestAFlushWalksEveryPage(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.ScanPageSize = 2
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 7; i++ {
@@ -1212,7 +1212,7 @@ func TestAFlushWalksEveryPage(t *testing.T) {
 // And a listing pages too, handing back a cursor that continues where it left
 // off.
 func TestAListingPagesWithACursor(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.ScanPageSize = 2
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 5; i++ {
@@ -1250,7 +1250,7 @@ func TestAListingPagesWithACursor(t *testing.T) {
 // Metadata a previous version wrote without these fields still reads, rather
 // than presenting a tenant with no status and generation zero.
 func TestCredentialMetadataIsNormalised(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.Put("tenant:default:dbcred:meta", []byte(`{"status":"","generation":0}`), 0)
 	handler, _ := api(t, &config.Config{Mode: "managed"}, cache)
 
@@ -1270,7 +1270,7 @@ func TestCredentialMetadataIsNormalised(t *testing.T) {
 // A first view that reveals the password and then cannot record that it did
 // must report, or the next caller is shown it again.
 func TestAFirstViewThatCannotRecordItself(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}, cache)
 
 	if rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, ""); rec.Code != http.StatusOK {
@@ -1278,7 +1278,7 @@ func TestAFirstViewThatCannotRecordItself(t *testing.T) {
 	}
 
 	// The next write is the one that records the view as consumed.
-	cache.SetErr = valkeytest.ErrFailed
+	cache.SetErr = keyspacetest.ErrFailed
 	rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
@@ -1291,7 +1291,7 @@ func TestAFirstViewThatCannotRecordItself(t *testing.T) {
 // A rotation that stores the new secret and then cannot record it must report:
 // the caller would otherwise believe the old password still works.
 func TestARotationThatCannotRecordItself(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	// The secret write succeeds; the metadata write after it does not.
 	cache.SetErrAfter = 1
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}, cache)
@@ -1305,7 +1305,7 @@ func TestARotationThatCannotRecordItself(t *testing.T) {
 // The metadata says the password is there and the ciphertext is not, which is
 // a store someone has edited. Reported rather than answered with nothing.
 func TestAFirstViewWhoseSecretIsGone(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}, cache)
 
 	if rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, ""); rec.Code != http.StatusOK {
@@ -1324,8 +1324,8 @@ func TestAFirstViewWhoseSecretIsGone(t *testing.T) {
 // A read that fails is not a secret that is not there, and the difference is
 // what stops an operator rotating over a password still in use.
 func TestASecretThatCannotBeRead(t *testing.T) {
-	cache := valkeytest.New()
-	cache.GetErr = valkeytest.ErrFailed
+	cache := keyspacetest.New()
+	cache.GetErr = keyspacetest.ErrFailed
 
 	if _, err := loadManagedSecret(context.Background(), cache, kek(t), "default", 1); err == nil {
 		t.Error("want an error")
@@ -1337,7 +1337,7 @@ func TestASecretThatCannotBeRead(t *testing.T) {
 // A key the deployment configured badly stops a rotation rather than storing
 // something nothing can decrypt.
 func TestARotationWithAnUnusableKey(t *testing.T) {
-	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: "not-a-key"}, valkeytest.New())
+	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: "not-a-key"}, keyspacetest.New())
 
 	rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
 	if rec.Code != http.StatusInternalServerError {
@@ -1353,13 +1353,13 @@ func TestARotationWithAnUnusableKey(t *testing.T) {
 func TestARecordThatCannotBeEncoded(t *testing.T) {
 	original := marshalJSON
 	t.Cleanup(func() { marshalJSON = original })
-	marshalJSON = func(any) ([]byte, error) { return nil, valkeytest.ErrFailed }
+	marshalJSON = func(any) ([]byte, error) { return nil, keyspacetest.ErrFailed }
 
 	ctx := context.Background()
-	if err := saveMeta(ctx, valkeytest.New(), "default", dbCredMeta{}); err == nil {
+	if err := saveMeta(ctx, keyspacetest.New(), "default", dbCredMeta{}); err == nil {
 		t.Error("saveMeta: want an error")
 	}
-	if err := saveManagedSecret(ctx, valkeytest.New(), kek(t), "default", 1, "pw"); err == nil {
+	if err := saveManagedSecret(ctx, keyspacetest.New(), kek(t), "default", 1, "pw"); err == nil {
 		t.Error("saveManagedSecret: want an error")
 	}
 }

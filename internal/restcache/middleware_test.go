@@ -11,8 +11,8 @@ import (
 
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/data/valkey/valkeytest"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 )
 
 // The cache had no test that ran a request through it. What it does with one is
@@ -68,8 +68,8 @@ type staticStore struct {
 func (s staticStore) Get(context.Context) (apiconfig.ApiConfig, error) { return s.cfg, s.err }
 func (s staticStore) Set(context.Context, apiconfig.ApiConfig) error   { return nil }
 
-// deps builds a cache over this Valkey and api config.
-func deps(cache valkey.Client, store apiconfig.Store) Deps {
+// deps builds a cache over this keyspace and api config.
+func deps(cache keyspace.Client, store apiconfig.Store) Deps {
 	return Deps{
 		Store:      store,
 		Cache:      cache,
@@ -103,7 +103,7 @@ func serve(d Deps, next http.Handler, req *http.Request) *httptest.ResponseRecor
 
 // The second identical request is answered from the cache, and says so.
 func TestASecondRequestIsAHit(t *testing.T) {
-	cache, next := valkeytest.New(), &upstream{}
+	cache, next := keyspacetest.New(), &upstream{}
 	d := deps(cache, staticStore{cfg: cachingConfig(false)})
 
 	first := serve(d, next, request("/posts", "max-age=30"))
@@ -136,9 +136,9 @@ func TestASecondRequestIsAHit(t *testing.T) {
 }
 
 // A stored entry older than the TTL the caller asked for is not served to them,
-// even though it is still in Valkey for a caller who would accept it.
+// even though it is still in the keyspace for a caller who would accept it.
 func TestAnEntryOlderThanTheAskedForTTLIsNotServed(t *testing.T) {
-	cache, next := valkeytest.New(), &upstream{}
+	cache, next := keyspacetest.New(), &upstream{}
 	d := deps(cache, staticStore{cfg: cachingConfig(false)})
 
 	serve(d, next, request("/posts", "max-age=30"))
@@ -179,7 +179,7 @@ func TestNothingIsCachedUnlessBothSidesAskedForIt(t *testing.T) {
 		"an RPC call":                  {cachingConfig(false), "/rpc/do_thing", "max-age=30"},
 		"the server allows no TTL":     {apiconfig.DefaultApiConfig(), "/posts", "max-age=30"},
 	} {
-		cache, next := valkeytest.New(), &upstream{}
+		cache, next := keyspacetest.New(), &upstream{}
 		rec := serve(deps(cache, staticStore{cfg: tc.cfg}), next, request(tc.path, tc.directive))
 
 		if got := rec.Header().Get(statusHeader); got != "" {
@@ -197,7 +197,7 @@ func TestNothingIsCachedUnlessBothSidesAskedForIt(t *testing.T) {
 // A write is never cached, and never even considered.
 func TestOnlyReadsAreCached(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete} {
-		cache, next := valkeytest.New(), &upstream{}
+		cache, next := keyspacetest.New(), &upstream{}
 		req := httptest.NewRequest(method, "/posts", strings.NewReader("{}"))
 		req.Header.Set("X-Supatype-Cache", "max-age=30")
 
@@ -213,7 +213,7 @@ func TestOnlyReadsAreCached(t *testing.T) {
 
 // A HEAD is cacheable but must not carry a body, on either the miss or the hit.
 func TestHEADIsCachedWithoutABody(t *testing.T) {
-	cache, next := valkeytest.New(), &upstream{}
+	cache, next := keyspacetest.New(), &upstream{}
 	d := deps(cache, staticStore{cfg: cachingConfig(false)})
 
 	head := func() *httptest.ResponseRecorder {
@@ -244,7 +244,7 @@ func TestAResponseThatMustNotBeKept(t *testing.T) {
 		"one that sets a cookie": {headers: map[string]string{"Set-Cookie": "session=abc"}},
 		"a body over the cap":    {body: strings.Repeat("x", maxCacheBodyBytes+1)},
 	} {
-		cache := valkeytest.New()
+		cache := keyspacetest.New()
 		rec := serve(deps(cache, staticStore{cfg: cachingConfig(false)}), next, request("/posts", "max-age=30"))
 
 		if got := rec.Header().Get(statusHeader); got != "MISS" {
@@ -262,7 +262,7 @@ func TestAResponseThatMustNotBeKept(t *testing.T) {
 // 206 is cacheable, because a Range request's answer is keyed by its Range
 // header.
 func TestAPartialResponseIsCached(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	next := &upstream{status: http.StatusPartialContent}
 	serve(deps(cache, staticStore{cfg: cachingConfig(false)}), next, request("/posts", "max-age=30"))
 
@@ -276,8 +276,8 @@ func TestAPartialResponseIsCached(t *testing.T) {
 // BYPASS means "you asked and it did not happen", which is different from MISS.
 // A caller watching the header can tell a cold cache from a broken one.
 func TestBypassIsReportedWhenTheCallerAskedAndCouldNotBeServed(t *testing.T) {
-	failing := valkeytest.New()
-	failing.GetErr = valkeytest.ErrFailed
+	failing := keyspacetest.New()
+	failing.GetErr = keyspacetest.ErrFailed
 
 	for name, tc := range map[string]struct {
 		deps Deps
@@ -299,8 +299,8 @@ func TestBypassIsReportedWhenTheCallerAskedAndCouldNotBeServed(t *testing.T) {
 // A cache that reads but will not write is a bypass, not a miss: nothing was
 // stored, so the next request will not be a hit either.
 func TestAFailedStoreIsABypass(t *testing.T) {
-	cache := valkeytest.New()
-	cache.SetErr = valkeytest.ErrFailed
+	cache := keyspacetest.New()
+	cache.SetErr = keyspacetest.ErrFailed
 
 	rec := serve(deps(cache, staticStore{cfg: cachingConfig(false)}), &upstream{}, request("/posts", "max-age=30"))
 	if got := rec.Header().Get(statusHeader); got != "BYPASS" {
@@ -313,7 +313,7 @@ func TestAFailedStoreIsABypass(t *testing.T) {
 
 // An entry that will not decode is a broken cache, not an empty one.
 func TestACorruptEntryIsABypass(t *testing.T) {
-	cache, next := valkeytest.New(), &upstream{}
+	cache, next := keyspacetest.New(), &upstream{}
 	d := deps(cache, staticStore{cfg: cachingConfig(false)})
 
 	serve(d, next, request("/posts", "max-age=30"))
@@ -332,8 +332,8 @@ func TestACorruptEntryIsABypass(t *testing.T) {
 // it does nothing at all — and says nothing, because the caller's request was
 // not refused, it was simply not cached.
 func TestAnUnreadableConfigCachesNothingQuietly(t *testing.T) {
-	cache := valkeytest.New()
-	d := deps(cache, staticStore{err: valkeytest.ErrFailed})
+	cache := keyspacetest.New()
+	d := deps(cache, staticStore{err: keyspacetest.ErrFailed})
 
 	rec := serve(d, &upstream{}, request("/posts", "max-age=30"))
 	if got := rec.Header().Get(statusHeader); got != "" {
@@ -357,7 +357,7 @@ func TestManagedModeHonoursTheTenantGrant(t *testing.T) {
 		"the tenant does not":            {&disabled, "BYPASS"},
 		"the tenant config says nothing": {nil, "BYPASS"},
 	} {
-		cache := valkeytest.New().WithTenant("proj-1", &valkey.TenantConfig{RestCacheEnabled: tc.tenantCache})
+		cache := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: tc.tenantCache})
 		d := deps(cache, staticStore{cfg: cachingConfig(false)})
 		d.Config = &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", JWTSecret: "secret"}
 
@@ -416,7 +416,7 @@ func TestPublicScopeIsOnlyGrantedWhenItIsSafe(t *testing.T) {
 		},
 		"there is no classification to consult": {true, nil, false},
 	} {
-		cache, next := valkeytest.New(), &upstream{}
+		cache, next := keyspacetest.New(), &upstream{}
 		d := deps(cache, staticStore{cfg: cachingConfig(tc.allowPublic)})
 		d.IdentityScoped = tc.scoped
 
@@ -444,7 +444,7 @@ func TestTheStoredEntryRecordsItsScope(t *testing.T) {
 		"a per-caller entry": {"max-age=30", "user"},
 		"a shared entry":     {"max-age=30, public", "public"},
 	} {
-		cache := valkeytest.New()
+		cache := keyspacetest.New()
 		d := deps(cache, staticStore{cfg: cachingConfig(true)})
 		serve(d, &upstream{}, request("/posts", tc.directive))
 
@@ -472,7 +472,7 @@ func TestTheStoredEntryRecordsItsScope(t *testing.T) {
 // Two callers never share a per-caller entry, which is the default and the
 // thing that must not regress.
 func TestTwoCallersDoNotShareAPerCallerEntry(t *testing.T) {
-	cache, next := valkeytest.New(), &upstream{}
+	cache, next := keyspacetest.New(), &upstream{}
 	d := deps(cache, staticStore{cfg: cachingConfig(false)})
 
 	for _, token := range []string{"token-a", "token-b"} {
@@ -504,7 +504,7 @@ func TestTheKeyVariesWithEverythingThatChangesTheAnswer(t *testing.T) {
 	}
 
 	for name, vary := range variants {
-		cache, next := valkeytest.New(), &upstream{}
+		cache, next := keyspacetest.New(), &upstream{}
 		d := deps(cache, staticStore{cfg: cachingConfig(false)})
 
 		serve(d, next, base())
@@ -528,7 +528,7 @@ func TestTheKeyVariesWithTheResolvedSchemaAndRowCap(t *testing.T) {
 		"a different schema":  {[]string{"public", "other"}, []string{"", ""}},
 		"a different row cap": {[]string{"public", "public"}, []string{"", "10"}},
 	} {
-		cache, next := valkeytest.New(), &upstream{}
+		cache, next := keyspacetest.New(), &upstream{}
 		var call int
 		d := deps(cache, staticStore{cfg: cachingConfig(false)})
 		d.SchemaFor = func(*http.Request) string { return tc.schemas[call] }
@@ -553,7 +553,7 @@ func TestTheUpstreamsHeadersAreRelayed(t *testing.T) {
 		"Content-Range":            "0-0/1",
 		"X-Supatype-Masked-Fields": "ssn=identity",
 	}}
-	rec := serve(deps(valkeytest.New(), staticStore{cfg: cachingConfig(false)}), next, request("/posts", "max-age=30"))
+	rec := serve(deps(keyspacetest.New(), staticStore{cfg: cachingConfig(false)}), next, request("/posts", "max-age=30"))
 
 	if got := rec.Header().Get("Content-Range"); got != "0-0/1" {
 		t.Errorf("Content-Range = %q", got)
@@ -566,7 +566,7 @@ func TestTheUpstreamsHeadersAreRelayed(t *testing.T) {
 // A request that is not cacheable at all still reaches the upstream untouched.
 func TestANonCacheableRequestIsUntouched(t *testing.T) {
 	next := &upstream{status: http.StatusTeapot, body: "brewing"}
-	rec := serve(deps(valkeytest.New(), staticStore{cfg: apiconfig.DefaultApiConfig()}), next, request("/posts", ""))
+	rec := serve(deps(keyspacetest.New(), staticStore{cfg: apiconfig.DefaultApiConfig()}), next, request("/posts", ""))
 
 	if rec.Code != http.StatusTeapot || rec.Body.String() != "brewing" {
 		t.Errorf("got %d %q", rec.Code, rec.Body.String())

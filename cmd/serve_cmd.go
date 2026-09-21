@@ -31,7 +31,7 @@ var serveCmd = cobra.Command{
 
 func serve(ctx context.Context) {
 	// Build the full server surface + background workers. gateway.New performs
-	// the bootstrap (authCfg, DB, API, manifest, Valkey, Deno, mux); this binary
+	// the bootstrap (authCfg, DB, API, manifest, keyspace, Deno, mux); this binary
 	// owns the listener/TLS/graceful-shutdown loop below.
 	gateway.ConfigFile = configFile
 	gateway.WatchDir = watchDir

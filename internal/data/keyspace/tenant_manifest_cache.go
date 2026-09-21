@@ -1,4 +1,4 @@
-package valkey
+package keyspace
 
 import (
 	"context"

@@ -10,7 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
 // statusHeader tells the caller what the cache did: HIT, MISS, or BYPASS when
@@ -27,7 +27,7 @@ type IdentityScoped func(ctx context.Context) (map[string]bool, bool)
 // Deps is what the cache needs to decide and to store.
 type Deps struct {
 	Store          apiconfig.Store
-	Cache          valkey.Client
+	Cache          keyspace.Client
 	Config         *config.Config
 	SchemaFor      func(*http.Request) string
 	MaxRowsFor     func(*http.Request) string
@@ -42,7 +42,7 @@ type plan struct {
 	scope string
 }
 
-// Middleware caches opt-in GET/HEAD /rest/v1 responses in Valkey.
+// Middleware caches opt-in GET/HEAD /rest/v1 responses in the keyspace.
 func Middleware(d Deps, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		p, cacheable, bypassed := d.planFor(req)
@@ -198,7 +198,7 @@ func (d Deps) serveAndStore(w http.ResponseWriter, req *http.Request, next http.
 			RawQuery:    req.URL.RawQuery,
 		}
 		if err := storeEntry(req.Context(), d.Cache, p.key, entry, p.ttl); err != nil {
-			logrus.WithError(err).Warn("restcache: valkey SET failed")
+			logrus.WithError(err).Warn("restcache: keyspace SET failed")
 			label = "BYPASS"
 		}
 		w.Header().Set("Vary", VaryHeader(req))
@@ -224,12 +224,12 @@ func storable(rec *httptest.ResponseRecorder) bool {
 // tryServeHit answers from the cache if it can.
 //
 // served says the response has been written. ok says the cache itself was
-// usable: a Valkey that will not answer, or an entry that will not decode, is
+// usable: a keyspace that will not answer, or an entry that will not decode, is
 // a bypass rather than a miss, because a miss implies the cache is working.
-func tryServeHit(ctx context.Context, vk valkey.Client, w http.ResponseWriter, req *http.Request, key string, ttl int) (served, ok bool) {
+func tryServeHit(ctx context.Context, vk keyspace.Client, w http.ResponseWriter, req *http.Request, key string, ttl int) (served, ok bool) {
 	raw, err := vk.GetBytes(ctx, key)
 	if err != nil {
-		logrus.WithError(err).Warn("restcache: valkey GET failed")
+		logrus.WithError(err).Warn("restcache: keyspace GET failed")
 		return false, false
 	}
 	if raw == nil {
@@ -258,7 +258,7 @@ func tryServeHit(ctx context.Context, vk valkey.Client, w http.ResponseWriter, r
 	return true, true
 }
 
-func storeEntry(ctx context.Context, vk valkey.Client, key string, entry Entry, ttl int) error {
+func storeEntry(ctx context.Context, vk keyspace.Client, key string, entry Entry, ttl int) error {
 	raw, err := marshalEntry(entry)
 	if err != nil {
 		return err

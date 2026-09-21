@@ -1,4 +1,4 @@
-package valkeytest
+package keyspacetest
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
 // Every package that tests against a cache tests against this one, so what it
@@ -142,7 +142,7 @@ func TestTheTTLAnswers(t *testing.T) {
 
 // Tenant configuration, and the sets the MAU tally is counted in.
 func TestTenantsAndSets(t *testing.T) {
-	c := New().WithTenant("proj-a", &valkey.TenantConfig{Schema: "app"})
+	c := New().WithTenant("proj-a", &keyspace.TenantConfig{Schema: "app"})
 	ctx := t.Context()
 
 	cfg, err := c.GetTenantConfig(ctx, "proj-a")

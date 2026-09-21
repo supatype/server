@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -41,7 +41,7 @@ type statusResponse struct {
 	Message           string `json:"message,omitempty"`
 }
 
-func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerFunc {
+func credentialStatusHandler(cfg *config.Config, vc keyspace.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mode := cfg.Mode
 		switch mode {
@@ -79,7 +79,7 @@ func credentialStatusHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 	}
 }
 
-func credentialFirstViewHandler(cfg *config.Config, vc valkey.Client) http.HandlerFunc {
+func credentialFirstViewHandler(cfg *config.Config, vc keyspace.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch cfg.Mode {
 		case "managed":
@@ -129,7 +129,7 @@ func credentialFirstViewHandler(cfg *config.Config, vc valkey.Client) http.Handl
 	}
 }
 
-func credentialRotateHandler(cfg *config.Config, vc valkey.Client) http.HandlerFunc {
+func credentialRotateHandler(cfg *config.Config, vc keyspace.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Mode != "managed" {
 			writeErr(w, http.StatusNotImplemented, "rotation is managed by your runtime/environment in this mode")
@@ -170,9 +170,9 @@ func credentialRotateHandler(cfg *config.Config, vc valkey.Client) http.HandlerF
 // only note of which generation a tenant's password belongs to.
 var marshalJSON = json.Marshal
 
-func loadMeta(ctx context.Context, vc valkey.Client, ref string) (dbCredMeta, error) {
+func loadMeta(ctx context.Context, vc keyspace.Client, ref string) (dbCredMeta, error) {
 	if !vc.Available() {
-		return dbCredMeta{}, valkey.ErrUnavailable
+		return dbCredMeta{}, keyspace.ErrUnavailable
 	}
 	data, err := vc.GetBytes(ctx, metaKey(ref))
 	if err != nil {
@@ -196,7 +196,7 @@ func loadMeta(ctx context.Context, vc valkey.Client, ref string) (dbCredMeta, er
 	return meta, nil
 }
 
-func saveMeta(ctx context.Context, vc valkey.Client, ref string, meta dbCredMeta) error {
+func saveMeta(ctx context.Context, vc keyspace.Client, ref string, meta dbCredMeta) error {
 	payload, err := marshalJSON(meta)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func saveMeta(ctx context.Context, vc valkey.Client, ref string, meta dbCredMeta
 	return vc.SetBytes(ctx, metaKey(ref), payload, 0)
 }
 
-func saveManagedSecret(ctx context.Context, vc valkey.Client, kekBase64, ref string, generation int, password string) error {
+func saveManagedSecret(ctx context.Context, vc keyspace.Client, kekBase64, ref string, generation int, password string) error {
 	secret, err := encryptManagedSecret(kekBase64, ref, generation, password)
 	if err != nil {
 		return err
@@ -216,7 +216,7 @@ func saveManagedSecret(ctx context.Context, vc valkey.Client, kekBase64, ref str
 	return vc.SetBytes(ctx, secretKey(ref, generation), data, 0)
 }
 
-func loadManagedSecret(ctx context.Context, vc valkey.Client, kekBase64, ref string, generation int) (string, error) {
+func loadManagedSecret(ctx context.Context, vc keyspace.Client, kekBase64, ref string, generation int) (string, error) {
 	data, err := vc.GetBytes(ctx, secretKey(ref, generation))
 	if err != nil {
 		return "", fmt.Errorf("read managed password for generation %d: %w", generation, err)

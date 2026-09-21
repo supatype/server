@@ -219,3 +219,72 @@ func TestKeyspaceAddressPrefersTheCurrentSpelling(t *testing.T) {
 		})
 	}
 }
+
+// The project keyspace address falls back to the platform one rather than to "",
+// which is what keeps a single-keyspace deployment working unchanged: set one
+// address and both halves resolve to it. Falling back to "" would switch every
+// existing deployment's response cache off on upgrade, silently.
+func TestProjectKeyspaceAddressFallsBackToTheKeyspaceAddress(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"nothing set", nil, ""},
+		{
+			"only one keyspace configured",
+			map[string]string{"SUPATYPE_KEYSPACE_ADDR": "db:6379"},
+			"db:6379",
+		},
+		{
+			"split",
+			map[string]string{
+				"SUPATYPE_KEYSPACE_ADDR":         "postgres-platform:6379",
+				"SUPATYPE_PROJECT_KEYSPACE_ADDR": "postgres:6379",
+			},
+			"postgres:6379",
+		},
+		{
+			"unprefixed spelling",
+			map[string]string{
+				"SUPATYPE_KEYSPACE_ADDR": "postgres-platform:6379",
+				"PROJECT_KEYSPACE_ADDR":  "postgres:6379",
+			},
+			"postgres:6379",
+		},
+		{
+			"prefixed beats unprefixed",
+			map[string]string{
+				"SUPATYPE_PROJECT_KEYSPACE_ADDR": "postgres:6379",
+				"PROJECT_KEYSPACE_ADDR":          "bare:6379",
+			},
+			"postgres:6379",
+		},
+		{
+			"whitespace does not mask the fallback",
+			map[string]string{
+				"SUPATYPE_KEYSPACE_ADDR":         "db:6379",
+				"SUPATYPE_PROJECT_KEYSPACE_ADDR": "   ",
+			},
+			"db:6379",
+		},
+		{
+			"the fallback follows the valkey-era spellings too",
+			map[string]string{"VALKEY_ADDR": "valkey:6379"},
+			"valkey:6379",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.ProjectKeyspaceAddress(); got != tc.want {
+				t.Errorf("ProjectKeyspaceAddress() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

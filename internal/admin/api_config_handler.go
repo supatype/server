@@ -49,29 +49,46 @@ func inRange(name string, value, low, high int) error {
 }
 
 // Handler returns a mux covering all /admin/v1 routes.
-// Mount it with r.Mount("/admin/v1", Handler(store, cfg, cache, stats)).
+// Mount it with r.Mount("/admin/v1", Handler(store, cfg, cache, platform, stats)).
+//
+// Two keyspaces, because the routes below want different ones. The cache routes
+// read and delete cached responses, which live in the project's own keyspace.
+// The credential routes read and write the KEK-wrapped managed password, whose
+// only copy is platform state — served from the project keyspace they would
+// report "no credentials" for a project that has them, and a rotation would
+// write the new secret somewhere the control plane will never look. Eligibility
+// is platform state too: it comes from the tenant configuration.
+//
+// On a single-keyspace deployment the caller passes the same client twice, which
+// is exactly what it was before the split.
 //
 // stats may be nil, which serves the cache-statistics route with an empty
 // report rather than removing it: a screen that asks for numbers should be told
 // there are none, not given a 404 to interpret.
-func Handler(store apiconfig.Store, cfg *config.Config, vc keyspace.Client, stats *restcache.Counter) http.Handler {
+func Handler(
+	store apiconfig.Store,
+	cfg *config.Config,
+	vc keyspace.Client,
+	platform keyspace.Client,
+	stats *restcache.Counter,
+) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, vc))
+	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, platform))
 	mux.HandleFunc("/config/graphql", graphQLConfigRoute(store))
 
-	mux.HandleFunc("/database/credentials/status", only(http.MethodGet, credentialStatusHandler(cfg, vc)))
-	mux.HandleFunc("/database/credentials/first-view", only(http.MethodPost, credentialFirstViewHandler(cfg, vc)))
-	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, vc)))
+	mux.HandleFunc("/database/credentials/status", only(http.MethodGet, credentialStatusHandler(cfg, platform)))
+	mux.HandleFunc("/database/credentials/first-view", only(http.MethodPost, credentialFirstViewHandler(cfg, platform)))
+	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, platform)))
 
-	mountCacheRoutes(mux, cfg, vc, stats)
+	mountCacheRoutes(mux, cfg, vc, platform, stats)
 
 	return RequireServiceRole(cfg, mux)
 }
 
 // ─── REST configuration ───────────────────────────────────────────────────────
 
-func restConfigRoute(store apiconfig.Store, cfg *config.Config, vc keyspace.Client) http.HandlerFunc {
+func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -81,7 +98,7 @@ func restConfigRoute(store apiconfig.Store, cfg *config.Config, vc keyspace.Clie
 			}
 			utilities.WriteJSON(w, http.StatusOK, api.Rest)
 		case http.MethodPatch:
-			patchRestConfig(w, r, store, cfg, vc)
+			patchRestConfig(w, r, store, cfg, tenants)
 		default:
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -96,7 +113,7 @@ type restPatch struct {
 	CacheTables *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 }
 
-func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, vc keyspace.Client) {
+func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, tenants keyspace.Client) {
 	var body restPatch
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -107,7 +124,7 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 	// are refused before anything is read or written. Checked against the
 	// server's configuration, not the stored API config.
 	if (body.CacheMaxTTL != nil || body.CacheTables != nil) &&
-		!restcache.ServerCacheOffered(r.Context(), cfg, vc, r) {
+		!restcache.ServerCacheOffered(r.Context(), cfg, tenants, r) {
 		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 			"error":   "rest_cache_not_available",
 			"message": "Server-side REST caching is included on paid Cloud plans and self-host.",

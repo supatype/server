@@ -41,7 +41,7 @@ type cacheEntryDetail struct {
 	BodyJSON    json.RawMessage `json:"body_json,omitempty"`
 }
 
-func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc keyspace.Client, stats *restcache.Counter) {
+func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc, platform keyspace.Client, stats *restcache.Counter) {
 	// Mounted before the availability check, and outside offeredOnly, because
 	// both of the cases those refuse are cases this route has something to say
 	// about. A free-tier project's report is how it is shown what its own
@@ -56,7 +56,7 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc keyspace.Client
 		return
 	}
 
-	mux.HandleFunc("/cache", offeredOnly(cfg, vc, func(w http.ResponseWriter, r *http.Request, prefix string) {
+	mux.HandleFunc("/cache", offeredOnly(cfg, platform, func(w http.ResponseWriter, r *http.Request, prefix string) {
 		switch r.Method {
 		case http.MethodGet:
 			listCacheEntries(w, r, vc, prefix)
@@ -67,7 +67,7 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc keyspace.Client
 		}
 	}))
 
-	mux.HandleFunc("/cache/entries/", offeredOnly(cfg, vc, func(w http.ResponseWriter, r *http.Request, prefix string) {
+	mux.HandleFunc("/cache/entries/", offeredOnly(cfg, platform, func(w http.ResponseWriter, r *http.Request, prefix string) {
 		key, ok := entryKey(w, r, prefix)
 		if !ok {
 			return
@@ -92,9 +92,13 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc keyspace.Client
 //
 // Both cache routes opened with the same two steps; the prefix is what keeps
 // one tenant's admin API from reaching another's entries.
-func offeredOnly(cfg *config.Config, vc keyspace.Client, next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+//
+// The client here is the one holding the tenant configuration, which is what
+// says whether the cache is offered — the entries themselves are read from the
+// project keyspace by the handler this wraps.
+func offeredOnly(cfg *config.Config, tenants keyspace.Client, next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !restcache.ServerCacheOffered(r.Context(), cfg, vc, r) {
+		if !restcache.ServerCacheOffered(r.Context(), cfg, tenants, r) {
 			cacheNotOffered(w, r)
 			return
 		}

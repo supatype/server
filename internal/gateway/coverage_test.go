@@ -1018,3 +1018,28 @@ func TestThePreviousCallbackReadsFromTheTenantsPostgREST(t *testing.T) {
 		t.Errorf("the fetch asked for schema %q, want the tenant's", seen)
 	}
 }
+
+// ─── the platform / project keyspace split ────────────────────────────────────
+
+// NewDeps must carry both clients, because the response cache needs both and for
+// different reasons: what it stores belongs to the project, while whether it may
+// store anything is read from the tenant config, which is platform state.
+func TestDepsCarryBothKeyspaces(t *testing.T) {
+	d := depsFor(t, &config.Config{Mode: "standalone"}, nil)
+	if d.Cache == nil {
+		t.Error("Cache must never be nil")
+	}
+	if d.PlatformCache == nil {
+		t.Error("PlatformCache must never be nil")
+	}
+}
+
+// With one address configured both fields resolve to the same client, which is
+// the self-host and dev shape. A test rather than a comment because this is what
+// keeps the pre-split deployment behaving identically.
+func TestOneAddressGivesBothHalvesTheSameClient(t *testing.T) {
+	d := depsFor(t, &config.Config{Mode: "standalone", KeyspaceAddr: ""}, nil)
+	if d.Cache != d.PlatformCache {
+		t.Error("with one keyspace configured, both halves should be the same client")
+	}
+}

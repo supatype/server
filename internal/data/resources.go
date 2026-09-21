@@ -58,7 +58,19 @@ type Resources struct {
 	// cache is reached through Cache, which is nil-safe in both directions: a nil
 	// Resources and an unset field both yield the unavailable client, so no
 	// consumer needs a nil check of its own.
+	//
+	// It is the *project's* keyspace: the REST response cache and nothing else.
 	cache keyspace.Client
+
+	// platform is the keyspace holding platform state — the tenant configuration
+	// the control plane publishes, the route manifest merged from it, the wrapped
+	// DB credentials, and the MAU day-sets. Reached through PlatformCache.
+	//
+	// When both addresses resolve to the same server this is the same client as
+	// cache, not a second connection to it. Two clients would double the
+	// connections for no benefit, and would make the ordinary single-keyspace
+	// deployment pay for a split it did not ask for.
+	platform keyspace.Client
 
 	// admin serves the Studio SQL runner and Studio membership. It is nil when
 	// no connection string was configured; reach it through AdminPool.
@@ -71,21 +83,45 @@ type Resources struct {
 
 // Open acquires the resources described by cfg.
 //
-// A keyspace that is configured but unreachable is fatal only in managed mode,
-// where the tenant manifest lives in it; elsewhere the caches degrade and the
-// service runs. A database that is merely absent is never fatal here: the
+// The platform keyspace being configured but unreachable is fatal in managed
+// mode, where the tenant manifest lives in it; elsewhere the caches degrade and
+// the service runs. A database that is merely absent is never fatal here: the
 // features that need it report ErrNoDatabase per request.
+//
+// The project keyspace is never fatal, in any mode. It holds cached responses,
+// so its absence costs latency and nothing else — and it usually lives in the
+// project's own Postgres, which may still be accepting connections when this pod
+// starts. Making it fatal would turn a cold start into a crashloop and take the
+// whole gateway down to protect a cache.
 func Open(ctx context.Context, cfg *config.Config) (*Resources, error) {
-	r := &Resources{cache: keyspace.Unavailable()}
+	r := &Resources{cache: keyspace.Unavailable(), platform: keyspace.Unavailable()}
 
-	if addr := cfg.KeyspaceAddress(); addr != "" {
-		client, err := openKeyspace(addr)
+	platformAddr := cfg.KeyspaceAddress()
+	if platformAddr != "" {
+		client, err := openKeyspace(platformAddr)
 		if err != nil {
 			managed := strings.TrimSpace(cfg.Mode) == "managed"
 			if managed {
 				return nil, fmt.Errorf("data: keyspace connect failed in managed mode: %w", err)
 			}
 			logrus.WithError(err).Warn("data: keyspace connect failed, caches will bypass")
+		} else {
+			r.platform = client
+			r.cache = client
+			r.onClose(func() error { client.Close(); return nil })
+		}
+	}
+
+	// Only when it names a different server. Equal addresses are the
+	// single-keyspace deployment, already served by the client above.
+	if addr := cfg.ProjectKeyspaceAddress(); addr != "" && addr != platformAddr {
+		client, err := openKeyspace(addr)
+		if err != nil {
+			// Deliberately not fatal, and logged at warn rather than error: the
+			// gateway serves every request it would have served, slower.
+			logrus.WithError(err).WithField("addr", addr).
+				Warn("data: project keyspace connect failed, response cache will bypass")
+			r.cache = keyspace.Unavailable()
 		} else {
 			r.cache = client
 			r.onClose(func() error { client.Close(); return nil })
@@ -122,12 +158,26 @@ func openAdminPool(_ context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Cache returns the keyspace client, never nil.
+// Cache returns the project keyspace client — the response cache — never nil.
 func (r *Resources) Cache() keyspace.Client {
 	if r == nil || r.cache == nil {
 		return keyspace.Unavailable()
 	}
 	return r.cache
+}
+
+// PlatformCache returns the platform keyspace client, never nil.
+//
+// Everything whose only copy is written by the control plane reads through this:
+// the tenant configuration, the merged route manifest, the wrapped DB
+// credentials, and the MAU day-sets. Reading any of those from the project
+// keyspace would find nothing there and mistake it for a tenant that was never
+// published.
+func (r *Resources) PlatformCache() keyspace.Client {
+	if r == nil || r.platform == nil {
+		return keyspace.Unavailable()
+	}
+	return r.platform
 }
 
 // AdminPool returns the pool used by the Studio SQL runner and Studio
@@ -176,5 +226,6 @@ func (r *Resources) Close() error {
 	r.closers = nil
 	r.admin = nil
 	r.cache = keyspace.Unavailable()
+	r.platform = keyspace.Unavailable()
 	return errors.Join(errs...)
 }

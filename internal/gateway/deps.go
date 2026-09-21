@@ -43,8 +43,20 @@ type Deps struct {
 	// APIStore is the on-disk API configuration the admin API edits and the REST
 	// mount reads.
 	APIStore apiconfig.Store
-	// Cache is never nil; see data.Resources.Cache.
+	// Cache is the project's keyspace — where cached responses are stored. Never
+	// nil; see data.Resources.Cache.
 	Cache keyspace.Client
+	// PlatformCache is the platform keyspace — where the tenant configuration and
+	// the wrapped DB credentials live. Never nil.
+	//
+	// Both are here because the response cache needs both and for different
+	// reasons: what it stores belongs to the project, while whether it is allowed
+	// to store anything at all is read from the tenant configuration, which is
+	// platform state. Handing it one client for both is the mistake this field
+	// exists to prevent — on a split deployment the tenant config simply is not in
+	// the project keyspace, and a miss there is indistinguishable from a tenant
+	// nobody ever published, which turns the cache off for every paid project.
+	PlatformCache keyspace.Client
 	// CacheStats counts what the response cache did, per table. It is the only
 	// source of that number: pg_keyspace counts per keyspace and worker, and
 	// the key it counts is opaque to it, so the table has to be counted here
@@ -79,18 +91,19 @@ func NewDeps(
 	sendEmailHook http.Handler,
 ) *Deps {
 	d := &Deps{
-		Config:       cfg,
-		ManifestFor:  manifestFor,
-		HealthProbes: healthProbes,
-		Auth:         authHandler,
-		Deno:         denoManager,
-		Version:      version,
-		Resources:    resources,
-		SendEmail:    sendEmailHook,
-		APIStore:     apiconfig.NewFileStore(cfg.ApiConfigPath),
-		Cache:        resources.Cache(),
-		CacheStats:   restcache.NewCounter(),
-		Baseline:     manifestFor(nil),
+		Config:        cfg,
+		ManifestFor:   manifestFor,
+		HealthProbes:  healthProbes,
+		Auth:          authHandler,
+		Deno:          denoManager,
+		Version:       version,
+		Resources:     resources,
+		SendEmail:     sendEmailHook,
+		APIStore:      apiconfig.NewFileStore(cfg.ApiConfigPath),
+		Cache:         resources.Cache(),
+		PlatformCache: resources.PlatformCache(),
+		CacheStats:    restcache.NewCounter(),
+		Baseline:      manifestFor(nil),
 	}
 	d.Studio = newStudioConfig(cfg, resources)
 	d.HookCallback = newHookCallback(d)

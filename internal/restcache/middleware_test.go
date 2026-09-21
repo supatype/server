@@ -572,3 +572,72 @@ func TestANonCacheableRequestIsUntouched(t *testing.T) {
 		t.Errorf("got %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+// ─── the platform / project keyspace split ────────────────────────────────────
+
+// Where the decision is read from and where the bytes are stored are two
+// different keyspaces on cloud, and getting them the wrong way round fails
+// quietly: the tenant config is simply absent from a project's own keyspace, and
+// absent is how a tenant that was never published looks. Every paid project's
+// cache would switch itself off, reporting the tier as the reason.
+func TestEligibilityIsReadFromTheTenantKeyspaceAndEntriesGoInTheProjectOne(t *testing.T) {
+	enabled := true
+	platform := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
+	project := keyspacetest.New() // no tenant config here, deliberately
+
+	d := deps(project, staticStore{cfg: cachingConfig(false)})
+	d.Tenants = platform
+	d.Config = &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", JWTSecret: "secret"}
+
+	rec := serve(d, &upstream{}, request("/posts", "max-age=30"))
+	if got := rec.Header().Get(statusHeader); got != "MISS" {
+		t.Fatalf("status = %q, want MISS — the tenant config was published, so the cache is offered", got)
+	}
+
+	if keys := project.Keys(); len(keys) == 0 {
+		t.Error("the entry should be stored in the project keyspace")
+	}
+	for _, key := range platform.Keys() {
+		if strings.HasPrefix(key, RestKeyPrefix("proj-1")) {
+			t.Errorf("no cached response belongs in the platform keyspace, found %q", key)
+		}
+	}
+}
+
+// The tier is read from the platform keyspace, so a free project is refused even
+// though its own keyspace is perfectly reachable and would happily store entries.
+func TestTheTierStillDecidesWhenTheKeyspacesAreSplit(t *testing.T) {
+	disabled := false
+	platform := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &disabled})
+	project := keyspacetest.New()
+
+	d := deps(project, staticStore{cfg: cachingConfig(false)})
+	d.Tenants = platform
+	d.Config = &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", JWTSecret: "secret"}
+
+	rec := serve(d, &upstream{}, request("/posts", "max-age=30"))
+	if got := rec.Header().Get(statusHeader); got != "BYPASS" {
+		t.Errorf("status = %q, want BYPASS", got)
+	}
+	if keys := project.Keys(); len(keys) != 0 {
+		t.Errorf("a refused tenant must store nothing, found %v", keys)
+	}
+}
+
+// Nil Tenants is the single-keyspace deployment — self-host, dev, and cloud
+// before the split — and must behave exactly as it did before the field existed.
+func TestNilTenantsFallsBackToTheCacheClient(t *testing.T) {
+	enabled := true
+	one := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
+
+	d := deps(one, staticStore{cfg: cachingConfig(false)})
+	d.Config = &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", JWTSecret: "secret"}
+	if d.Tenants != nil {
+		t.Fatal("this test is about the unset field")
+	}
+
+	rec := serve(d, &upstream{}, request("/posts", "max-age=30"))
+	if got := rec.Header().Get(statusHeader); got != "MISS" {
+		t.Errorf("status = %q, want MISS", got)
+	}
+}

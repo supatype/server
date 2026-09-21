@@ -26,8 +26,16 @@ type IdentityScoped func(ctx context.Context) (map[string]bool, bool)
 
 // Deps is what the cache needs to decide and to store.
 type Deps struct {
-	Store          apiconfig.Store
-	Cache          keyspace.Client
+	Store apiconfig.Store
+	// Cache is where cached responses are stored: the project's own keyspace.
+	Cache keyspace.Client
+	// Tenants is where the tenant configuration is read from, which is what
+	// decides whether this project is offered the cache at all. On a split
+	// deployment that is the platform keyspace, a different server from Cache.
+	//
+	// Nil means "the same place as Cache", which is the single-keyspace
+	// deployment and was the only shape before the split.
+	Tenants        keyspace.Client
 	Config         *config.Config
 	SchemaFor      func(*http.Request) string
 	MaxRowsFor     func(*http.Request) string
@@ -36,6 +44,15 @@ type Deps struct {
 	// Stats counts what the cache did, per table. Nil is allowed and means the
 	// outcomes are not counted; see Counter.
 	Stats *Counter
+}
+
+// tenants is where the tenant configuration is read from, falling back to the
+// store when no separate keyspace was given.
+func (d Deps) tenants() keyspace.Client {
+	if d.Tenants != nil {
+		return d.Tenants
+	}
+	return d.Cache
 }
 
 // plan is what the cache decided to do with one request.
@@ -99,7 +116,7 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 		}
 	}
 
-	if offered, reason := serverCacheOffer(req.Context(), d.Config, d.Cache, req); !offered {
+	if offered, reason := serverCacheOffer(req.Context(), d.Config, d.tenants(), req); !offered {
 		bypass(reason)
 		return plan{}, false, asked
 	}

@@ -60,7 +60,15 @@ func api(t *testing.T, cfg *config.Config, cache keyspace.Client) (http.Handler,
 		cfg.ServiceRoleKey = serviceKey
 	}
 	store := newMemStore()
-	return Handler(store, cfg, cache, restcache.NewCounter()), store
+	return oneKeyspace(store, cfg, cache, restcache.NewCounter()), store
+}
+
+// oneKeyspace mounts the admin API with a single keyspace serving both roles,
+// which is the shape every test written before the platform/project split
+// assumed — and still the shape of a self-host or dev deployment. The tests that
+// are *about* the split pass two clients to Handler directly.
+func oneKeyspace(store apiconfig.Store, cfg *config.Config, ks keyspace.Client, stats *restcache.Counter) http.Handler {
+	return Handler(store, cfg, ks, ks, stats)
 }
 
 // devConfig is the mode in which the admin API needs no token.
@@ -133,7 +141,7 @@ func TestEveryRouteNeedsTheServiceRole(t *testing.T) {
 // anything or an empty bearer.
 func TestNoKeyConfiguredFailsClosed(t *testing.T) {
 	// Built directly, because the helper fills the key in.
-	handler := Handler(newMemStore(), &config.Config{Mode: "standalone"}, keyspacetest.New(), restcache.NewCounter())
+	handler := oneKeyspace(newMemStore(), &config.Config{Mode: "standalone"}, keyspacetest.New(), restcache.NewCounter())
 
 	rec := call(t, handler, http.MethodGet, "/config/rest", serviceKey, "")
 	if rec.Code != http.StatusForbidden {
@@ -295,7 +303,7 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 
 		store := newMemStore()
 		store.getErr = keyspacetest.ErrFailed
-		handler := Handler(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
+		handler := oneKeyspace(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
 
 		for _, method := range []string{http.MethodGet, http.MethodPatch} {
 			rec := call(t, handler, method, path, "", `{}`)
@@ -306,7 +314,7 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 
 		store = newMemStore()
 		store.setErr = keyspacetest.ErrFailed
-		handler = Handler(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
+		handler = oneKeyspace(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
 		if rec := call(t, handler, http.MethodPatch, path, "", `{}`); rec.Code != http.StatusInternalServerError {
 			t.Errorf("%s unwritable: status = %d, want 500", name, rec.Code)
 		}
@@ -1375,7 +1383,7 @@ func TestCacheStatsAreScopedToTheAskingTenant(t *testing.T) {
 
 	cfg := devConfig()
 	cfg.ManagedProjectRef = "proj-1"
-	handler := Handler(newMemStore(), cfg, keyspacetest.New(), counter)
+	handler := oneKeyspace(newMemStore(), cfg, keyspacetest.New(), counter)
 
 	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
 	if rec.Code != http.StatusOK {
@@ -1411,7 +1419,7 @@ func TestCacheStatsAreServedToATenantWithoutTheCache(t *testing.T) {
 	counter.Record("proj-1", "posts", restcache.OutcomeBypass, restcache.ReasonTier)
 
 	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
-	handler := Handler(newMemStore(), cfg, cache, counter)
+	handler := oneKeyspace(newMemStore(), cfg, cache, counter)
 
 	// The entry route refuses this tenant.
 	if rec := call(t, handler, http.MethodGet, "/cache", serviceKey, ""); rec.Code != http.StatusForbidden {
@@ -1437,7 +1445,7 @@ func TestCacheStatsSurviveAMissingKeyspace(t *testing.T) {
 	counter := restcache.NewCounter()
 	counter.Record("local", "posts", restcache.OutcomeBypass, restcache.ReasonUnavailable)
 
-	handler := Handler(newMemStore(), devConfig(), keyspace.Unavailable(), counter)
+	handler := oneKeyspace(newMemStore(), devConfig(), keyspace.Unavailable(), counter)
 
 	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
 	if rec.Code != http.StatusOK {
@@ -1456,7 +1464,7 @@ func TestCacheStatsSurviveAMissingKeyspace(t *testing.T) {
 // would be a screen's problem to interpret; an empty report is a state it can
 // already render.
 func TestCacheStatsWithNoCounter(t *testing.T) {
-	handler := Handler(newMemStore(), devConfig(), keyspacetest.New(), nil)
+	handler := oneKeyspace(newMemStore(), devConfig(), keyspacetest.New(), nil)
 
 	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
 	if rec.Code != http.StatusOK {
@@ -1474,10 +1482,93 @@ func TestCacheStatsWithNoCounter(t *testing.T) {
 // Every other route in this package refuses the wrong method rather than
 // treating it as the one it knows.
 func TestCacheStatsRefusesAnythingButGET(t *testing.T) {
-	handler := Handler(newMemStore(), devConfig(), keyspacetest.New(), restcache.NewCounter())
+	handler := oneKeyspace(newMemStore(), devConfig(), keyspacetest.New(), restcache.NewCounter())
 
 	rec := call(t, handler, http.MethodDelete, "/cache/stats", "", "")
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
+	}
+}
+
+// ─── the platform / project keyspace split ────────────────────────────────────
+
+// A rotation writes the KEK-wrapped password, and its only copy is platform
+// state. Written to the project keyspace instead, the control plane would never
+// find it and the rotation would be stranded with "reveal once" already spent.
+func TestCredentialRotationWritesToThePlatformKeyspace(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t), ServiceRoleKey: serviceKey}
+	project, platform := keyspacetest.New(), keyspacetest.New()
+	handler := Handler(newMemStore(), cfg, project, platform, restcache.NewCounter())
+
+	rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var wrote []string
+	for _, key := range platform.Keys() {
+		if strings.Contains(key, ":dbcred:") {
+			wrote = append(wrote, key)
+		}
+	}
+	if len(wrote) == 0 {
+		t.Error("the wrapped secret and its meta belong in the platform keyspace")
+	}
+	for _, key := range project.Keys() {
+		if strings.Contains(key, ":dbcred:") {
+			t.Errorf("no credential belongs in the project keyspace, found %q", key)
+		}
+	}
+
+	// And the read path agrees with the write path, which is what makes the
+	// secret retrievable at all.
+	rec = call(t, handler, http.MethodGet, "/database/credentials/status", serviceKey, "")
+	var status statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.CanReveal || status.Generation != 2 {
+		t.Errorf("status should see the rotation it just made: %+v", status)
+	}
+}
+
+// The cache routes are the other half: entries come from the project's own
+// keyspace, while whether the tenant is offered the cache at all is read from
+// the platform one.
+func TestCacheRoutesListTheProjectKeyspaceAndAskThePlatformOne(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
+	platform := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
+	project := keyspacetest.New()
+	entry, err := json.Marshal(restcache.Entry{StatusCode: 200, ContentType: "application/json", Table: "posts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Put(restcache.RestKeyPrefix("proj-1")+"deadbeef", entry, 30)
+
+	handler := Handler(newMemStore(), cfg, project, platform, restcache.NewCounter())
+
+	rec := call(t, handler, http.MethodGet, "/cache", serviceKey, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "deadbeef") {
+		t.Errorf("the entry in the project keyspace should be listed: %s", rec.Body.String())
+	}
+}
+
+// The mirror of the restcache test, at the admin boundary: a tenant whose config
+// lives only in the platform keyspace must still be recognised as entitled. Ask
+// the project keyspace instead and every paid project looks unpublished.
+func TestCacheRoutesAreNotRefusedWhenTheConfigIsOnlyInThePlatformKeyspace(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
+	platform := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
+
+	handler := Handler(newMemStore(), cfg, keyspacetest.New(), platform, restcache.NewCounter())
+
+	rec := call(t, handler, http.MethodPatch, "/config/rest", serviceKey, `{"cache_max_ttl":60}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s — the tenant is entitled, so this must not be refused", rec.Code, rec.Body.String())
 	}
 }

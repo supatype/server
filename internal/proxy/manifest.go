@@ -331,6 +331,14 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	if overlay.Hooks != nil {
 		base.Hooks = overlay.Hooks
 	}
+	// Validators, on the same terms as Hooks above, and missing until now — so on a managed pod,
+	// where the overlay is `tenant:{ref}:manifest` and carries what `supatype push` wrote, a
+	// schema's validators never took effect at all. Both maps come from the same push for the same
+	// reason; one was honoured and the other silently discarded, which is the quiet half: the
+	// schema says the field is checked, nothing errors anywhere, and the write succeeds.
+	if overlay.Validators != nil {
+		base.Validators = overlay.Validators
+	}
 	// Wholesale for the same reason, and more sharply: Cache is a ceiling. A table dropped from the
 	// schema's declaration must stop being cacheable at once, and a per-table merge would leave the
 	// old permission standing — the one direction the ceiling is not allowed to drift.

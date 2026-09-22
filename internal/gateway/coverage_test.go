@@ -17,6 +17,8 @@ import (
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/proxy"
 )
@@ -1053,5 +1055,47 @@ func TestOneAddressGivesBothHalvesTheSameClient(t *testing.T) {
 	d := depsFor(t, &config.Config{Mode: "standalone", KeyspaceAddr: ""}, nil)
 	if d.Cache != d.PlatformCache {
 		t.Error("with one keyspace configured, both halves should be the same client")
+	}
+}
+
+// Where the API configuration is kept, and why it is not always the same place.
+//
+// On a managed pod the file is on the container's own filesystem with no volume mounted for it, so
+// every restart brought the process back with the defaults and silently turned the REST response
+// cache off for the whole project. The keyspace is durable and reachable from every replica.
+
+func TestAManagedPodKeepsItsAPIConfigInTheKeyspace(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abcdef", ApiConfigPath: "/tmp/unused.json"}
+	store := apiConfigStore(cfg, keyspacetest.New())
+
+	if _, ok := store.(*apiconfig.KeyspaceStore); !ok {
+		t.Fatalf("store = %T, want the durable one", store)
+	}
+}
+
+func TestDevAndSelfHostKeepTheirAPIConfigInAFile(t *testing.T) {
+	// The working directory persists there and is the thing a developer expects to edit.
+	for name, cfg := range map[string]*config.Config{
+		"no keyspace":    {Mode: "managed", ManagedProjectRef: "abcdef"},
+		"not managed":    {Mode: "standalone", ManagedProjectRef: "abcdef"},
+		"no project ref": {Mode: "managed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var platform keyspace.Client = keyspacetest.New()
+			if name == "no keyspace" {
+				platform = keyspace.Unavailable()
+			}
+			if _, ok := apiConfigStore(cfg, platform).(*apiconfig.FileStore); !ok {
+				t.Fatalf("store = %T, want the file", apiConfigStore(cfg, platform))
+			}
+		})
+	}
+}
+
+func TestANilPlatformClientFallsBackRatherThanPanicking(t *testing.T) {
+	// A nil here would take the pod down at boot rather than at first use.
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abcdef"}
+	if _, ok := apiConfigStore(cfg, nil).(*apiconfig.FileStore); !ok {
+		t.Fatal("a nil platform client should fall back to the file")
 	}
 }

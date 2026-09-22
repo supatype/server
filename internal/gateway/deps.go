@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/admin"
@@ -100,7 +101,7 @@ func NewDeps(
 		Version:       version,
 		Resources:     resources,
 		SendEmail:     sendEmailHook,
-		APIStore:      apiconfig.NewFileStore(cfg.ApiConfigPath),
+		APIStore:      apiConfigStore(cfg, resources.PlatformCache()),
 		Cache:         resources.Cache(),
 		PlatformCache: resources.PlatformCache(),
 		CacheStats:    restcache.NewCounter(),
@@ -182,6 +183,30 @@ func (d *Deps) AdminPool() (sqlrunner.Pool, error) {
 		return nil, err
 	}
 	return pool, nil
+}
+
+// apiConfigStore picks where the API configuration is kept.
+//
+// The platform keyspace when this is a single-tenant managed pod that has one, and a file
+// otherwise. That is not a preference between two equal options: on a managed pod the file is on
+// the container's own filesystem with no volume mounted for it, so every restart brought the
+// process back with DefaultApiConfig() and silently turned the REST response cache off for the
+// whole project. The keyspace is durable (everything under `tenant:` is, by plan decision D4),
+// reachable from every replica, and already holds this pod's tenant config beside it.
+//
+// The file is still right for dev and self-host, where the working directory persists and is the
+// thing a developer expects to edit.
+//
+// Both conditions are required. Without a project ref there is no key to write under — a
+// multi-tenant pod resolves its tenant per request, and one shared api_config key would give every
+// tenant the last one's settings. Without a reachable keyspace there is nothing to write to, and a
+// store that errors on every read is worse than a file that merely forgets.
+func apiConfigStore(cfg *config.Config, platform keyspace.Client) apiconfig.Store {
+	ref := strings.TrimSpace(cfg.ManagedProjectRef)
+	if ref != "" && strings.TrimSpace(cfg.Mode) == "managed" && platform != nil && platform.Available() {
+		return apiconfig.NewKeyspaceStore(platform, ref)
+	}
+	return apiconfig.NewFileStore(cfg.ApiConfigPath)
 }
 
 // KeyspaceMonitor hands out the admin pool as the read path to pg_keyspace's

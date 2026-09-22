@@ -38,6 +38,7 @@
     "internal/ratelimit",
     "internal/reloader",
     "internal/restcache",
+    "internal/rowcache",
     "internal/stff",
     "internal/sqlrunner",
     "internal/static",

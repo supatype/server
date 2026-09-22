@@ -6,9 +6,11 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/supatype/server/internal/apiconfig"
@@ -16,6 +18,7 @@ import (
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/restcache"
+	"github.com/supatype/server/internal/rowcache"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -92,7 +95,7 @@ func Handler(d Deps) http.Handler {
 	store, cfg, vc, platform, stats := d.Store, d.Config, d.Cache, d.Platform, d.Stats
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, platform))
+	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, platform, d.Monitor))
 	mux.HandleFunc("/config/graphql", graphQLConfigRoute(store))
 
 	mux.HandleFunc("/database/credentials/status", only(http.MethodGet, credentialStatusHandler(cfg, platform)))
@@ -107,7 +110,7 @@ func Handler(d Deps) http.Handler {
 
 // ─── REST configuration ───────────────────────────────────────────────────────
 
-func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace.Client) http.HandlerFunc {
+func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -117,7 +120,7 @@ func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace
 			}
 			utilities.WriteJSON(w, http.StatusOK, api.Rest)
 		case http.MethodPatch:
-			patchRestConfig(w, r, store, cfg, tenants)
+			patchRestConfig(w, r, store, cfg, tenants, db)
 		default:
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -132,7 +135,7 @@ type restPatch struct {
 	CacheTables *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 }
 
-func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, tenants keyspace.Client) {
+func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB) {
 	var body restPatch
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -181,9 +184,77 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 		api.Rest.CacheTables = *body.CacheTables
 	}
 
-	if saveAPIConfig(w, r, store, api) {
-		utilities.WriteJSON(w, http.StatusOK, api.Rest)
+	if !saveAPIConfig(w, r, store, api) {
+		return
 	}
+
+	// After the save, not before: the allowlist is the source of truth and the
+	// registrations follow it. Reconciling first would leave a database
+	// registered for tables a failed write never allowed.
+	//
+	// Only when the allowlist itself moved. A schema or max_rows change is not
+	// a reason to touch the row cache, and a reconcile on every PATCH would put
+	// database round trips behind edits that have nothing to do with caching.
+	resp := restConfigResponse{RestConfig: api.Rest}
+	if body.CacheTables != nil {
+		resp.RowCache = reconcileRowCache(r, db, api.Rest)
+	}
+	utilities.WriteJSON(w, http.StatusOK, resp)
+}
+
+// restConfigResponse is the REST config, plus what changing the allowlist did
+// to the row cache.
+//
+// Embedded so the shape callers already parse is unchanged: RestCacheBrowser
+// reads cache_max_ttl and cache_tables off the top level and must keep working
+// against a server that grew a field.
+type restConfigResponse struct {
+	apiconfig.RestConfig
+	RowCache *rowCacheReconcile `json:"row_cache,omitempty"`
+}
+
+type rowCacheReconcile struct {
+	rowcache.Outcome
+	// Set when the allowlist was saved but the row cache could not be reached.
+	// The response cache is unaffected, and saying so is the difference between
+	// a warning and an error nobody can act on.
+	Unavailable bool   `json:"unavailable,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// reconcileRowCache brings registrations in line with the saved allowlist, and
+// never fails the request for it.
+//
+// The two caches ride one switch (§12.2) but they are not one cache. The
+// allowlist is saved and the response cache is already live by the time this
+// runs; a 502 here would tell a user their change did not take when it did.
+// So every outcome is reported in the body and the status stays 200.
+func reconcileRowCache(r *http.Request, db rowcache.DB, rest apiconfig.RestConfig) *rowCacheReconcile {
+	enabled := make([]string, 0, len(rest.CacheTables))
+	for table, tc := range rest.CacheTables {
+		if tc.Enabled {
+			enabled = append(enabled, table)
+		}
+	}
+	// Deterministic, so a response is comparable between two identical requests
+	// and a test does not have to sort what it reads back.
+	sort.Strings(enabled)
+
+	schema := rest.Schema
+	if schema == "" {
+		schema = apiconfig.DefaultApiConfig().Rest.Schema
+	}
+
+	outcome, err := rowcache.Reconcile(r.Context(), db, schema, enabled)
+	switch {
+	case errors.Is(err, rowcache.ErrUnavailable):
+		return &rowCacheReconcile{Unavailable: true}
+	case err != nil:
+		return &rowCacheReconcile{Error: err.Error()}
+	case outcome.Changed():
+		return &rowCacheReconcile{Outcome: outcome}
+	}
+	return nil
 }
 
 // ─── GraphQL configuration ────────────────────────────────────────────────────

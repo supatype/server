@@ -1099,3 +1099,44 @@ func TestANilPlatformClientFallsBackRatherThanPanicking(t *testing.T) {
 		t.Fatal("a nil platform client should fall back to the file")
 	}
 }
+
+// The cache ceiling reaches the admin API per request, because a multi-tenant pod resolves its
+// manifest per request and one map read at mount time would hand every tenant the first one's.
+
+func TestDeclaredCacheComesFromThisRequestsManifest(t *testing.T) {
+	yes := true
+	d := depsFor(t, &config.Config{Mode: "standalone"}, &proxy.RouteManifest{
+		Cache: map[string]proxy.TableCache{"posts": {Enabled: &yes, Rows: &yes}},
+	})
+
+	got := d.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil))
+	if got["posts"].Rows == nil || !*got["posts"].Rows {
+		t.Fatalf("declared = %+v, want posts with rows", got)
+	}
+}
+
+func TestAManifestWithNoCacheDeclarationPermitsNothing(t *testing.T) {
+	// Not "no constraint". An absent declaration read as permission would turn a manifest written
+	// before this field existed into an open door.
+	d := depsFor(t, &config.Config{Mode: "standalone"}, &proxy.RouteManifest{})
+	if got := d.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); len(got) != 0 {
+		t.Fatalf("declared = %+v, want nothing", got)
+	}
+}
+
+func TestDeclaredCacheSurvivesAMissingManifest(t *testing.T) {
+	// A nil Deps or a nil ManifestFor takes the pod down at first admin request rather than at
+	// boot, which is the worse time to find out.
+	var nilDeps *Deps
+	if got := nilDeps.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); got != nil {
+		t.Errorf("nil Deps = %+v", got)
+	}
+	if got := (&Deps{}).DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); got != nil {
+		t.Errorf("nil ManifestFor = %+v", got)
+	}
+	d := depsFor(t, &config.Config{Mode: "standalone"}, nil)
+	d.ManifestFor = func(*http.Request) *proxy.RouteManifest { return nil }
+	if got := d.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); got != nil {
+		t.Errorf("nil manifest = %+v", got)
+	}
+}

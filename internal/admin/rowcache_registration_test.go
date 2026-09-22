@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
+	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
 )
 
@@ -138,9 +139,36 @@ type restPatchResponse struct {
 		Unavailable bool   `json:"unavailable"`
 		Error       string `json:"error"`
 	} `json:"row_cache"`
+	Adjusted []struct {
+		Table  string `json:"table"`
+		Reason string `json:"reason"`
+	} `json:"adjusted"`
+}
+
+// declaring builds a ceiling from a table -> rows map, which is what the row cache now follows.
+func declaring(rows map[string]bool) func(*http.Request) map[string]proxy.TableCache {
+	yes := true
+	return func(*http.Request) map[string]proxy.TableCache {
+		out := map[string]proxy.TableCache{}
+		for table, wantRows := range rows {
+			r := wantRows
+			out[table] = proxy.TableCache{Enabled: &yes, Rows: &r}
+		}
+		return out
+	}
 }
 
 func patchRest(t *testing.T, db StatsQuerier, body string) restPatchResponse {
+	t.Helper()
+	return patchRestDeclaring(t, db, declaring(map[string]bool{"orders": true}), body)
+}
+
+func patchRestDeclaring(
+	t *testing.T,
+	db StatsQuerier,
+	declared func(*http.Request) map[string]proxy.TableCache,
+	body string,
+) restPatchResponse {
 	t.Helper()
 	ks := keyspacetest.New()
 	h := Handler(Deps{
@@ -150,6 +178,7 @@ func patchRest(t *testing.T, db StatsQuerier, body string) restPatchResponse {
 		Platform: ks,
 		Stats:    restcache.NewCounter(),
 		Monitor:  db,
+		Declared: declared,
 	})
 	rec := call(t, h, http.MethodPatch, "/config/rest", "", body)
 	if rec.Code != http.StatusOK {
@@ -162,7 +191,10 @@ func patchRest(t *testing.T, db StatsQuerier, body string) restPatchResponse {
 	return got
 }
 
-func TestEnablingATableRegistersItForTheRowCache(t *testing.T) {
+func TestTheSchemaNotTheAllowlistDecidesTheRowCache(t *testing.T) {
+	// This is the behaviour §13.3 changed. Registration used to follow `cache_tables[].enabled`,
+	// which made Mode B a runtime toggle — and it is not one, because whether a table tolerates a
+	// read returning the previous row is a design-time invariant, not a 3am decision.
 	db := newRegDB()
 	got := patchRest(t, db, `{"cache_tables":{"orders":{"enabled":true}}}`)
 
@@ -174,17 +206,34 @@ func TestEnablingATableRegistersItForTheRowCache(t *testing.T) {
 	}
 }
 
-func TestDisablingATableUnregistersIt(t *testing.T) {
-	// Off in the allowlist, not merely absent from it: the response cache reads
-	// Enabled, and so must this.
+func TestDroppingRowsFromTheSchemaUnregistersIt(t *testing.T) {
+	// What "turn it off" looks like now: the schema stops declaring rows, and the next save
+	// reconciles the registration away. Turning the *allowlist* entry off does not do this — the
+	// two caches are separate, and a table may keep its response cache while losing the row cache.
 	db := newRegDB("public.orders")
-	got := patchRest(t, db, `{"cache_tables":{"orders":{"enabled":false}}}`)
+	got := patchRestDeclaring(t, db, declaring(map[string]bool{"orders": false}),
+		`{"cache_tables":{"orders":{"enabled":true}}}`)
 
 	if got.RowCache == nil || len(got.RowCache.Unregistered) != 1 {
 		t.Fatalf("row_cache = %+v", got.RowCache)
 	}
 	if db.registered["public.orders"] {
 		t.Fatal("still registered")
+	}
+}
+
+func TestTurningOffTheAllowlistLeavesTheRowCacheAlone(t *testing.T) {
+	// The other half of the same point, and the one that would be a regression if it broke: the
+	// response cache is a runtime switch and the row cache is not, so switching the first off must
+	// not unregister the second.
+	db := newRegDB("public.orders")
+	got := patchRest(t, db, `{"cache_tables":{"orders":{"enabled":false}}}`)
+
+	if got.RowCache != nil {
+		t.Fatalf("row_cache = %+v, want no change from an allowlist edit", got.RowCache)
+	}
+	if !db.registered["public.orders"] {
+		t.Fatal("an allowlist edit unregistered the row cache")
 	}
 }
 
@@ -274,6 +323,7 @@ func TestTheAllowlistIsSavedEvenWhenTheRowCacheCannotBeReached(t *testing.T) {
 	h := Handler(Deps{
 		Store: store, Config: devConfig(), Cache: ks, Platform: ks,
 		Stats: restcache.NewCounter(), Monitor: db,
+		Declared: declaring(map[string]bool{"orders": true}),
 	})
 
 	if rec := call(t, h, http.MethodPatch, "/config/rest", "",
@@ -320,6 +370,7 @@ func TestAConfigWithNoSchemaFallsBackToTheDefault(t *testing.T) {
 	h := Handler(Deps{
 		Store: store, Config: devConfig(), Cache: ks, Platform: ks,
 		Stats: restcache.NewCounter(), Monitor: db,
+		Declared: declaring(map[string]bool{"orders": true}),
 	})
 
 	rec := call(t, h, http.MethodPatch, "/config/rest", "", `{"cache_tables":{"orders":{"enabled":true}}}`)
@@ -328,5 +379,105 @@ func TestAConfigWithNoSchemaFallsBackToTheDefault(t *testing.T) {
 	}
 	if !db.registered["public.orders"] {
 		t.Fatalf("catalogue = %v, want the default schema used", db.registered)
+	}
+}
+
+// ─── the ceiling, through the handler (§13.2) ────────────────────────────────
+
+func ceilingOf(tables map[string]proxy.TableCache) func(*http.Request) map[string]proxy.TableCache {
+	return func(*http.Request) map[string]proxy.TableCache { return tables }
+}
+
+func TestARuntimeEditCannotCacheATableTheSchemaNeverDeclared(t *testing.T) {
+	// The whole point of the ceiling. Without it, `cache_tables` was the only word on the subject
+	// and the schema described nothing.
+	got := patchRestDeclaring(t, newRegDB(), ceilingOf(map[string]proxy.TableCache{}),
+		`{"cache_tables":{"secrets":{"enabled":true}}}`)
+
+	if e, ok := got.CacheTables["secrets"].(map[string]any); ok && e["enabled"] == true {
+		t.Fatalf("secrets was cached without the schema permitting it: %+v", e)
+	}
+	if len(got.Adjusted) != 1 || got.Adjusted[0].Table != "secrets" {
+		t.Fatalf("adjusted = %+v, want one naming secrets", got.Adjusted)
+	}
+}
+
+func TestARuntimeEditCannotTickPublicOnItsOwn(t *testing.T) {
+	// push refuses `public: true` on a table whose read rule varies by caller. That refusal is
+	// worth nothing if an operator can tick the box from Studio afterwards.
+	yes := true
+	got := patchRestDeclaring(t, newRegDB(),
+		ceilingOf(map[string]proxy.TableCache{"orders": {Enabled: &yes}}),
+		`{"cache_tables":{"orders":{"enabled":true,"allow_public":true}}}`)
+
+	if len(got.Adjusted) == 0 {
+		t.Fatal("a public key was allowed, or refused in silence")
+	}
+}
+
+func TestTheAdjustmentsAreReportedRatherThanAppliedInSilence(t *testing.T) {
+	// An operator who ticks a box and watches it untick itself has been told nothing, and will
+	// tick it again.
+	got := patchRestDeclaring(t, newRegDB(), ceilingOf(nil),
+		`{"cache_tables":{"orders":{"enabled":true}}}`)
+
+	if len(got.Adjusted) == 0 {
+		t.Fatal("no adjustments reported")
+	}
+	if got.Adjusted[0].Reason == "" {
+		t.Fatal("an adjustment with no reason is not worth reporting")
+	}
+}
+
+func TestAPermittedEditGoesThroughUnremarkedUpon(t *testing.T) {
+	// A ceiling that refuses everything is not a ceiling, and an `adjusted` array on every save
+	// would train a reader to ignore it.
+	yes := true
+	got := patchRestDeclaring(t, newRegDB(),
+		ceilingOf(map[string]proxy.TableCache{"orders": {Enabled: &yes, Public: &yes}}),
+		`{"cache_tables":{"orders":{"enabled":true,"allow_public":true}}}`)
+
+	if len(got.Adjusted) != 0 {
+		t.Fatalf("adjusted = %+v, want none", got.Adjusted)
+	}
+}
+
+func TestWhatIsStoredIsWhatWasPermitted(t *testing.T) {
+	// Narrowed before the save, not after: storing the unnarrowed request would let a later read
+	// serve it as though it had been accepted, and the ceiling would hold only for one response.
+	ks := keyspacetest.New()
+	store := newMemStore()
+	h := Handler(Deps{
+		Store: store, Config: devConfig(), Cache: ks, Platform: ks,
+		Stats: restcache.NewCounter(), Monitor: newRegDB(),
+		Declared: ceilingOf(map[string]proxy.TableCache{}),
+	})
+
+	if rec := call(t, h, http.MethodPatch, "/config/rest", "",
+		`{"cache_tables":{"secrets":{"enabled":true}}}`); rec.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body.String())
+	}
+	if store.cfg.Rest.CacheTables["secrets"].Enabled {
+		t.Fatalf("the unnarrowed request was stored: %+v", store.cfg.Rest.CacheTables)
+	}
+}
+
+func TestNoDeclarationHookAtAllPermitsNothing(t *testing.T) {
+	// A deployment whose manifest carries no cache block, or a Deps built without Declared. The
+	// safe reading is "nothing is permitted" — treating a missing declaration as permission would
+	// turn an old manifest into an open door.
+	ks := keyspacetest.New()
+	store := newMemStore()
+	h := Handler(Deps{
+		Store: store, Config: devConfig(), Cache: ks, Platform: ks,
+		Stats: restcache.NewCounter(), Monitor: newRegDB(),
+	})
+
+	if rec := call(t, h, http.MethodPatch, "/config/rest", "",
+		`{"cache_tables":{"orders":{"enabled":true}}}`); rec.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body.String())
+	}
+	if store.cfg.Rest.CacheTables["orders"].Enabled {
+		t.Fatal("a nil Declared was read as permission")
 	}
 }

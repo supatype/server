@@ -10,13 +10,14 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/cacheceiling"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/modes"
+	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/rowcache"
 	"github.com/supatype/server/internal/utilities"
@@ -89,13 +90,22 @@ type Deps struct {
 	// Monitor reads pg_keyspace's own views out of the project's Postgres. They
 	// are SQL over shared memory, so neither keyspace client can answer for them.
 	Monitor StatsQuerier
+	// Declared is what the schema permits caching, per table, for this request's tenant. It comes
+	// from the route manifest, which is where `supatype push` puts it.
+	//
+	// A function rather than a map because a multi-tenant pod resolves its manifest per request: a
+	// map captured at mount time would hand every tenant the first one's ceiling.
+	//
+	// Nil, or a nil return, means no declaration — which is "nothing may be cached", not "no
+	// constraint". See cacheceiling.Narrow.
+	Declared func(*http.Request) map[string]proxy.TableCache
 }
 
 func Handler(d Deps) http.Handler {
 	store, cfg, vc, platform, stats := d.Store, d.Config, d.Cache, d.Platform, d.Stats
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, platform, d.Monitor))
+	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, platform, d.Monitor, d.Declared))
 	mux.HandleFunc("/config/graphql", graphQLConfigRoute(store))
 
 	mux.HandleFunc("/database/credentials/status", only(http.MethodGet, credentialStatusHandler(cfg, platform)))
@@ -110,7 +120,7 @@ func Handler(d Deps) http.Handler {
 
 // ─── REST configuration ───────────────────────────────────────────────────────
 
-func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB) http.HandlerFunc {
+func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB, declared declaredFor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -120,7 +130,7 @@ func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace
 			}
 			utilities.WriteJSON(w, http.StatusOK, api.Rest)
 		case http.MethodPatch:
-			patchRestConfig(w, r, store, cfg, tenants, db)
+			patchRestConfig(w, r, store, cfg, tenants, db, declared)
 		default:
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -135,7 +145,7 @@ type restPatch struct {
 	CacheTables *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 }
 
-func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB) {
+func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB, declared declaredFor) {
 	var body restPatch
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -184,6 +194,12 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 		api.Rest.CacheTables = *body.CacheTables
 	}
 
+	// The ceiling, before the save rather than after: what is stored has to be what is permitted,
+	// or a later read would serve the unnarrowed request as though it had been accepted. §13.2.
+	ceiling := declaredTables(declared, r)
+	narrowed, adjustments := cacheceiling.Narrow(ceiling, api.Rest)
+	api.Rest = narrowed
+
 	if !saveAPIConfig(w, r, store, api) {
 		return
 	}
@@ -195,9 +211,9 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 	// Only when the allowlist itself moved. A schema or max_rows change is not
 	// a reason to touch the row cache, and a reconcile on every PATCH would put
 	// database round trips behind edits that have nothing to do with caching.
-	resp := restConfigResponse{RestConfig: api.Rest}
+	resp := restConfigResponse{RestConfig: api.Rest, Adjusted: adjustments}
 	if body.CacheTables != nil {
-		resp.RowCache = reconcileRowCache(r, db, api.Rest)
+		resp.RowCache = reconcileRowCache(r, db, api.Rest.Schema, ceiling)
 	}
 	utilities.WriteJSON(w, http.StatusOK, resp)
 }
@@ -211,6 +227,21 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 type restConfigResponse struct {
 	apiconfig.RestConfig
 	RowCache *rowCacheReconcile `json:"row_cache,omitempty"`
+	// Adjusted is everything the schema's ceiling refused or reduced.
+	//
+	// Reported rather than applied in silence: an operator who ticks a box and watches it untick
+	// itself has been told nothing, and will tick it again.
+	Adjusted []cacheceiling.Adjustment `json:"adjusted,omitempty"`
+}
+
+// declaredFor resolves this request's cache ceiling. See Deps.Declared.
+type declaredFor func(*http.Request) map[string]proxy.TableCache
+
+func declaredTables(f declaredFor, r *http.Request) map[string]proxy.TableCache {
+	if f == nil {
+		return nil
+	}
+	return f(r)
 }
 
 type rowCacheReconcile struct {
@@ -229,23 +260,19 @@ type rowCacheReconcile struct {
 // allowlist is saved and the response cache is already live by the time this
 // runs; a 502 here would tell a user their change did not take when it did.
 // So every outcome is reported in the body and the status stays 200.
-func reconcileRowCache(r *http.Request, db rowcache.DB, rest apiconfig.RestConfig) *rowCacheReconcile {
-	enabled := make([]string, 0, len(rest.CacheTables))
-	for table, tc := range rest.CacheTables {
-		if tc.Enabled {
-			enabled = append(enabled, table)
-		}
-	}
-	// Deterministic, so a response is comparable between two identical requests
-	// and a test does not have to sort what it reads back.
-	sort.Strings(enabled)
+func reconcileRowCache(r *http.Request, db rowcache.DB, schema string, declared map[string]proxy.TableCache) *rowCacheReconcile {
+	// **The schema, not the runtime allowlist.** The first cut of registration read
+	// `cache_tables[].enabled`, which made Mode B a runtime toggle. It is not one: the row cache
+	// is eventual with a bound rather than read-your-writes, and whether a table tolerates a read
+	// returning the previous row is a design-time invariant its author knows and an operator
+	// flipping a switch at 3am does not. Mode A gets a runtime switch; Mode B does not (§13.3).
+	tables := cacheceiling.RowCacheTables(declared)
 
-	schema := rest.Schema
 	if schema == "" {
 		schema = apiconfig.DefaultApiConfig().Rest.Schema
 	}
 
-	outcome, err := rowcache.Reconcile(r.Context(), db, schema, enabled)
+	outcome, err := rowcache.Reconcile(r.Context(), db, schema, tables)
 	switch {
 	case errors.Is(err, rowcache.ErrUnavailable):
 		return &rowCacheReconcile{Unavailable: true}

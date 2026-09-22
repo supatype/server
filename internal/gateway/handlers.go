@@ -59,7 +59,27 @@ func buildAdminAPI(d *Deps) http.Handler {
 		Platform: d.PlatformCache,
 		Stats:    d.CacheStats,
 		Monitor:  d.KeyspaceMonitor(),
+		Declared: d.DeclaredCache,
 	})
+}
+
+// DeclaredCache is what this request's tenant schema permits caching, from its route manifest.
+//
+// Resolved per request rather than captured at mount time: a multi-tenant pod resolves its
+// manifest per request, and one map read once would hand every tenant the first one's ceiling.
+//
+// A nil manifest yields nil, which the admin API reads as "nothing is permitted" rather than "no
+// constraint". That is the safe direction — treating an absent declaration as permission would
+// turn a manifest written before this field existed into an open door.
+func (d *Deps) DeclaredCache(req *http.Request) map[string]proxy.TableCache {
+	if d == nil || d.ManifestFor == nil {
+		return nil
+	}
+	m := d.ManifestFor(req)
+	if m == nil {
+		return nil
+	}
+	return m.Cache
 }
 
 func buildSQLRunner(d *Deps) http.Handler {

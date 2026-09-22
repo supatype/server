@@ -16,6 +16,7 @@
     "internal/auth/crypto",
     "internal/auth/hooks/hookserrors",
     "internal/auth/storage/test",
+    "internal/cacheceiling",
     "internal/config",
     "internal/data",
     "internal/data/keyspace",

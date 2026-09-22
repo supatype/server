@@ -15,6 +15,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
+	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
 )
 
@@ -68,7 +69,26 @@ func api(t *testing.T, cfg *config.Config, cache keyspace.Client) (http.Handler,
 // assumed — and still the shape of a self-host or dev deployment. The tests that
 // are *about* the split pass two clients to Handler directly.
 func oneKeyspace(store apiconfig.Store, cfg *config.Config, ks keyspace.Client, stats *restcache.Counter) http.Handler {
-	return Handler(Deps{Store: store, Config: cfg, Cache: ks, Platform: ks, Stats: stats})
+	return Handler(Deps{
+		Store: store, Config: cfg, Cache: ks, Platform: ks, Stats: stats,
+		// A ceiling that permits what these tests ask for. They were written before the schema
+		// declared anything, and their subject is the admin API's own behaviour — not §13.2's
+		// precedence rule, which internal/cacheceiling and the ceiling tests cover directly.
+		// Without this they would all fail for one reason that is not what any of them is about.
+		Declared: permissiveCeiling,
+	})
+}
+
+// permissiveCeiling declares every table this package's tests touch, so a test about something
+// else is not silently answering "the schema does not permit it".
+func permissiveCeiling(*http.Request) map[string]proxy.TableCache {
+	yes := true
+	ttl := 86_400
+	out := map[string]proxy.TableCache{}
+	for _, table := range []string{"posts", "orders", "invoices", "events", "not_yet", "legacy", "drafts"} {
+		out[table] = proxy.TableCache{Enabled: &yes, Public: &yes, Rows: &yes, MaxTTL: &ttl}
+	}
+	return out
 }
 
 // devConfig is the mode in which the admin API needs no token.

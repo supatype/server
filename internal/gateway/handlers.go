@@ -52,7 +52,14 @@ func badGateway(w http.ResponseWriter, message string) {
 }
 
 func buildAdminAPI(d *Deps) http.Handler {
-	return admin.Handler(d.APIStore, d.Config, d.Cache, d.PlatformCache, d.CacheStats)
+	return admin.Handler(admin.Deps{
+		Store:    d.APIStore,
+		Config:   d.Config,
+		Cache:    d.Cache,
+		Platform: d.PlatformCache,
+		Stats:    d.CacheStats,
+		Monitor:  d.KeyspaceMonitor(),
+	})
 }
 
 func buildSQLRunner(d *Deps) http.Handler {

@@ -68,7 +68,7 @@ func api(t *testing.T, cfg *config.Config, cache keyspace.Client) (http.Handler,
 // assumed — and still the shape of a self-host or dev deployment. The tests that
 // are *about* the split pass two clients to Handler directly.
 func oneKeyspace(store apiconfig.Store, cfg *config.Config, ks keyspace.Client, stats *restcache.Counter) http.Handler {
-	return Handler(store, cfg, ks, ks, stats)
+	return Handler(Deps{Store: store, Config: cfg, Cache: ks, Platform: ks, Stats: stats})
 }
 
 // devConfig is the mode in which the admin API needs no token.
@@ -1498,7 +1498,7 @@ func TestCacheStatsRefusesAnythingButGET(t *testing.T) {
 func TestCredentialRotationWritesToThePlatformKeyspace(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t), ServiceRoleKey: serviceKey}
 	project, platform := keyspacetest.New(), keyspacetest.New()
-	handler := Handler(newMemStore(), cfg, project, platform, restcache.NewCounter())
+	handler := Handler(Deps{Store: newMemStore(), Config: cfg, Cache: project, Platform: platform, Stats: restcache.NewCounter()})
 
 	rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
 	if rec.Code != http.StatusOK {
@@ -1546,7 +1546,7 @@ func TestCacheRoutesListTheProjectKeyspaceAndAskThePlatformOne(t *testing.T) {
 	}
 	project.Put(restcache.RestKeyPrefix("proj-1")+"deadbeef", entry, 30)
 
-	handler := Handler(newMemStore(), cfg, project, platform, restcache.NewCounter())
+	handler := Handler(Deps{Store: newMemStore(), Config: cfg, Cache: project, Platform: platform, Stats: restcache.NewCounter()})
 
 	rec := call(t, handler, http.MethodGet, "/cache", serviceKey, "")
 	if rec.Code != http.StatusOK {
@@ -1565,7 +1565,7 @@ func TestCacheRoutesAreNotRefusedWhenTheConfigIsOnlyInThePlatformKeyspace(t *tes
 	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
 	platform := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
 
-	handler := Handler(newMemStore(), cfg, keyspacetest.New(), platform, restcache.NewCounter())
+	handler := Handler(Deps{Store: newMemStore(), Config: cfg, Cache: keyspacetest.New(), Platform: platform, Stats: restcache.NewCounter()})
 
 	rec := call(t, handler, http.MethodPatch, "/config/rest", serviceKey, `{"cache_max_ttl":60}`)
 	if rec.Code != http.StatusOK {

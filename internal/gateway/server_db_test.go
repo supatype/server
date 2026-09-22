@@ -405,6 +405,26 @@ func TestNewToleratesAManifestItCannotWatch(t *testing.T) {
 // Both read through the connections the gateway already holds rather than
 // opening ones of their own. A Deps that answered no pool would take the SQL
 // runner and every identity-scoped table down with it.
+// The same pool, handed to the admin API as the read path to pg_keyspace's
+// monitoring views. They are SQL over shared memory living in the project's own
+// Postgres, so neither keyspace client can answer for them.
+func TestDepsHandOverTheKeyspaceMonitor(t *testing.T) {
+	requireAuthEnvironment(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SQLDSN() == "" {
+		t.Skip("no SQL DSN configured")
+	}
+	d := depsFor(t, cfg, nil)
+
+	if monitor := d.KeyspaceMonitor(); monitor == nil {
+		t.Fatal("no monitor, so the stats routes would report unavailable on a deployment that has a database")
+	}
+}
+
 func TestDepsHandOverTheAdminPool(t *testing.T) {
 	requireAuthEnvironment(t)
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
@@ -181,6 +182,25 @@ func (d *Deps) AdminPool() (sqlrunner.Pool, error) {
 		return nil, err
 	}
 	return pool, nil
+}
+
+// KeyspaceMonitor hands out the admin pool as the read path to pg_keyspace's
+// monitoring views, or nothing when this deployment has no database.
+//
+// Resolved at mount time rather than per request, because the routes it feeds
+// render "unavailable" as a first-class state — a deployment without the
+// extension is a supported deployment, not a 503 to explain.
+//
+// The nil is returned explicitly, for the same reason AdminPool converts
+// explicitly: a typed nil pointer placed in an interface is not a nil
+// interface, and the handler's nil check would pass straight through to a
+// method call on nothing.
+func (d *Deps) KeyspaceMonitor() admin.StatsQuerier {
+	pool, err := d.Resources.AdminPool()
+	if err != nil || pool == nil {
+		return nil
+	}
+	return pool
 }
 
 // IdentityScopedTables binds the caller-dependence classification to this

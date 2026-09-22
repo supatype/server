@@ -181,6 +181,18 @@ func TestAdminPoolWithoutADatabase(t *testing.T) {
 	}
 }
 
+// A deployment with no database cannot read pg_keyspace's views either, and the
+// admin API is handed a nil interface rather than a typed nil it would call a
+// method on. The stats routes render that as "unavailable", which is a state,
+// not an error: an instance without the extension is a supported instance.
+func TestKeyspaceMonitorWithoutADatabase(t *testing.T) {
+	d := depsFor(t, &config.Config{Mode: "standalone"}, nil)
+
+	if monitor := d.KeyspaceMonitor(); monitor != nil {
+		t.Errorf("monitor = %#v, want a nil interface", monitor)
+	}
+}
+
 // ─── The GraphQL headers ──────────────────────────────────────────────────────
 
 // The proxy authenticates as the service role and forwards the caller's own

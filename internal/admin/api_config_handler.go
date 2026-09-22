@@ -62,16 +62,34 @@ func inRange(name string, value, low, high int) error {
 // On a single-keyspace deployment the caller passes the same client twice, which
 // is exactly what it was before the split.
 //
-// stats may be nil, which serves the cache-statistics route with an empty
+// Stats may be nil, which serves the cache-statistics route with an empty
 // report rather than removing it: a screen that asks for numbers should be told
-// there are none, not given a 404 to interpret.
-func Handler(
-	store apiconfig.Store,
-	cfg *config.Config,
-	vc keyspace.Client,
-	platform keyspace.Client,
-	stats *restcache.Counter,
-) http.Handler {
+// there are none, not given a 404 to interpret. Monitor may be nil on the same
+// principle, and for the commoner reason — a deployment with no database DSN.
+//
+// A struct rather than a parameter list because Cache and Platform have the
+// same type and opposite meanings. Swapping them at a call site compiles
+// cleanly and turns the response cache off for every paid project, since a miss
+// for tenant configuration in the project keyspace is indistinguishable from a
+// tenant nobody ever published. That is the failure the two-keyspace split was
+// mostly about, and positional arguments are how it would come back.
+type Deps struct {
+	Store  apiconfig.Store
+	Config *config.Config
+	// Cache is the project's keyspace: where cached responses are stored.
+	Cache keyspace.Client
+	// Platform is the platform keyspace: tenant configuration, eligibility, and
+	// the KEK-wrapped managed credential. On a single-keyspace deployment this
+	// is the same client as Cache, which is exactly what it was before the split.
+	Platform keyspace.Client
+	Stats    *restcache.Counter
+	// Monitor reads pg_keyspace's own views out of the project's Postgres. They
+	// are SQL over shared memory, so neither keyspace client can answer for them.
+	Monitor StatsQuerier
+}
+
+func Handler(d Deps) http.Handler {
+	store, cfg, vc, platform, stats := d.Store, d.Config, d.Cache, d.Platform, d.Stats
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, platform))
@@ -82,6 +100,7 @@ func Handler(
 	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, platform)))
 
 	mountCacheRoutes(mux, cfg, vc, platform, stats)
+	mountKeyspaceStatsRoutes(mux, cfg, d.Monitor)
 
 	return RequireServiceRole(cfg, mux)
 }

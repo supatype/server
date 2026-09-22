@@ -79,6 +79,48 @@ type RouteManifest struct {
 	// and a validator by column, and folding them into one map would mean a column named
 	// "beforeChange" collided with an event.
 	Validators map[string]TableValidators `json:"validators,omitempty"`
+
+	// Cache maps table name → what the schema permits caching, written by `supatype push`.
+	//
+	// **A ceiling, not a setting.** The runtime may narrow any of it — lower a TTL, switch a table
+	// off — and may never widen it. A table absent from this map cannot be cached by anyone, which
+	// is the default and the reason absence is meaningful rather than merely empty.
+	//
+	// It arrives on the manifest rather than in the AST snapshot because the schema engine
+	// re-serialises its own parsed struct when it writes that snapshot, and its platform
+	// annotations know only `access` and `searchFields` — an unrecognised key is dropped in
+	// silence. Hooks above take this route for the same reason.
+	Cache map[string]TableCache `json:"cache,omitempty"`
+}
+
+// TableCache is what one table's schema permits. See RouteManifest.Cache.
+//
+// Every field is a pointer so that "the schema said nothing" and "the schema said false" stay
+// distinguishable. They are different instructions: silence leaves the decision to the runtime
+// default, and an explicit false is a hard opt-out that no runtime edit may undo. Collapsed into a
+// bare bool they would be the same value, and the opt-out would quietly become a suggestion.
+type TableCache struct {
+	// Enabled permits the response cache. Without it nothing else here applies.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// MaxTTL caps how long a response may be held, in seconds. The effective TTL is the smallest
+	// of this, the project's cache_max_ttl, and the client's max-age — every writer may only
+	// shorten it.
+	MaxTTL *int `json:"maxTtl,omitempty"`
+
+	// Public permits one entry shared across callers instead of per-user keys.
+	//
+	// `supatype push` refuses this on a table whose read rule varies by caller, which is where the
+	// check belongs: the model has the rule and the setting in one object. The server still makes
+	// its own runtime decision from the access rules — this only says the schema allows it.
+	Public *bool `json:"public,omitempty"`
+
+	// Rows permits the Mode B row cache on primary-key reads.
+	//
+	// Declaration-only: unlike the rest of this struct there is no runtime switch that turns it on.
+	// The row cache is eventual with a bound rather than read-your-writes, and whether a table
+	// tolerates that is a design-time invariant its author knows and an operator does not.
+	Rows *bool `json:"rows,omitempty"`
 }
 
 // TableValidators is one table's per-field validators, keyed by **column** name.
@@ -190,6 +232,15 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 			cm.Hooks[table] = copied
 		}
 	}
+	if len(m.Cache) > 0 {
+		// Copied for the same reason as the maps around it. The struct's own fields are pointers,
+		// but they are never written through after a load — only read — so copying the map is
+		// enough to keep one tenant's reload away from another's in-flight request.
+		cm.Cache = make(map[string]TableCache, len(m.Cache))
+		for table, c := range m.Cache {
+			cm.Cache[table] = c
+		}
+	}
 	if len(m.Validators) > 0 {
 		cm.Validators = make(map[string]TableValidators, len(m.Validators))
 		for table, fields := range m.Validators {
@@ -279,6 +330,12 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	// which hooks exist.
 	if overlay.Hooks != nil {
 		base.Hooks = overlay.Hooks
+	}
+	// Wholesale for the same reason, and more sharply: Cache is a ceiling. A table dropped from the
+	// schema's declaration must stop being cacheable at once, and a per-table merge would leave the
+	// old permission standing — the one direction the ceiling is not allowed to drift.
+	if overlay.Cache != nil {
+		base.Cache = overlay.Cache
 	}
 }
 

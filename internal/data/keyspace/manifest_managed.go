@@ -93,6 +93,12 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.Hooks != nil {
 		m.Hooks = tc.Hooks
 	}
+	// Wholesale, like Hooks and for a sharper reason: the declaration is a ceiling, so a table
+	// dropped from the schema has to stop being cacheable. A per-table merge would keep the old
+	// entry and go on permitting exactly the table the push removed.
+	if tc.Cache != nil {
+		m.Cache = tc.Cache
+	}
 	if tc.FunctionsEnabled != nil {
 		m.FunctionsEnabled = *tc.FunctionsEnabled
 	}

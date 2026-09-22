@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
@@ -91,12 +92,25 @@ func TestEveryOutcomeIsCounted(t *testing.T) {
 				BypassReasons: map[string]uint64{ReasonUnavailable: 1},
 			},
 		},
-		"a table with no cache rule": {
+		// Two different tables to add caching to, and two different things to do about it: the
+		// first needs a line in the model, the second a box ticked in Studio.
+		"a table the schema does not declare": {
 			deps:       func(c *Counter) Deps { return withStats(deps(keyspacetest.New(), cachingStore()), c) },
 			request:    request("/comments", "max-age=30"),
 			wantTenant: "local",
 			want: TableStats{
 				Table: "comments", Bypasses: 1,
+				BypassReasons: map[string]uint64{ReasonNotDeclared: 1},
+			},
+		},
+		"a declared table with no cache rule": {
+			deps: func(c *Counter) Deps {
+				return withStats(deps(keyspacetest.New(), staticStore{cfg: apiconfig.DefaultApiConfig()}), c)
+			},
+			request:    request("/posts", "max-age=30"),
+			wantTenant: "local",
+			want: TableStats{
+				Table: cachedTable, Bypasses: 1,
 				BypassReasons: map[string]uint64{ReasonTableNotCached: 1},
 			},
 		},

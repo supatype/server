@@ -48,6 +48,16 @@ type TenantConfig struct {
 	// unvalidated, silently. Same shape as the manifest's field so one type describes both paths.
 	Hooks map[string]proxy.TableHooks `json:"hooks,omitempty"`
 
+	// Cache is the per-table cache declaration, table → what the schema permits, as
+	// `supatype push` computes it.
+	//
+	// Beside Hooks and for the same reason: cloud has no manifest file on disk, so without this a
+	// project's declaration never reaches the pod that enforces it. That direction matters more
+	// here than it does for hooks — an absent declaration is read as "nothing may be cached"
+	// (cacheceiling.Narrow), so a control plane that writes hooks and not cache would turn every
+	// paid project's cache off and report the schema as the reason.
+	Cache map[string]proxy.TableCache `json:"cache,omitempty"`
+
 	// CorsAllowedOrigins is merged into the route manifest when present.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 

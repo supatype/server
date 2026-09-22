@@ -481,3 +481,68 @@ func TestNoDeclarationHookAtAllPermitsNothing(t *testing.T) {
 		t.Fatal("a nil Declared was read as permission")
 	}
 }
+
+// ─── the ceiling, on the way out ─────────────────────────────────────────────
+
+// Studio offers narrowing only, which it cannot do without knowing what it is narrowing from. A
+// control it refuses to move with no reason beside it reads as a broken control, so the ceiling
+// rides along with the active configuration rather than being inferred from a refusal.
+func TestTheGETCarriesWhatTheSchemaPermits(t *testing.T) {
+	yes, no, ttl := true, false, 60
+	ks := keyspacetest.New()
+	h := Handler(Deps{
+		Store:    newMemStore(),
+		Config:   devConfig(),
+		Cache:    ks,
+		Platform: ks,
+		Stats:    restcache.NewCounter(),
+		Declared: ceilingOf(map[string]proxy.TableCache{
+			"orders": {Enabled: &yes, Public: &no, Rows: &yes, MaxTTL: &ttl},
+		}),
+	})
+
+	rec := call(t, h, http.MethodGet, "/config/rest", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get: %d %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Schema   string                      `json:"schema"`
+		Declared map[string]proxy.TableCache `json:"declared"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode %s: %v", rec.Body.String(), err)
+	}
+	// The shape callers already parse is unchanged; the ceiling is beside it, not instead of it.
+	if got.Schema != "public" {
+		t.Fatalf("schema = %q, want the stored config still at the top level", got.Schema)
+	}
+	orders, ok := got.Declared["orders"]
+	if !ok {
+		t.Fatalf("declared = %+v, want orders", got.Declared)
+	}
+	if orders.Enabled == nil || !*orders.Enabled || orders.Public == nil || *orders.Public {
+		t.Fatalf("orders = %+v, want enabled and not public", orders)
+	}
+	if orders.Rows == nil || !*orders.Rows {
+		t.Fatalf("orders.rows = %v, want the row-cache declaration carried too", orders.Rows)
+	}
+	if orders.MaxTTL == nil || *orders.MaxTTL != 60 {
+		t.Fatalf("orders.maxTtl = %v, want 60", orders.MaxTTL)
+	}
+}
+
+func TestTheGETSaysNothingWhereNothingIsDeclared(t *testing.T) {
+	// Omitted rather than an empty object, and read by a client as "nothing is permitted" — the
+	// same direction every other reader of a missing declaration takes. An empty map serialised
+	// here would be indistinguishable from a server too old to have the field.
+	ks := keyspacetest.New()
+	h := Handler(Deps{
+		Store: newMemStore(), Config: devConfig(), Cache: ks, Platform: ks,
+		Stats: restcache.NewCounter(),
+	})
+
+	rec := call(t, h, http.MethodGet, "/config/rest", "", "")
+	if strings.Contains(rec.Body.String(), "declared") {
+		t.Fatalf("body = %s, want no declared key at all", rec.Body.String())
+	}
+}

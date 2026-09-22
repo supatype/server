@@ -13,6 +13,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
+	"github.com/supatype/server/internal/proxy"
 )
 
 // The cache had no test that ran a request through it. What it does with one is
@@ -80,6 +81,19 @@ func deps(cache keyspace.Client, store apiconfig.Store) Deps {
 		IdentityScoped: func(context.Context) (map[string]bool, bool) {
 			return map[string]bool{cachedTable: false}, true
 		},
+		// The schema permits the cached table everything, so these tests exercise the runtime
+		// rules rather than the ceiling. The ceiling has its own tests below.
+		Declared: declaring(proxy.TableCache{Enabled: boolp(true), Public: boolp(true)}),
+	}
+}
+
+func boolp(b bool) *bool { return &b }
+func intp(i int) *int    { return &i }
+
+// declaring is a schema that permits `cachedTable` exactly this much.
+func declaring(c proxy.TableCache) func(*http.Request) map[string]proxy.TableCache {
+	return func(*http.Request) map[string]proxy.TableCache {
+		return map[string]proxy.TableCache{cachedTable: c}
 	}
 }
 
@@ -639,5 +653,146 @@ func TestNilTenantsFallsBackToTheCacheClient(t *testing.T) {
 	rec := serve(d, &upstream{}, request("/posts", "max-age=30"))
 	if got := rec.Header().Get(statusHeader); got != "MISS" {
 		t.Errorf("status = %q, want MISS", got)
+	}
+}
+
+// ─── the ceiling, on the read path ───────────────────────────────────────────
+
+// publicRequest is one caller asking for a shared entry.
+func publicRequest(token string) *http.Request {
+	req := request("/posts", "max-age=30, public")
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
+}
+
+// The stored allowlist is what an operator chose. The declaration is what the schema allows them
+// to choose from, and a push can lower it without touching the allowlist — so it is consulted on
+// every request rather than only when the allowlist is written.
+func TestATableTheSchemaStoppedDeclaringIsNoLongerServedFromCache(t *testing.T) {
+	cache, next := keyspacetest.New(), &upstream{}
+	d := deps(cache, staticStore{cfg: cachingConfig(false)})
+
+	// Warm it while the schema still permits it.
+	if got := serve(d, next, request("/posts", "max-age=30")).Header().Get(statusHeader); got != "MISS" {
+		t.Fatalf("warm-up: status = %q, want MISS", got)
+	}
+	if len(cache.Keys()) != 1 {
+		t.Fatalf("nothing was cached to begin with: %v", cache.Keys())
+	}
+
+	// The push that drops the model's cache block. The allowlist still says enabled — that is the
+	// whole point: nothing wrote to it.
+	d.Declared = func(*http.Request) map[string]proxy.TableCache { return nil }
+
+	before := next.calls
+	rec := serve(d, next, request("/posts", "max-age=30"))
+	if got := rec.Header().Get(statusHeader); got != "" {
+		t.Errorf("status = %q, want no cache header", got)
+	}
+	if next.calls != before+1 {
+		t.Error("the entry was still served from the cache after the schema stopped permitting it")
+	}
+	if rec.Body.String() != upstreamBody {
+		t.Errorf("the response was not passed through: %q", rec.Body.String())
+	}
+}
+
+// A deployment that never wired the ceiling is not one where everything is permitted. It is the
+// same reading as a manifest with no declaration, and the alternative — nil meaning "no
+// constraint" — would make forgetting to wire it the way to disable the rule.
+func TestNoDeclarationSourceAtAllPermitsNothing(t *testing.T) {
+	cache, next := keyspacetest.New(), &upstream{}
+	d := deps(cache, staticStore{cfg: cachingConfig(false)})
+	d.Declared = nil
+
+	serve(d, next, request("/posts", "max-age=30"))
+
+	if len(cache.Keys()) != 0 {
+		t.Fatalf("caching ran with no ceiling wired at all: %v", cache.Keys())
+	}
+}
+
+func TestADeclarationThatSaysEnabledFalseIsNotServedEither(t *testing.T) {
+	cache, next := keyspacetest.New(), &upstream{}
+	d := deps(cache, staticStore{cfg: cachingConfig(false)})
+	d.Declared = declaring(proxy.TableCache{Enabled: boolp(false)})
+
+	serve(d, next, request("/posts", "max-age=30"))
+
+	if len(cache.Keys()) != 0 {
+		t.Fatalf("a hard opt-out was cached anyway: %v", cache.Keys())
+	}
+}
+
+// The tighter of the two caps wins, and the table being served is the reason this lives here
+// rather than beside the project-wide one.
+func TestADeclaredCapShortensTheTTLForThatTableAlone(t *testing.T) {
+	cache, next := keyspacetest.New(), &upstream{}
+	d := deps(cache, staticStore{cfg: cachingConfig(false)}) // cache_max_ttl = 60
+	d.Declared = declaring(proxy.TableCache{Enabled: boolp(true), MaxTTL: intp(5)})
+
+	serve(d, next, request("/posts", "max-age=30"))
+
+	keys := cache.Keys()
+	if len(keys) != 1 {
+		t.Fatalf("keys = %v, want one", keys)
+	}
+	ttl, err := cache.TTLSeconds(context.Background(), keys[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A range, because the fake stores a deadline and reports whole seconds remaining. Without the
+	// declared cap this is 30, so the bound is what the assertion is about.
+	if ttl <= 0 || ttl > 5 {
+		t.Fatalf("ttl = %d, want it capped at the declared 5s", ttl)
+	}
+}
+
+// A declared cap is a ceiling on the TTL, not a reason to start caching: the project-wide zero is
+// an operator's off switch and nothing in the schema may reach past it.
+func TestADeclaredCapDoesNotOverrideTheProjectWideOffSwitch(t *testing.T) {
+	cache, next := keyspacetest.New(), &upstream{}
+	cfg := apiconfig.DefaultApiConfig() // cache_max_ttl = 0
+	cfg.Rest.CacheTables[cachedTable] = apiconfig.RestTableCacheConfig{Enabled: true}
+	d := deps(cache, staticStore{cfg: cfg})
+	d.Declared = declaring(proxy.TableCache{Enabled: boolp(true), MaxTTL: intp(30)})
+
+	serve(d, next, request("/posts", "max-age=30"))
+
+	if len(cache.Keys()) != 0 {
+		t.Fatalf("caching ran with cache_max_ttl = 0: %v", cache.Keys())
+	}
+}
+
+// `allow_public` is the operator's half and `public` is the schema's. Both are required, which is
+// what stops a ticked box from outliving the declaration that justified it.
+func TestAPublicEntryNeedsBothTheAllowlistAndTheDeclaration(t *testing.T) {
+	for name, tc := range map[string]struct {
+		allowPublic    bool
+		declaredPublic bool
+		wantShared     bool
+	}{
+		"both":               {allowPublic: true, declaredPublic: true, wantShared: true},
+		"the schema only":    {declaredPublic: true},
+		"the allowlist only": {allowPublic: true},
+		"neither":            {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cache, next := keyspacetest.New(), &upstream{}
+			d := deps(cache, staticStore{cfg: cachingConfig(tc.allowPublic)})
+			d.Declared = declaring(proxy.TableCache{Enabled: boolp(true), Public: boolp(tc.declaredPublic)})
+
+			// Two different callers asking for the same shared entry. They share one only when
+			// the entry is keyed globally, so the upstream not being reached a second time is
+			// what "shared" means here.
+			serve(d, next, publicRequest("token-a"))
+			before := next.calls
+			serve(d, next, publicRequest("token-b"))
+
+			shared := next.calls == before
+			if shared != tc.wantShared {
+				t.Fatalf("entry shared across callers = %v, want %v", shared, tc.wantShared)
+			}
+		})
 	}
 }

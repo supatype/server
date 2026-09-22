@@ -138,6 +138,7 @@ func buildREST(d *Deps) http.Handler {
 				SchemaFor:      d.RestSchema,
 				MaxRowsFor:     d.RestMaxRows,
 				IdentityScoped: d.IdentityScopedTables,
+				Declared:       d.DeclaredCache,
 				Stats:          d.CacheStats,
 			},
 			d.Hooks(restProxyHandler(d)),

@@ -9,8 +9,10 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/cacheceiling"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/proxy"
 )
 
 // statusHeader tells the caller what the cache did: HIT, MISS, or BYPASS when
@@ -41,9 +43,30 @@ type Deps struct {
 	MaxRowsFor     func(*http.Request) string
 	IdentityScoped IdentityScoped
 
+	// Declared is what this request's schema permits caching, per table: the ceiling the stored
+	// allowlist is chosen from (§13.2).
+	//
+	// Consulted on every request rather than only when the allowlist is written, because the two
+	// move independently. A push that drops a model's `cache` block lowers the ceiling and does
+	// not touch the allowlist, and without this every read after it would still be served from a
+	// cache the schema no longer permits.
+	//
+	// Nil, or a nil return, is "nothing may be cached" — the same reading cacheceiling.Narrow
+	// takes on the write path. Treating an absent declaration as permission would make an old
+	// manifest an open door, and would let the two paths disagree about the same project.
+	Declared func(*http.Request) map[string]proxy.TableCache
+
 	// Stats counts what the cache did, per table. Nil is allowed and means the
 	// outcomes are not counted; see Counter.
 	Stats *Counter
+}
+
+// declaredCache is this request's ceiling, or nil when there is none to read.
+func (d Deps) declaredCache(req *http.Request) map[string]proxy.TableCache {
+	if d.Declared == nil {
+		return nil
+	}
+	return d.Declared(req)
 }
 
 // tenants is where the tenant configuration is read from, falling back to the
@@ -132,8 +155,21 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 		return plan{}, false, false
 	}
 
+	// The ceiling first: a table the schema does not declare is not "off", it is not permitted, and
+	// that is a different thing to tell someone. Checked before the allowlist so the reason names
+	// the constraint they would have to change rather than the box they already ticked.
+	permitted, declared := cacheceiling.Permits(d.declaredCache(req), table)
+	if !declared {
+		bypass(ReasonNotDeclared)
+		// Counted, not announced. The BYPASS header means the cache was asked for and could not
+		// be run at all; a table that is simply not cacheable is a configuration answer, and it
+		// reaches its audience through the per-table report rather than a response header on
+		// every request. Same treatment the runtime allowlist already gets below.
+		return plan{}, false, false
+	}
+
 	tableCfg, tableAllowed := restCfg.Rest.TableCacheAllowed(table)
-	ttl := EffectiveTTL(restCfg.Rest.CacheMaxTTL, clientMaxAge, tableAllowed)
+	ttl := EffectiveTTL(cacheceiling.CapTTL(restCfg.Rest.CacheMaxTTL, permitted), clientMaxAge, tableAllowed)
 	if ttl <= 0 || d.Cache == nil {
 		if d.Cache == nil {
 			bypass(ReasonUnavailable)
@@ -143,7 +179,7 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 		return plan{}, false, asked && d.Cache == nil
 	}
 
-	usePublic := d.publicScope(req, table, tableCfg.AllowPublic)
+	usePublic := d.publicScope(req, table, tableCfg.AllowPublic && permitted.Public)
 	return plan{
 		key: BuildKey(keyParts{
 			Tenant:   tenant,

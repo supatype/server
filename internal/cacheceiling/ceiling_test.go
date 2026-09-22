@@ -279,3 +279,86 @@ func TestNoDeclarationMeansNoRowCache(t *testing.T) {
 		t.Fatalf("row cache tables = %v, want none without rows:true", got)
 	}
 }
+
+// ─── the ceiling on the read path ────────────────────────────────────────────
+
+// Permits answers the question the read path asks, which is not quite the one Narrow asks: not
+// "what may be stored", but "may this request be served from a cache at all, and how long for".
+func TestWhatTheSchemaPermitsPerTable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		declared map[string]proxy.TableCache
+		want     Permitted
+		wantOK   bool
+	}{
+		"no declaration at all": {
+			declared: nil,
+		},
+		"another table declared": {
+			declared: map[string]proxy.TableCache{"comments": {Enabled: b(true)}},
+		},
+		"declared off": {
+			declared: map[string]proxy.TableCache{"posts": {Enabled: b(false)}},
+		},
+		// A declaration that names only `rows` or only `maxTtl` is still a declaration: `enabled`
+		// absent is permission, and only an explicit false is the opt-out. Narrow reads it the
+		// same way, and the two paths disagreeing about one manifest is the bug this pins.
+		"declared with no enabled key": {
+			declared: map[string]proxy.TableCache{"posts": {Rows: b(true)}},
+			wantOK:   true,
+		},
+		"declared on": {
+			declared: map[string]proxy.TableCache{"posts": {Enabled: b(true)}},
+			wantOK:   true,
+		},
+		"declared public": {
+			declared: map[string]proxy.TableCache{"posts": {Enabled: b(true), Public: b(true)}},
+			want:     Permitted{Public: true},
+			wantOK:   true,
+		},
+		"declared with a cap": {
+			declared: map[string]proxy.TableCache{"posts": {Enabled: b(true), MaxTTL: i(30)}},
+			want:     Permitted{MaxTTL: 30},
+			wantOK:   true,
+		},
+		// Zero is not a cap of zero seconds, which would be a declaration that permits caching and
+		// then forbids every entry. It is the absence of a declared cap.
+		"declared with a zero cap": {
+			declared: map[string]proxy.TableCache{"posts": {Enabled: b(true), MaxTTL: i(0)}},
+			wantOK:   true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := Permits(tc.declared, "posts")
+			if ok != tc.wantOK {
+				t.Fatalf("permitted = %v, want %v", ok, tc.wantOK)
+			}
+			if got != tc.want {
+				t.Fatalf("permits = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The per-table cap is the half narrowTTL leaves to the read path, where the table is known.
+func TestTheLowerOfTheTwoCapsWins(t *testing.T) {
+	for name, tc := range map[string]struct {
+		projectWide int
+		declared    int
+		want        int
+	}{
+		"no declared cap":             {projectWide: 60, want: 60},
+		"declared cap is tighter":     {projectWide: 60, declared: 30, want: 30},
+		"project-wide cap is tighter": {projectWide: 10, declared: 30, want: 10},
+		"the caps agree":              {projectWide: 30, declared: 30, want: 30},
+		// The off switch is not a cap to be improved on: a declared 30 here would mean this
+		// function raising a TTL, which is the one thing the package forbids.
+		"caching off project-wide":      {projectWide: 0, declared: 30, want: 0},
+		"nothing declared, caching off": {projectWide: 0, want: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := CapTTL(tc.projectWide, Permitted{MaxTTL: tc.declared}); got != tc.want {
+				t.Fatalf("CapTTL(%d, %d) = %d, want %d", tc.projectWide, tc.declared, got, tc.want)
+			}
+		})
+	}
+}

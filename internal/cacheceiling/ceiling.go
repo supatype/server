@@ -165,3 +165,58 @@ func RowCacheTables(declared map[string]proxy.TableCache) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Permitted is what the schema permits for one table, in the terms the read path needs.
+//
+// MaxTTL zero means the schema declared no cap, not a cap of zero: `cache: { enabled: true }` with
+// no `maxTtl` permits caching at whatever the project-wide TTL allows.
+type Permitted struct {
+	MaxTTL int
+	Public bool
+}
+
+// Permits reports what the schema permits for one table, and whether it permits caching at all.
+//
+// This is the ceiling on the read path. Narrow applies it when the allowlist is written, which is
+// not sufficient on its own: a push that drops a model's cache block lowers the ceiling without
+// touching the stored allowlist, and every read after it would go on being served from a cache the
+// schema no longer permits. The stored allowlist is what an operator chose; this is what the schema
+// allows them to choose from, and both are consulted on every request.
+//
+// `enabled` absent is permission — a declaration that sets only `maxTtl` or `rows` is still a
+// declaration. Only an explicit `enabled: false` is the opt-out, which is the same reading Narrow
+// takes.
+func Permits(declared map[string]proxy.TableCache, table string) (Permitted, bool) {
+	c, ok := declared[table]
+	if !ok {
+		return Permitted{}, false
+	}
+	if c.Enabled != nil && !*c.Enabled {
+		return Permitted{}, false
+	}
+	p := Permitted{Public: c.Public != nil && *c.Public}
+	if c.MaxTTL != nil && *c.MaxTTL > 0 {
+		p.MaxTTL = *c.MaxTTL
+	}
+	return p, true
+}
+
+// CapTTL applies a declared per-table cap to the project-wide TTL.
+//
+// The lower of the two, with zero on the declared side meaning "no cap declared". This is the
+// per-table half narrowTTL deliberately left to the read path: there, the table being served is
+// known, so one model's five-second cap constrains that model and nothing else.
+//
+// A project-wide TTL of zero is the operator's off switch and is returned untouched. Letting a
+// declared cap stand in for it would have this function *raise* a TTL from nothing to thirty
+// seconds — the one thing the package exists to make impossible, reached by the arithmetic rather
+// than by a rule.
+func CapTTL(projectWide int, p Permitted) int {
+	if projectWide <= 0 {
+		return projectWide
+	}
+	if p.MaxTTL > 0 && p.MaxTTL < projectWide {
+		return p.MaxTTL
+	}
+	return projectWide
+}

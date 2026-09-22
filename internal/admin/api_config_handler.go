@@ -128,7 +128,13 @@ func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace
 			if !ok {
 				return
 			}
-			utilities.WriteJSON(w, http.StatusOK, api.Rest)
+			// The ceiling rides along with the active configuration, because a screen that shows
+			// one without the other cannot explain itself. Studio offers narrowing only (§13.2),
+			// and a box it refuses to tick with no reason beside it reads as a broken control.
+			utilities.WriteJSON(w, http.StatusOK, restConfigResponse{
+				RestConfig: api.Rest,
+				Declared:   declaredTables(declared, r),
+			})
 		case http.MethodPatch:
 			patchRestConfig(w, r, store, cfg, tenants, db, declared)
 		default:
@@ -227,6 +233,10 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 type restConfigResponse struct {
 	apiconfig.RestConfig
 	RowCache *rowCacheReconcile `json:"row_cache,omitempty"`
+	// Declared is what the schema permits, per table: the ceiling this configuration was chosen
+	// from. Omitted when empty, which a reader must take as "nothing is permitted" rather than
+	// "no constraint" — the same direction every other reader of a missing declaration takes.
+	Declared map[string]proxy.TableCache `json:"declared,omitempty"`
 	// Adjusted is everything the schema's ceiling refused or reduced.
 	//
 	// Reported rather than applied in silence: an operator who ticks a box and watches it untick

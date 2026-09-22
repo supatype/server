@@ -29,6 +29,11 @@ const (
 	ReasonTier = "tier"
 	// ReasonTableNotCached is a table with no cache rule, or a TTL of zero.
 	ReasonTableNotCached = "table_not_cached"
+	// ReasonNotDeclared is a table whose schema declares no cache, or declares
+	// `enabled: false`. Apart from ReasonTableNotCached because the two are
+	// different things to do about it: one is a box to tick in Studio, the
+	// other is a line to add to the model and push.
+	ReasonNotDeclared = "not_declared"
 	// ReasonUnavailable is no keyspace configured at all.
 	ReasonUnavailable = "unavailable"
 	// ReasonConfigUnreadable is the API configuration failing to read, which

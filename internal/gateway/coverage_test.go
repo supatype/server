@@ -17,6 +17,8 @@ import (
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/proxy"
 )
@@ -178,6 +180,18 @@ func TestAdminPoolWithoutADatabase(t *testing.T) {
 	}
 	if pool != nil {
 		t.Errorf("pool = %#v, want a nil interface", pool)
+	}
+}
+
+// A deployment with no database cannot read pg_keyspace's views either, and the
+// admin API is handed a nil interface rather than a typed nil it would call a
+// method on. The stats routes render that as "unavailable", which is a state,
+// not an error: an instance without the extension is a supported instance.
+func TestKeyspaceMonitorWithoutADatabase(t *testing.T) {
+	d := depsFor(t, &config.Config{Mode: "standalone"}, nil)
+
+	if monitor := d.KeyspaceMonitor(); monitor != nil {
+		t.Errorf("monitor = %#v, want a nil interface", monitor)
 	}
 }
 
@@ -1016,5 +1030,113 @@ func TestThePreviousCallbackReadsFromTheTenantsPostgREST(t *testing.T) {
 	}
 	if seen != "app" {
 		t.Errorf("the fetch asked for schema %q, want the tenant's", seen)
+	}
+}
+
+// ─── the platform / project keyspace split ────────────────────────────────────
+
+// NewDeps must carry both clients, because the response cache needs both and for
+// different reasons: what it stores belongs to the project, while whether it may
+// store anything is read from the tenant config, which is platform state.
+func TestDepsCarryBothKeyspaces(t *testing.T) {
+	d := depsFor(t, &config.Config{Mode: "standalone"}, nil)
+	if d.Cache == nil {
+		t.Error("Cache must never be nil")
+	}
+	if d.PlatformCache == nil {
+		t.Error("PlatformCache must never be nil")
+	}
+}
+
+// With one address configured both fields resolve to the same client, which is
+// the self-host and dev shape. A test rather than a comment because this is what
+// keeps the pre-split deployment behaving identically.
+func TestOneAddressGivesBothHalvesTheSameClient(t *testing.T) {
+	d := depsFor(t, &config.Config{Mode: "standalone", KeyspaceAddr: ""}, nil)
+	if d.Cache != d.PlatformCache {
+		t.Error("with one keyspace configured, both halves should be the same client")
+	}
+}
+
+// Where the API configuration is kept, and why it is not always the same place.
+//
+// On a managed pod the file is on the container's own filesystem with no volume mounted for it, so
+// every restart brought the process back with the defaults and silently turned the REST response
+// cache off for the whole project. The keyspace is durable and reachable from every replica.
+
+func TestAManagedPodKeepsItsAPIConfigInTheKeyspace(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abcdef", ApiConfigPath: "/tmp/unused.json"}
+	store := apiConfigStore(cfg, keyspacetest.New())
+
+	if _, ok := store.(*apiconfig.KeyspaceStore); !ok {
+		t.Fatalf("store = %T, want the durable one", store)
+	}
+}
+
+func TestDevAndSelfHostKeepTheirAPIConfigInAFile(t *testing.T) {
+	// The working directory persists there and is the thing a developer expects to edit.
+	for name, cfg := range map[string]*config.Config{
+		"no keyspace":    {Mode: "managed", ManagedProjectRef: "abcdef"},
+		"not managed":    {Mode: "standalone", ManagedProjectRef: "abcdef"},
+		"no project ref": {Mode: "managed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var platform keyspace.Client = keyspacetest.New()
+			if name == "no keyspace" {
+				platform = keyspace.Unavailable()
+			}
+			if _, ok := apiConfigStore(cfg, platform).(*apiconfig.FileStore); !ok {
+				t.Fatalf("store = %T, want the file", apiConfigStore(cfg, platform))
+			}
+		})
+	}
+}
+
+func TestANilPlatformClientFallsBackRatherThanPanicking(t *testing.T) {
+	// A nil here would take the pod down at boot rather than at first use.
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abcdef"}
+	if _, ok := apiConfigStore(cfg, nil).(*apiconfig.FileStore); !ok {
+		t.Fatal("a nil platform client should fall back to the file")
+	}
+}
+
+// The cache ceiling reaches the admin API per request, because a multi-tenant pod resolves its
+// manifest per request and one map read at mount time would hand every tenant the first one's.
+
+func TestDeclaredCacheComesFromThisRequestsManifest(t *testing.T) {
+	yes := true
+	d := depsFor(t, &config.Config{Mode: "standalone"}, &proxy.RouteManifest{
+		Cache: map[string]proxy.TableCache{"posts": {Enabled: &yes, Rows: &yes}},
+	})
+
+	got := d.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil))
+	if got["posts"].Rows == nil || !*got["posts"].Rows {
+		t.Fatalf("declared = %+v, want posts with rows", got)
+	}
+}
+
+func TestAManifestWithNoCacheDeclarationPermitsNothing(t *testing.T) {
+	// Not "no constraint". An absent declaration read as permission would turn a manifest written
+	// before this field existed into an open door.
+	d := depsFor(t, &config.Config{Mode: "standalone"}, &proxy.RouteManifest{})
+	if got := d.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); len(got) != 0 {
+		t.Fatalf("declared = %+v, want nothing", got)
+	}
+}
+
+func TestDeclaredCacheSurvivesAMissingManifest(t *testing.T) {
+	// A nil Deps or a nil ManifestFor takes the pod down at first admin request rather than at
+	// boot, which is the worse time to find out.
+	var nilDeps *Deps
+	if got := nilDeps.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); got != nil {
+		t.Errorf("nil Deps = %+v", got)
+	}
+	if got := (&Deps{}).DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); got != nil {
+		t.Errorf("nil ManifestFor = %+v", got)
+	}
+	d := depsFor(t, &config.Config{Mode: "standalone"}, nil)
+	d.ManifestFor = func(*http.Request) *proxy.RouteManifest { return nil }
+	if got := d.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); got != nil {
+		t.Errorf("nil manifest = %+v", got)
 	}
 }

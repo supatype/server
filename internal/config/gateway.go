@@ -106,6 +106,26 @@ type Config struct {
 	// variables without the SUPATYPE_ prefix. Same value, lower precedence.
 	KeyspaceAddrBare string `envconfig:"KEYSPACE_ADDR"`
 
+	// ProjectKeyspaceAddr is the RESP address of *this project's own* keyspace,
+	// which holds its REST response cache and nothing else.
+	//
+	// It is a second address because the two keyspaces hold different kinds of
+	// thing. The tenant configuration and the wrapped DB credentials are platform
+	// state: one control plane writes them centrally, and a pod that cannot read
+	// them cannot serve. A cached response belongs to the project, is worth
+	// nothing to anyone else, and is best kept in the project's own Postgres —
+	// where its memory is charged to that project and its statistics describe
+	// that project without anything having to be filtered per tenant.
+	//
+	// Unset, it falls back to KeyspaceAddress, which is the single-keyspace
+	// deployment: self-host, dev, and cloud before the split. Read through
+	// ProjectKeyspaceAddress.
+	ProjectKeyspaceAddr string `envconfig:"SUPATYPE_PROJECT_KEYSPACE_ADDR"`
+
+	// ProjectKeyspaceAddrBare is the unprefixed spelling. Same value, lower
+	// precedence.
+	ProjectKeyspaceAddrBare string `envconfig:"PROJECT_KEYSPACE_ADDR"`
+
 	// ManagedProjectRef is the cloud project ref (slug) for a single-tenant managed pod.
 	// When set with Mode=managed and a keyspace address, the route manifest is merged
 	// from keyspace keys tenant:{ref}:config and tenant:{ref}:manifest.
@@ -291,6 +311,23 @@ func (c *Config) KeyspaceAddress() string {
 		}
 	}
 	return ""
+}
+
+// ProjectKeyspaceAddress is the RESP address this process caches responses in.
+//
+// It falls back to KeyspaceAddress rather than to "", and that default is the
+// whole compatibility story: a deployment with one keyspace sets one address and
+// both halves resolve to it, so nothing changes until an operator deliberately
+// splits them. Falling back to "" instead would turn every existing deployment's
+// response cache off on upgrade, silently, and look like a performance
+// regression rather than a configuration change.
+func (c *Config) ProjectKeyspaceAddress() string {
+	for _, addr := range []string{c.ProjectKeyspaceAddr, c.ProjectKeyspaceAddrBare} {
+		if addr = strings.TrimSpace(addr); addr != "" {
+			return addr
+		}
+	}
+	return c.KeyspaceAddress()
 }
 
 // SQLDSN is the connection string for the server-side features that read the

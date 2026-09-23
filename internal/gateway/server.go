@@ -114,7 +114,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// closure below is built before it is assigned, and a nil Gateway closes and
 	// wraps as a no-op.
 	var tenantGateway *platform.Gateway
-	ksShared := keyspace.Unavailable()
+	ksPlatform := keyspace.Unavailable()
 
 	// fail releases what has been acquired so far and returns the bootstrap error.
 	fail := func(err error) (http.Handler, func(), error) {
@@ -185,19 +185,22 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	if resErr != nil {
 		return fail(resErr)
 	}
-	ksShared = resources.Cache()
+	// The platform keyspace, not the project one: the route manifest and the MAU
+	// day-sets are written centrally, and reading them from a project's own
+	// keyspace would find nothing and serve file defaults to a configured tenant.
+	ksPlatform = resources.PlatformCache()
 
-	mergeFromKeyspace := managed && ksShared.Available() && ref != ""
-	perTenantManifest := managed && ksShared.Available() && ref == ""
+	mergeFromKeyspace := managed && ksPlatform.Available() && ref != ""
+	perTenantManifest := managed && ksPlatform.Available() && ref == ""
 
 	live := newLiveManifests(manifest)
 	if perTenantManifest {
-		live.tenant = keyspace.NewTenantManifestCache(ksShared, 0, live.Base)
+		live.tenant = keyspace.NewTenantManifestCache(ksPlatform, 0, live.Base)
 		logrus.Info("serve: per-tenant route manifests from the keyspace (SUPATYPE_MANAGED_PROJECT_REF unset)")
 	}
 	if mergeFromKeyspace {
 		live.merge = func(ctx context.Context, fileM *proxy.RouteManifest) (*proxy.RouteManifest, error) {
-			return keyspace.LoadMergedManagedManifest(ctx, ksShared, ref, fileM)
+			return keyspace.LoadMergedManagedManifest(ctx, ksPlatform, ref, fileM)
 		}
 		live.Reapply(manifest)
 		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from the keyspace")
@@ -312,7 +315,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		_ = db.Close()
 	}
 
-	tenantGateway = platform.New(srvCfg, ksShared)
+	tenantGateway = platform.New(srvCfg, ksPlatform)
 	handler := tenantGateway.Wrap(outerMux)
 	return handler, drain, nil
 }

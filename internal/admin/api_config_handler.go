@@ -6,16 +6,20 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/cacheceiling"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/modes"
+	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
+	"github.com/supatype/server/internal/rowcache"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -49,25 +53,74 @@ func inRange(name string, value, low, high int) error {
 }
 
 // Handler returns a mux covering all /admin/v1 routes.
-// Mount it with r.Mount("/admin/v1", Handler(store, cfg, cache)).
-func Handler(store apiconfig.Store, cfg *config.Config, vc keyspace.Client) http.Handler {
+// Mount it with r.Mount("/admin/v1", Handler(store, cfg, cache, platform, stats)).
+//
+// Two keyspaces, because the routes below want different ones. The cache routes
+// read and delete cached responses, which live in the project's own keyspace.
+// The credential routes read and write the KEK-wrapped managed password, whose
+// only copy is platform state — served from the project keyspace they would
+// report "no credentials" for a project that has them, and a rotation would
+// write the new secret somewhere the control plane will never look. Eligibility
+// is platform state too: it comes from the tenant configuration.
+//
+// On a single-keyspace deployment the caller passes the same client twice, which
+// is exactly what it was before the split.
+//
+// Stats may be nil, which serves the cache-statistics route with an empty
+// report rather than removing it: a screen that asks for numbers should be told
+// there are none, not given a 404 to interpret. Monitor may be nil on the same
+// principle, and for the commoner reason — a deployment with no database DSN.
+//
+// A struct rather than a parameter list because Cache and Platform have the
+// same type and opposite meanings. Swapping them at a call site compiles
+// cleanly and turns the response cache off for every paid project, since a miss
+// for tenant configuration in the project keyspace is indistinguishable from a
+// tenant nobody ever published. That is the failure the two-keyspace split was
+// mostly about, and positional arguments are how it would come back.
+type Deps struct {
+	Store  apiconfig.Store
+	Config *config.Config
+	// Cache is the project's keyspace: where cached responses are stored.
+	Cache keyspace.Client
+	// Platform is the platform keyspace: tenant configuration, eligibility, and
+	// the KEK-wrapped managed credential. On a single-keyspace deployment this
+	// is the same client as Cache, which is exactly what it was before the split.
+	Platform keyspace.Client
+	Stats    *restcache.Counter
+	// Monitor reads pg_keyspace's own views out of the project's Postgres. They
+	// are SQL over shared memory, so neither keyspace client can answer for them.
+	Monitor StatsQuerier
+	// Declared is what the schema permits caching, per table, for this request's tenant. It comes
+	// from the route manifest, which is where `supatype push` puts it.
+	//
+	// A function rather than a map because a multi-tenant pod resolves its manifest per request: a
+	// map captured at mount time would hand every tenant the first one's ceiling.
+	//
+	// Nil, or a nil return, means no declaration — which is "nothing may be cached", not "no
+	// constraint". See cacheceiling.Narrow.
+	Declared func(*http.Request) map[string]proxy.TableCache
+}
+
+func Handler(d Deps) http.Handler {
+	store, cfg, vc, platform, stats := d.Store, d.Config, d.Cache, d.Platform, d.Stats
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, vc))
+	mux.HandleFunc("/config/rest", restConfigRoute(store, cfg, platform, d.Monitor, d.Declared))
 	mux.HandleFunc("/config/graphql", graphQLConfigRoute(store))
 
-	mux.HandleFunc("/database/credentials/status", only(http.MethodGet, credentialStatusHandler(cfg, vc)))
-	mux.HandleFunc("/database/credentials/first-view", only(http.MethodPost, credentialFirstViewHandler(cfg, vc)))
-	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, vc)))
+	mux.HandleFunc("/database/credentials/status", only(http.MethodGet, credentialStatusHandler(cfg, platform)))
+	mux.HandleFunc("/database/credentials/first-view", only(http.MethodPost, credentialFirstViewHandler(cfg, platform)))
+	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, platform)))
 
-	mountCacheRoutes(mux, cfg, vc)
+	mountCacheRoutes(mux, cfg, vc, platform, stats)
+	mountKeyspaceStatsRoutes(mux, cfg, d.Monitor)
 
 	return RequireServiceRole(cfg, mux)
 }
 
 // ─── REST configuration ───────────────────────────────────────────────────────
 
-func restConfigRoute(store apiconfig.Store, cfg *config.Config, vc keyspace.Client) http.HandlerFunc {
+func restConfigRoute(store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB, declared declaredFor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -75,9 +128,15 @@ func restConfigRoute(store apiconfig.Store, cfg *config.Config, vc keyspace.Clie
 			if !ok {
 				return
 			}
-			utilities.WriteJSON(w, http.StatusOK, api.Rest)
+			// The ceiling rides along with the active configuration, because a screen that shows
+			// one without the other cannot explain itself. Studio offers narrowing only (§13.2),
+			// and a box it refuses to tick with no reason beside it reads as a broken control.
+			utilities.WriteJSON(w, http.StatusOK, restConfigResponse{
+				RestConfig: api.Rest,
+				Declared:   declaredTables(declared, r),
+			})
 		case http.MethodPatch:
-			patchRestConfig(w, r, store, cfg, vc)
+			patchRestConfig(w, r, store, cfg, tenants, db, declared)
 		default:
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -92,7 +151,7 @@ type restPatch struct {
 	CacheTables *map[string]apiconfig.RestTableCacheConfig `json:"cache_tables"`
 }
 
-func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, vc keyspace.Client) {
+func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Store, cfg *config.Config, tenants keyspace.Client, db rowcache.DB, declared declaredFor) {
 	var body restPatch
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -103,7 +162,7 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 	// are refused before anything is read or written. Checked against the
 	// server's configuration, not the stored API config.
 	if (body.CacheMaxTTL != nil || body.CacheTables != nil) &&
-		!restcache.ServerCacheOffered(r.Context(), cfg, vc, r) {
+		!restcache.ServerCacheOffered(r.Context(), cfg, tenants, r) {
 		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 			"error":   "rest_cache_not_available",
 			"message": "Server-side REST caching is included on paid Cloud plans and self-host.",
@@ -141,9 +200,98 @@ func patchRestConfig(w http.ResponseWriter, r *http.Request, store apiconfig.Sto
 		api.Rest.CacheTables = *body.CacheTables
 	}
 
-	if saveAPIConfig(w, r, store, api) {
-		utilities.WriteJSON(w, http.StatusOK, api.Rest)
+	// The ceiling, before the save rather than after: what is stored has to be what is permitted,
+	// or a later read would serve the unnarrowed request as though it had been accepted. §13.2.
+	ceiling := declaredTables(declared, r)
+	narrowed, adjustments := cacheceiling.Narrow(ceiling, api.Rest)
+	api.Rest = narrowed
+
+	if !saveAPIConfig(w, r, store, api) {
+		return
 	}
+
+	// After the save, not before: the allowlist is the source of truth and the
+	// registrations follow it. Reconciling first would leave a database
+	// registered for tables a failed write never allowed.
+	//
+	// Only when the allowlist itself moved. A schema or max_rows change is not
+	// a reason to touch the row cache, and a reconcile on every PATCH would put
+	// database round trips behind edits that have nothing to do with caching.
+	resp := restConfigResponse{RestConfig: api.Rest, Adjusted: adjustments}
+	if body.CacheTables != nil {
+		resp.RowCache = reconcileRowCache(r, db, api.Rest.Schema, ceiling)
+	}
+	utilities.WriteJSON(w, http.StatusOK, resp)
+}
+
+// restConfigResponse is the REST config, plus what changing the allowlist did
+// to the row cache.
+//
+// Embedded so the shape callers already parse is unchanged: RestCacheBrowser
+// reads cache_max_ttl and cache_tables off the top level and must keep working
+// against a server that grew a field.
+type restConfigResponse struct {
+	apiconfig.RestConfig
+	RowCache *rowCacheReconcile `json:"row_cache,omitempty"`
+	// Declared is what the schema permits, per table: the ceiling this configuration was chosen
+	// from. Omitted when empty, which a reader must take as "nothing is permitted" rather than
+	// "no constraint" — the same direction every other reader of a missing declaration takes.
+	Declared map[string]proxy.TableCache `json:"declared,omitempty"`
+	// Adjusted is everything the schema's ceiling refused or reduced.
+	//
+	// Reported rather than applied in silence: an operator who ticks a box and watches it untick
+	// itself has been told nothing, and will tick it again.
+	Adjusted []cacheceiling.Adjustment `json:"adjusted,omitempty"`
+}
+
+// declaredFor resolves this request's cache ceiling. See Deps.Declared.
+type declaredFor func(*http.Request) map[string]proxy.TableCache
+
+func declaredTables(f declaredFor, r *http.Request) map[string]proxy.TableCache {
+	if f == nil {
+		return nil
+	}
+	return f(r)
+}
+
+type rowCacheReconcile struct {
+	rowcache.Outcome
+	// Set when the allowlist was saved but the row cache could not be reached.
+	// The response cache is unaffected, and saying so is the difference between
+	// a warning and an error nobody can act on.
+	Unavailable bool   `json:"unavailable,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// reconcileRowCache brings registrations in line with the saved allowlist, and
+// never fails the request for it.
+//
+// The two caches ride one switch (§12.2) but they are not one cache. The
+// allowlist is saved and the response cache is already live by the time this
+// runs; a 502 here would tell a user their change did not take when it did.
+// So every outcome is reported in the body and the status stays 200.
+func reconcileRowCache(r *http.Request, db rowcache.DB, schema string, declared map[string]proxy.TableCache) *rowCacheReconcile {
+	// **The schema, not the runtime allowlist.** The first cut of registration read
+	// `cache_tables[].enabled`, which made Mode B a runtime toggle. It is not one: the row cache
+	// is eventual with a bound rather than read-your-writes, and whether a table tolerates a read
+	// returning the previous row is a design-time invariant its author knows and an operator
+	// flipping a switch at 3am does not. Mode A gets a runtime switch; Mode B does not (§13.3).
+	tables := cacheceiling.RowCacheTables(declared)
+
+	if schema == "" {
+		schema = apiconfig.DefaultApiConfig().Rest.Schema
+	}
+
+	outcome, err := rowcache.Reconcile(r.Context(), db, schema, tables)
+	switch {
+	case errors.Is(err, rowcache.ErrUnavailable):
+		return &rowCacheReconcile{Unavailable: true}
+	case err != nil:
+		return &rowCacheReconcile{Error: err.Error()}
+	case outcome.Changed():
+		return &rowCacheReconcile{Outcome: outcome}
+	}
+	return nil
 }
 
 // ─── GraphQL configuration ────────────────────────────────────────────────────

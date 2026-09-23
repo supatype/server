@@ -286,7 +286,7 @@ func TestTenantRef(t *testing.T) {
 // so it has to match what BuildKey produces.
 func TestRestKeyPrefixMatchesTheKeysBuilt(t *testing.T) {
 	prefix := RestKeyPrefix("tenant-1")
-	if prefix != "tenant:tenant-1:rest:" {
+	if prefix != "cache:rest:tenant-1:" {
 		t.Errorf("prefix = %q", prefix)
 	}
 

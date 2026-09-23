@@ -7,6 +7,17 @@ import (
 	"github.com/supatype/server/internal/proxy"
 )
 
+// TenantConfigKey returns the keyspace key holding a tenant's configuration,
+// as the control plane writes it.
+//
+// Exported alongside RouteManifestKey so the key families this service uses are
+// named in one place: their head decides their durability tier, which is a
+// deployment's decision about what survives a restart rather than a detail of
+// the function that happens to read one.
+func TenantConfigKey(ref string) string {
+	return fmt.Sprintf("tenant:%s:config", ref)
+}
+
 // RouteManifestKey returns the keyspace key for a full route manifest override
 // (same JSON shape as .supatype/manifest.json).
 func RouteManifestKey(ref string) string {
@@ -81,6 +92,12 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	// a per-key merge would keep calling it.
 	if tc.Hooks != nil {
 		m.Hooks = tc.Hooks
+	}
+	// Wholesale, like Hooks and for a sharper reason: the declaration is a ceiling, so a table
+	// dropped from the schema has to stop being cacheable. A per-table merge would keep the old
+	// entry and go on permitting exactly the table the push removed.
+	if tc.Cache != nil {
+		m.Cache = tc.Cache
 	}
 	if tc.FunctionsEnabled != nil {
 		m.FunctionsEnabled = *tc.FunctionsEnabled

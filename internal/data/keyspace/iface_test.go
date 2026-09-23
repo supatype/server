@@ -1,4 +1,4 @@
-package valkey
+package keyspace
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// The unavailable client exists so that "no Valkey configured" is a value rather
+// The unavailable client exists so that "no keyspace configured" is a value rather
 // than a nil pointer every consumer has to remember to check. Each operation
 // must therefore be callable and must say why it did nothing.
 func TestUnavailableClientReportsRatherThanPanics(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
 func TestOpenWithNothingConfigured(t *testing.T) {
@@ -19,10 +19,10 @@ func TestOpenWithNothingConfigured(t *testing.T) {
 	t.Cleanup(func() { _ = r.Close() })
 
 	if r.Cache() == nil {
-		t.Fatal("Valkey must never be nil")
+		t.Fatal("the keyspace client must never be nil")
 	}
 	if r.Cache().Available() {
-		t.Error("Valkey should report unavailable")
+		t.Error("the keyspace client should report unavailable")
 	}
 	if r.HasDatabase() {
 		t.Error("HasDatabase should be false")
@@ -57,22 +57,22 @@ func TestOpenRejectsAnUnparseableDSN(t *testing.T) {
 	}
 }
 
-// A configured but unreachable Valkey is fatal only in managed mode, where the
+// A configured but unreachable keyspace is fatal only in managed mode, where the
 // tenant manifest lives in it. Elsewhere the caches degrade and the service runs.
-func TestValkeyFailureIsFatalOnlyInManagedMode(t *testing.T) {
+func TestKeyspaceFailureIsFatalOnlyInManagedMode(t *testing.T) {
 	const unreachable = "127.0.0.1:1"
 
-	r, err := Open(context.Background(), &config.Config{Mode: "standalone", ValkeyAddr: unreachable})
+	r, err := Open(context.Background(), &config.Config{Mode: "standalone", KeyspaceAddr: unreachable})
 	if err != nil {
-		t.Fatalf("standalone must survive an unreachable Valkey: %v", err)
+		t.Fatalf("standalone must survive an unreachable keyspace: %v", err)
 	}
 	t.Cleanup(func() { _ = r.Close() })
 	if r.Cache().Available() {
-		t.Error("an unreachable Valkey should leave the unavailable client in place")
+		t.Error("an unreachable keyspace should leave the unavailable client in place")
 	}
 
-	if _, err := Open(context.Background(), &config.Config{Mode: "managed", ValkeyAddr: unreachable}); err == nil {
-		t.Error("managed mode must refuse to start without the Valkey it needs")
+	if _, err := Open(context.Background(), &config.Config{Mode: "managed", KeyspaceAddr: unreachable}); err == nil {
+		t.Error("managed mode must refuse to start without the keyspace it needs")
 	}
 }
 
@@ -127,10 +127,10 @@ func TestCloseRunsInReverseAndReportsEveryFailure(t *testing.T) {
 	}
 }
 
-// fakeCache stands in for a connected Valkey so the path where a cache is
+// fakeCache stands in for a connected keyspace so the path where a cache is
 // acquired, registered for teardown and handed out can be exercised without one.
 type fakeCache struct {
-	valkey.Client
+	keyspace.Client
 	closed int
 }
 
@@ -138,12 +138,12 @@ func (f *fakeCache) Available() bool { return true }
 func (f *fakeCache) Close()          { f.closed++ }
 
 func TestOpenAcquiresAndClosesTheCache(t *testing.T) {
-	cache := &fakeCache{Client: valkey.Unavailable()}
-	original := openValkey
-	openValkey = func(string) (valkey.Client, error) { return cache, nil }
-	t.Cleanup(func() { openValkey = original })
+	cache := &fakeCache{Client: keyspace.Unavailable()}
+	original := openKeyspace
+	openKeyspace = func(string) (keyspace.Client, error) { return cache, nil }
+	t.Cleanup(func() { openKeyspace = original })
 
-	r, err := Open(context.Background(), &config.Config{ValkeyAddr: "valkey:6379"})
+	r, err := Open(context.Background(), &config.Config{KeyspaceAddr: "db:6379"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,5 +214,158 @@ func TestOpenAdminPoolReportsAConstructorFailure(t *testing.T) {
 	}
 	if resources != nil {
 		t.Error("nothing should be handed back to close")
+	}
+}
+
+// ─── the platform / project keyspace split ────────────────────────────────────
+
+// One address means one client doing both jobs. Two clients against the same
+// server would double the connections for nothing, and would make an ordinary
+// single-keyspace deployment pay for a split it did not ask for.
+func TestOpenSharesOneClientWhenBothAddressesMatch(t *testing.T) {
+	var opened []string
+	cache := &fakeCache{Client: keyspace.Unavailable()}
+	original := openKeyspace
+	openKeyspace = func(addr string) (keyspace.Client, error) {
+		opened = append(opened, addr)
+		return cache, nil
+	}
+	t.Cleanup(func() { openKeyspace = original })
+
+	r, err := Open(context.Background(), &config.Config{
+		KeyspaceAddr:        "db:6379",
+		ProjectKeyspaceAddr: "db:6379",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opened) != 1 {
+		t.Errorf("one address should open one client, got %d: %v", len(opened), opened)
+	}
+	if r.Cache() != r.PlatformCache() {
+		t.Error("both halves should be the same client when the addresses match")
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if cache.closed != 1 {
+		t.Errorf("the shared client should be closed once, got %d", cache.closed)
+	}
+}
+
+// Two addresses mean two clients, and each half must get the right one.
+func TestOpenSeparatesTheProjectKeyspaceFromThePlatformOne(t *testing.T) {
+	platform := &fakeCache{Client: keyspace.Unavailable()}
+	project := &fakeCache{Client: keyspace.Unavailable()}
+	original := openKeyspace
+	openKeyspace = func(addr string) (keyspace.Client, error) {
+		if addr == "postgres-platform:6379" {
+			return platform, nil
+		}
+		return project, nil
+	}
+	t.Cleanup(func() { openKeyspace = original })
+
+	r, err := Open(context.Background(), &config.Config{
+		KeyspaceAddr:        "postgres-platform:6379",
+		ProjectKeyspaceAddr: "postgres:6379",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.PlatformCache() != keyspace.Client(platform) {
+		t.Error("PlatformCache should be the client for the platform address")
+	}
+	if r.Cache() != keyspace.Client(project) {
+		t.Error("Cache should be the client for the project address")
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if platform.closed != 1 || project.closed != 1 {
+		t.Errorf("both clients should be closed once, got platform=%d project=%d",
+			platform.closed, project.closed)
+	}
+}
+
+// The project keyspace usually lives in the project's own Postgres, which may
+// still be starting when this pod is. Making it fatal would turn a cold start
+// into a crashloop and take the gateway down to protect a cache.
+func TestOpenSurvivesAnUnreachableProjectKeyspaceInManagedMode(t *testing.T) {
+	platform := &fakeCache{Client: keyspace.Unavailable()}
+	original := openKeyspace
+	openKeyspace = func(addr string) (keyspace.Client, error) {
+		if addr == "postgres-platform:6379" {
+			return platform, nil
+		}
+		return nil, errors.New("connection refused")
+	}
+	t.Cleanup(func() { openKeyspace = original })
+
+	r, err := Open(context.Background(), &config.Config{
+		Mode:                "managed",
+		KeyspaceAddr:        "postgres-platform:6379",
+		ProjectKeyspaceAddr: "postgres:6379",
+	})
+	if err != nil {
+		t.Fatalf("an unreachable project keyspace must not fail Open: %v", err)
+	}
+	if r.Cache().Available() {
+		t.Error("the response cache should report unavailable so requests bypass it")
+	}
+	if !r.PlatformCache().Available() {
+		t.Error("the platform keyspace was reachable and must stay available")
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The platform keyspace is the opposite case, and that has not changed: the
+// route manifest lives in it, so a managed pod that cannot read it cannot serve.
+func TestOpenStillFailsOnAnUnreachablePlatformKeyspaceInManagedMode(t *testing.T) {
+	original := openKeyspace
+	openKeyspace = func(string) (keyspace.Client, error) { return nil, errors.New("connection refused") }
+	t.Cleanup(func() { openKeyspace = original })
+
+	_, err := Open(context.Background(), &config.Config{
+		Mode:                "managed",
+		KeyspaceAddr:        "postgres-platform:6379",
+		ProjectKeyspaceAddr: "postgres:6379",
+	})
+	if err == nil {
+		t.Fatal("an unreachable platform keyspace in managed mode must fail Open")
+	}
+}
+
+// A zero Resources must hand out a usable platform client for the same reason it
+// hands out a usable cache: a caller that built the struct directly still calls it.
+func TestZeroResourcesYieldsTheUnavailablePlatformCache(t *testing.T) {
+	if (&Resources{}).PlatformCache().Available() {
+		t.Error("an unset platform field must yield the unavailable client")
+	}
+	var nilResources *Resources
+	if nilResources.PlatformCache() == nil {
+		t.Error("PlatformCache on a nil Resources must still return a client")
+	}
+}
+
+// Close resets both halves, so a Resources reused after teardown cannot hand out
+// a client whose connection is gone.
+func TestCloseResetsBothKeyspaces(t *testing.T) {
+	cache := &fakeCache{Client: keyspace.Unavailable()}
+	original := openKeyspace
+	openKeyspace = func(string) (keyspace.Client, error) { return cache, nil }
+	t.Cleanup(func() { openKeyspace = original })
+
+	r, err := Open(context.Background(), &config.Config{KeyspaceAddr: "db:6379"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if r.Cache().Available() || r.PlatformCache().Available() {
+		t.Error("both halves should be unavailable after Close")
 	}
 }

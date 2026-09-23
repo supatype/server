@@ -29,7 +29,7 @@ import (
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/observability"
 	"github.com/supatype/server/internal/outerhealth"
@@ -56,7 +56,7 @@ var getwd = os.Getwd
 // New builds the full supatype-server outer handler and starts its background
 // workers (apiworker + optional authCfg reloader), which stop when ctx is
 // cancelled. The returned drain func waits for those workers and releases
-// resources (Deno subprocess, Valkey, database); call it after cancelling ctx.
+// resources (Deno subprocess, keyspace, database); call it after cancelling ctx.
 //
 // New does not bind a listener or configure TLS — the caller serves the
 // returned handler however it likes (stock binary: cmd/serve_cmd.go; cloud:
@@ -114,7 +114,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// closure below is built before it is assigned, and a nil Gateway closes and
 	// wraps as a no-op.
 	var tenantGateway *platform.Gateway
-	vkShared := valkey.Unavailable()
+	ksPlatform := keyspace.Unavailable()
 
 	// fail releases what has been acquired so far and returns the bootstrap error.
 	fail := func(err error) (http.Handler, func(), error) {
@@ -185,22 +185,25 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	if resErr != nil {
 		return fail(resErr)
 	}
-	vkShared = resources.Cache()
+	// The platform keyspace, not the project one: the route manifest and the MAU
+	// day-sets are written centrally, and reading them from a project's own
+	// keyspace would find nothing and serve file defaults to a configured tenant.
+	ksPlatform = resources.PlatformCache()
 
-	mergeFromValkey := managed && vkShared.Available() && ref != ""
-	perTenantManifest := managed && vkShared.Available() && ref == ""
+	mergeFromKeyspace := managed && ksPlatform.Available() && ref != ""
+	perTenantManifest := managed && ksPlatform.Available() && ref == ""
 
 	live := newLiveManifests(manifest)
 	if perTenantManifest {
-		live.tenant = valkey.NewTenantManifestCache(vkShared, 0, live.Base)
-		logrus.Info("serve: per-tenant route manifests from Valkey (SUPATYPE_MANAGED_PROJECT_REF unset)")
+		live.tenant = keyspace.NewTenantManifestCache(ksPlatform, 0, live.Base)
+		logrus.Info("serve: per-tenant route manifests from the keyspace (SUPATYPE_MANAGED_PROJECT_REF unset)")
 	}
-	if mergeFromValkey {
+	if mergeFromKeyspace {
 		live.merge = func(ctx context.Context, fileM *proxy.RouteManifest) (*proxy.RouteManifest, error) {
-			return valkey.LoadMergedManagedManifest(ctx, vkShared, ref, fileM)
+			return keyspace.LoadMergedManagedManifest(ctx, ksPlatform, ref, fileM)
 		}
 		live.Reapply(manifest)
-		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from Valkey")
+		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from the keyspace")
 	}
 
 	if watchErr := proxy.Watch(srvCfg.ManifestPath, live.ReloadFrom); watchErr != nil {
@@ -302,7 +305,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 
 	drain := func() {
 		// Workers stop on ctx cancellation; wait for them before releasing
-		// resources they use (db, valkey, deno subprocess).
+		// resources they use (db, keyspace, deno subprocess).
 		wg.Wait()
 		if dm != nil {
 			dm.Stop()
@@ -312,7 +315,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		_ = db.Close()
 	}
 
-	tenantGateway = platform.New(srvCfg, vkShared)
+	tenantGateway = platform.New(srvCfg, ksPlatform)
 	handler := tenantGateway.Wrap(outerMux)
 	return handler, drain, nil
 }

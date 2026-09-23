@@ -13,8 +13,9 @@ import (
 
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
-	"github.com/supatype/server/internal/data/valkey/valkeytest"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
+	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
 )
 
@@ -54,13 +55,40 @@ func (s *memStore) Set(_ context.Context, cfg apiconfig.ApiConfig) error {
 //
 // Outside dev mode the service-role key is filled in unless the test is about
 // its absence, so a test that forgets it gets a 403 it did not mean to assert.
-func api(t *testing.T, cfg *config.Config, cache valkey.Client) (http.Handler, *memStore) {
+func api(t *testing.T, cfg *config.Config, cache keyspace.Client) (http.Handler, *memStore) {
 	t.Helper()
 	if cfg.Mode != "dev" && cfg.ServiceRoleKey == "" {
 		cfg.ServiceRoleKey = serviceKey
 	}
 	store := newMemStore()
-	return Handler(store, cfg, cache), store
+	return oneKeyspace(store, cfg, cache, restcache.NewCounter()), store
+}
+
+// oneKeyspace mounts the admin API with a single keyspace serving both roles,
+// which is the shape every test written before the platform/project split
+// assumed — and still the shape of a self-host or dev deployment. The tests that
+// are *about* the split pass two clients to Handler directly.
+func oneKeyspace(store apiconfig.Store, cfg *config.Config, ks keyspace.Client, stats *restcache.Counter) http.Handler {
+	return Handler(Deps{
+		Store: store, Config: cfg, Cache: ks, Platform: ks, Stats: stats,
+		// A ceiling that permits what these tests ask for. They were written before the schema
+		// declared anything, and their subject is the admin API's own behaviour — not §13.2's
+		// precedence rule, which internal/cacheceiling and the ceiling tests cover directly.
+		// Without this they would all fail for one reason that is not what any of them is about.
+		Declared: permissiveCeiling,
+	})
+}
+
+// permissiveCeiling declares every table this package's tests touch, so a test about something
+// else is not silently answering "the schema does not permit it".
+func permissiveCeiling(*http.Request) map[string]proxy.TableCache {
+	yes := true
+	ttl := 86_400
+	out := map[string]proxy.TableCache{}
+	for _, table := range []string{"posts", "orders", "invoices", "events", "not_yet", "legacy", "drafts"} {
+		out[table] = proxy.TableCache{Enabled: &yes, Public: &yes, Rows: &yes, MaxTTL: &ttl}
+	}
+	return out
 }
 
 // devConfig is the mode in which the admin API needs no token.
@@ -95,7 +123,7 @@ func errorOf(t *testing.T, rec *httptest.ResponseRecorder) string {
 // nothing reaches it without the service role.
 func TestEveryRouteNeedsTheServiceRole(t *testing.T) {
 	cfg := &config.Config{Mode: "standalone", ServiceRoleKey: serviceKey}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	routes := []struct{ method, path string }{
 		{http.MethodGet, "/config/rest"},
@@ -133,7 +161,7 @@ func TestEveryRouteNeedsTheServiceRole(t *testing.T) {
 // anything or an empty bearer.
 func TestNoKeyConfiguredFailsClosed(t *testing.T) {
 	// Built directly, because the helper fills the key in.
-	handler := Handler(newMemStore(), &config.Config{Mode: "standalone"}, valkeytest.New())
+	handler := oneKeyspace(newMemStore(), &config.Config{Mode: "standalone"}, keyspacetest.New(), restcache.NewCounter())
 
 	rec := call(t, handler, http.MethodGet, "/config/rest", serviceKey, "")
 	if rec.Code != http.StatusForbidden {
@@ -146,7 +174,7 @@ func TestNoKeyConfiguredFailsClosed(t *testing.T) {
 
 // Dev mode is a local machine, where there is no key to have.
 func TestDevModeNeedsNoToken(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	if rec := call(t, handler, http.MethodGet, "/config/rest", "", ""); rec.Code != http.StatusOK {
 		t.Errorf("status = %d (%s)", rec.Code, rec.Body.String())
@@ -156,7 +184,7 @@ func TestDevModeNeedsNoToken(t *testing.T) {
 // ─── REST configuration ───────────────────────────────────────────────────────
 
 func TestGetAndPatchRestConfig(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 
 	rec := call(t, handler, http.MethodGet, "/config/rest", "", "")
 	if rec.Code != http.StatusOK {
@@ -186,7 +214,7 @@ func TestGetAndPatchRestConfig(t *testing.T) {
 // A patch naming nothing changes nothing but still writes, which is how a
 // caller confirms the current state.
 func TestAnEmptyPatchLeavesTheConfigAlone(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 	store.cfg.Rest.Schema = "app"
 
 	if rec := call(t, handler, http.MethodPatch, "/config/rest", "", `{}`); rec.Code != http.StatusOK {
@@ -200,7 +228,7 @@ func TestAnEmptyPatchLeavesTheConfigAlone(t *testing.T) {
 // The schema is interpolated into a header PostgREST acts on, and the bounds
 // are what the API documents. Anything outside either is the caller's mistake.
 func TestRestConfigRefusals(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct {
 		body string
@@ -233,7 +261,7 @@ func TestRestConfigRefusals(t *testing.T) {
 
 // The names PostgREST accepts, and this must not refuse.
 func TestSchemaNamesThatAreFine(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for _, schema := range []string{"public", "_private", "app_v2", "a$b", strings.Repeat("a", 63)} {
 		body := `{"schema":"` + schema + `"}`
@@ -246,7 +274,7 @@ func TestSchemaNamesThatAreFine(t *testing.T) {
 // ─── GraphQL configuration ────────────────────────────────────────────────────
 
 func TestGetAndPatchGraphQLConfig(t *testing.T) {
-	handler, store := api(t, devConfig(), valkeytest.New())
+	handler, store := api(t, devConfig(), keyspacetest.New())
 
 	if rec := call(t, handler, http.MethodGet, "/config/graphql", "", ""); rec.Code != http.StatusOK {
 		t.Fatalf("get: %d", rec.Code)
@@ -265,7 +293,7 @@ func TestGetAndPatchGraphQLConfig(t *testing.T) {
 // Query depth is what stops a nested query costing the database everything, so
 // the bound is enforced rather than documented.
 func TestGraphQLConfigRefusals(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct{ body, want string }{
 		"not JSON":           {"{", "invalid JSON"},
@@ -290,12 +318,12 @@ func TestGraphQLConfigRefusals(t *testing.T) {
 // answered as though it worked.
 func TestAStoreThatWillNotWork(t *testing.T) {
 	for name, path := range map[string]string{"rest": "/config/rest", "graphql": "/config/graphql"} {
-		unreadable, _ := api(t, devConfig(), valkeytest.New())
+		unreadable, _ := api(t, devConfig(), keyspacetest.New())
 		_ = unreadable
 
 		store := newMemStore()
-		store.getErr = valkeytest.ErrFailed
-		handler := Handler(store, devConfig(), valkeytest.New())
+		store.getErr = keyspacetest.ErrFailed
+		handler := oneKeyspace(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
 
 		for _, method := range []string{http.MethodGet, http.MethodPatch} {
 			rec := call(t, handler, method, path, "", `{}`)
@@ -305,8 +333,8 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 		}
 
 		store = newMemStore()
-		store.setErr = valkeytest.ErrFailed
-		handler = Handler(store, devConfig(), valkeytest.New())
+		store.setErr = keyspacetest.ErrFailed
+		handler = oneKeyspace(store, devConfig(), keyspacetest.New(), restcache.NewCounter())
 		if rec := call(t, handler, http.MethodPatch, path, "", `{}`); rec.Code != http.StatusInternalServerError {
 			t.Errorf("%s unwritable: status = %d, want 500", name, rec.Code)
 		}
@@ -316,7 +344,7 @@ func TestAStoreThatWillNotWork(t *testing.T) {
 // ─── Methods ──────────────────────────────────────────────────────────────────
 
 func TestMethodsThatAreNotAllowed(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct{ method, path string }{
 		"POST to rest config":       {http.MethodPost, "/config/rest"},
@@ -360,7 +388,7 @@ func TestCredentialStatusPerMode(t *testing.T) {
 		"self-host with no password": {&config.Config{Mode: "standalone", AllowSecretReadback: true}, "self_host", false},
 		"local":                      {&config.Config{Mode: "dev"}, "local", true},
 	} {
-		handler, _ := api(t, tc.cfg, valkeytest.New())
+		handler, _ := api(t, tc.cfg, keyspacetest.New())
 		rec := call(t, handler, http.MethodGet, "/database/credentials/status", serviceKey, "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
@@ -383,7 +411,7 @@ func TestCredentialStatusPerMode(t *testing.T) {
 // is gone.
 func TestTheManagedPasswordIsShownOnce(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	// Nothing has been generated yet.
 	rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
@@ -436,7 +464,7 @@ func TestTheManagedPasswordIsShownOnce(t *testing.T) {
 // not what the new first-view returns.
 func TestRotatingTwice(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	reveal := func() string {
 		t.Helper()
@@ -465,7 +493,7 @@ func TestRotatingTwice(t *testing.T) {
 // password it is refused rather than half done.
 func TestRotationIsManagedModeOnly(t *testing.T) {
 	for _, mode := range []string{"dev", "standalone"} {
-		handler, _ := api(t, &config.Config{Mode: mode, ServiceRoleKey: serviceKey}, valkeytest.New())
+		handler, _ := api(t, &config.Config{Mode: mode, ServiceRoleKey: serviceKey}, keyspacetest.New())
 		rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
 		if rec.Code != http.StatusNotImplemented {
 			t.Errorf("%s: status = %d, want 501", mode, rec.Code)
@@ -484,7 +512,7 @@ func TestSelfHostFirstView(t *testing.T) {
 		"readback disabled":  {&config.Config{Mode: "standalone", PostgresPassword: "pw"}, http.StatusForbidden},
 		"nothing configured": {&config.Config{Mode: "standalone", AllowSecretReadback: true}, http.StatusNotFound},
 	} {
-		handler, _ := api(t, tc.cfg, valkeytest.New())
+		handler, _ := api(t, tc.cfg, keyspacetest.New())
 		rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
 		if rec.Code != tc.want {
 			t.Errorf("%s: status = %d, want %d (%s)", name, rec.Code, tc.want, rec.Body.String())
@@ -502,7 +530,7 @@ func TestLocalFirstView(t *testing.T) {
 		"a configured password": {&config.Config{Mode: "dev", PostgresPassword: "mine"}, "mine"},
 		"the local default":     {&config.Config{Mode: "dev"}, "postgres"},
 	} {
-		handler, _ := api(t, tc.cfg, valkeytest.New())
+		handler, _ := api(t, tc.cfg, keyspacetest.New())
 		rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d", name, rec.Code)
@@ -523,8 +551,8 @@ func TestLocalFirstView(t *testing.T) {
 // set. Answering "pending" invites an operator to rotate a password that is
 // already in use.
 func TestACacheThatWillNotAnswerIsNotPending(t *testing.T) {
-	cache := valkeytest.New()
-	cache.GetErr = valkeytest.ErrFailed
+	cache := keyspacetest.New()
+	cache.GetErr = keyspacetest.ErrFailed
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
 	handler, _ := api(t, cfg, cache)
 
@@ -543,7 +571,7 @@ func TestACacheThatWillNotAnswerIsNotPending(t *testing.T) {
 // With no cache at all there is nowhere to keep a managed password, which is a
 // misconfiguration rather than a tenant with none.
 func TestManagedModeWithNoCache(t *testing.T) {
-	handler, _ := api(t, &config.Config{Mode: "managed"}, valkey.Unavailable())
+	handler, _ := api(t, &config.Config{Mode: "managed"}, keyspace.Unavailable())
 
 	rec := call(t, handler, http.MethodGet, "/database/credentials/status", serviceKey, "")
 	if rec.Code != http.StatusInternalServerError {
@@ -553,7 +581,7 @@ func TestManagedModeWithNoCache(t *testing.T) {
 
 // Metadata that will not parse is reported, not treated as a fresh tenant.
 func TestCredentialMetadataThatWillNotParse(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.Put("tenant:default:dbcred:meta", []byte("{not json"), 0)
 	handler, _ := api(t, &config.Config{Mode: "managed"}, cache)
 
@@ -565,8 +593,8 @@ func TestCredentialMetadataThatWillNotParse(t *testing.T) {
 
 // A write that fails must not leave the caller thinking a rotation happened.
 func TestARotationThatCannotBeStored(t *testing.T) {
-	cache := valkeytest.New()
-	cache.SetErr = valkeytest.ErrFailed
+	cache := keyspacetest.New()
+	cache.SetErr = keyspacetest.ErrFailed
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t), ServiceRoleKey: serviceKey}, cache)
 
 	rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
@@ -670,7 +698,7 @@ func TestASecretThatWillNotDecode(t *testing.T) {
 // A stored secret that is not JSON is reported rather than read as an empty
 // one, which would decrypt to nothing and be handed out as the password.
 func TestAStoredSecretThatIsNotJSON(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.Put("tenant:default:dbcred:secret:v1", []byte("{not json"), 0)
 
 	if _, err := loadManagedSecret(context.Background(), cache, kek(t), "default", 1); err == nil {
@@ -718,7 +746,7 @@ func TestTenantRef(t *testing.T) {
 // Two tenants rotate independently.
 func TestTwoTenantsDoNotShareAPassword(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}
-	handler, _ := api(t, cfg, valkeytest.New())
+	handler, _ := api(t, cfg, keyspacetest.New())
 
 	reveal := func(tenant string) string {
 		t.Helper()
@@ -752,7 +780,7 @@ func TestTwoTenantsDoNotShareAPassword(t *testing.T) {
 // ─── The cache API ────────────────────────────────────────────────────────────
 
 // storedEntry writes a cache entry the admin API will list.
-func storedEntry(t *testing.T, cache *valkeytest.Client, key, table string) {
+func storedEntry(t *testing.T, cache *keyspacetest.Client, key, table string) {
 	t.Helper()
 	raw, err := json.Marshal(restcache.Entry{
 		StatusCode: http.StatusOK,
@@ -770,7 +798,7 @@ func storedEntry(t *testing.T, cache *valkeytest.Client, key, table string) {
 }
 
 func TestListingAndFlushingTheCache(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"one", "posts")
 	storedEntry(t, cache, prefix+"two", "comments")
@@ -823,7 +851,7 @@ func TestListingAndFlushingTheCache(t *testing.T) {
 }
 
 func TestGettingAndDeletingOneEntry(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	key := prefix + "one"
 	storedEntry(t, cache, key, "posts")
@@ -856,7 +884,7 @@ func TestGettingAndDeletingOneEntry(t *testing.T) {
 // A body that is not JSON is still previewable, and a long one is truncated
 // rather than returned whole.
 func TestTheBodyPreview(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	key := restcache.RestKeyPrefix("local") + "big"
 	raw, err := json.Marshal(restcache.Entry{
 		StatusCode: http.StatusOK,
@@ -885,7 +913,7 @@ func TestTheBodyPreview(t *testing.T) {
 // A key outside the tenant's prefix is refused, or one tenant's admin API
 // reads another's cached rows.
 func TestAKeyOutsideTheTenantIsRefused(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	other := restcache.RestKeyPrefix("someone-else") + "one"
 	storedEntry(t, cache, other, "posts")
 	handler, _ := api(t, devConfig(), cache)
@@ -900,7 +928,7 @@ func TestAKeyOutsideTheTenantIsRefused(t *testing.T) {
 }
 
 func TestCacheEntryKeyRefusals(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 
 	for name, tc := range map[string]struct {
 		path string
@@ -921,7 +949,7 @@ func TestCacheEntryKeyRefusals(t *testing.T) {
 }
 
 func TestAnEntryThatIsNotThere(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 	key := restcache.RestKeyPrefix("local") + "ghost"
 
 	rec := call(t, handler, http.MethodGet, "/cache/entries/"+CacheKeyParam(key), "", "")
@@ -933,7 +961,7 @@ func TestAnEntryThatIsNotThere(t *testing.T) {
 // An entry that will not decode is skipped in a listing — one bad entry must
 // not hide the rest — but reported when asked for directly.
 func TestACorruptEntry(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"good", "posts")
 	cache.Put(prefix+"bad", []byte("{not json"), 60)
@@ -959,7 +987,7 @@ func TestACorruptEntry(t *testing.T) {
 // The listing is bounded and hands back a cursor, so a tenant with more entries
 // than one page is paged rather than truncated silently.
 func TestTheListingIsPagedByCursor(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 5; i++ {
 		storedEntry(t, cache, prefix+string(rune('a'+i)), "posts")
@@ -982,7 +1010,7 @@ func TestTheListingIsPagedByCursor(t *testing.T) {
 // A limit outside the bounds is a mistake, not a request to return everything
 // or nothing.
 func TestTheListingLimitIsBounded(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 3; i++ {
 		storedEntry(t, cache, prefix+string(rune('a'+i)), "posts")
@@ -1008,23 +1036,23 @@ func TestTheListingLimitIsBounded(t *testing.T) {
 func TestTheCacheAPIReportsAFailingCache(t *testing.T) {
 	prefix := restcache.RestKeyPrefix("local")
 
-	scanFails := valkeytest.New()
-	scanFails.ScanErr = valkeytest.ErrFailed
+	scanFails := keyspacetest.New()
+	scanFails.ScanErr = keyspacetest.ErrFailed
 
-	getFails := valkeytest.New()
+	getFails := keyspacetest.New()
 	storedEntry(t, getFails, prefix+"one", "posts")
-	getFails.GetErr = valkeytest.ErrFailed
+	getFails.GetErr = keyspacetest.ErrFailed
 
-	ttlFails := valkeytest.New()
+	ttlFails := keyspacetest.New()
 	storedEntry(t, ttlFails, prefix+"one", "posts")
-	ttlFails.TTLErr = valkeytest.ErrFailed
+	ttlFails.TTLErr = keyspacetest.ErrFailed
 
-	delFails := valkeytest.New()
+	delFails := keyspacetest.New()
 	storedEntry(t, delFails, prefix+"one", "posts")
-	delFails.DelErr = valkeytest.ErrFailed
+	delFails.DelErr = keyspacetest.ErrFailed
 
 	for name, tc := range map[string]struct {
-		cache  *valkeytest.Client
+		cache  *keyspacetest.Client
 		method string
 		path   string
 	}{
@@ -1048,7 +1076,7 @@ func TestTheCacheAPIReportsAFailingCache(t *testing.T) {
 // than deleting it: removing an entry without knowing which table it belongs to
 // would flush more than was asked for.
 func TestAFlushByTableSkipsWhatItCannotRead(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"one", "posts")
 	cache.Put(prefix+"unreadable", []byte("{not json"), 60)
@@ -1065,14 +1093,14 @@ func TestAFlushByTableSkipsWhatItCannotRead(t *testing.T) {
 // With no cache configured the routes exist and say so, rather than 404ing as
 // though the admin API did not have them.
 func TestTheCacheAPIWithNoCacheConfigured(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkey.Unavailable())
+	handler, _ := api(t, devConfig(), keyspace.Unavailable())
 
 	for _, path := range []string{"/cache", "/cache/entries/abc"} {
 		rec := call(t, handler, http.MethodGet, path, "", "")
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s: status = %d, want 503", path, rec.Code)
 		}
-		if got := errorOf(t, rec); got != "valkey not configured" {
+		if got := errorOf(t, rec); got != "keyspace not configured" {
 			t.Errorf("%s: error = %q", path, got)
 		}
 	}
@@ -1082,7 +1110,7 @@ func TestTheCacheAPIWithNoCacheConfigured(t *testing.T) {
 // and on the config fields that would enable it.
 func TestATenantWithoutTheCache(t *testing.T) {
 	disabled := false
-	cache := valkeytest.New().WithTenant("proj-1", &valkey.TenantConfig{RestCacheEnabled: &disabled})
+	cache := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &disabled})
 	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
 	handler, _ := api(t, cfg, cache)
 
@@ -1112,21 +1140,21 @@ func TestATenantWithoutTheCache(t *testing.T) {
 func TestTenantCachePrefix(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/cache", nil)
 
-	if got := tenantCachePrefix(&config.Config{}, req); got != "tenant:local:rest:" {
+	if got := tenantCachePrefix(&config.Config{}, req); got != "cache:rest:local:" {
 		t.Errorf("with nothing configured: %q", got)
 	}
-	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "tenant:proj-1:rest:" {
+	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "cache:rest:proj-1:" {
 		t.Errorf("with a configured project: %q", got)
 	}
 	req.Header.Set("X-Supatype-Tenant", "routed")
-	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "tenant:routed:rest:" {
+	if got := tenantCachePrefix(&config.Config{ManagedProjectRef: "proj-1"}, req); got != "cache:rest:routed:" {
 		t.Errorf("with a routed tenant: %q", got)
 	}
 }
 
 // The key a caller sends back has to be the one the listing gave them.
 func TestCacheKeyParamRoundTrips(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	key := restcache.RestKeyPrefix("local") + "one"
 	storedEntry(t, cache, key, "posts")
 	handler, _ := api(t, devConfig(), cache)
@@ -1150,7 +1178,7 @@ func TestCacheKeyParamRoundTrips(t *testing.T) {
 
 // An entry route takes only a read and a delete.
 func TestAnUnsupportedMethodOnOneEntry(t *testing.T) {
-	handler, _ := api(t, devConfig(), valkeytest.New())
+	handler, _ := api(t, devConfig(), keyspacetest.New())
 	key := restcache.RestKeyPrefix("local") + "one"
 
 	rec := call(t, handler, http.MethodPatch, "/cache/entries/"+CacheKeyParam(key), "", "")
@@ -1163,7 +1191,7 @@ func TestAnUnsupportedMethodOnOneEntry(t *testing.T) {
 // failing the listing, and left alone by a flush narrowed to one table: it is
 // already gone, and nothing can say which table it was.
 func TestAnEntryThatVanishesMidListing(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
 	storedEntry(t, cache, prefix+"live", "posts")
 	// The scan sees the key and the read does not, which is what expiring
@@ -1193,7 +1221,7 @@ func TestAnEntryThatVanishesMidListing(t *testing.T) {
 // A flush walks every page, or a tenant with more entries than one scan returns
 // keeps some of them.
 func TestAFlushWalksEveryPage(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.ScanPageSize = 2
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 7; i++ {
@@ -1212,7 +1240,7 @@ func TestAFlushWalksEveryPage(t *testing.T) {
 // And a listing pages too, handing back a cursor that continues where it left
 // off.
 func TestAListingPagesWithACursor(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.ScanPageSize = 2
 	prefix := restcache.RestKeyPrefix("local")
 	for i := 0; i < 5; i++ {
@@ -1250,7 +1278,7 @@ func TestAListingPagesWithACursor(t *testing.T) {
 // Metadata a previous version wrote without these fields still reads, rather
 // than presenting a tenant with no status and generation zero.
 func TestCredentialMetadataIsNormalised(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	cache.Put("tenant:default:dbcred:meta", []byte(`{"status":"","generation":0}`), 0)
 	handler, _ := api(t, &config.Config{Mode: "managed"}, cache)
 
@@ -1270,7 +1298,7 @@ func TestCredentialMetadataIsNormalised(t *testing.T) {
 // A first view that reveals the password and then cannot record that it did
 // must report, or the next caller is shown it again.
 func TestAFirstViewThatCannotRecordItself(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}, cache)
 
 	if rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, ""); rec.Code != http.StatusOK {
@@ -1278,7 +1306,7 @@ func TestAFirstViewThatCannotRecordItself(t *testing.T) {
 	}
 
 	// The next write is the one that records the view as consumed.
-	cache.SetErr = valkeytest.ErrFailed
+	cache.SetErr = keyspacetest.ErrFailed
 	rec := call(t, handler, http.MethodPost, "/database/credentials/first-view", serviceKey, "")
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
@@ -1291,7 +1319,7 @@ func TestAFirstViewThatCannotRecordItself(t *testing.T) {
 // A rotation that stores the new secret and then cannot record it must report:
 // the caller would otherwise believe the old password still works.
 func TestARotationThatCannotRecordItself(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	// The secret write succeeds; the metadata write after it does not.
 	cache.SetErrAfter = 1
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}, cache)
@@ -1305,7 +1333,7 @@ func TestARotationThatCannotRecordItself(t *testing.T) {
 // The metadata says the password is there and the ciphertext is not, which is
 // a store someone has edited. Reported rather than answered with nothing.
 func TestAFirstViewWhoseSecretIsGone(t *testing.T) {
-	cache := valkeytest.New()
+	cache := keyspacetest.New()
 	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}, cache)
 
 	if rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, ""); rec.Code != http.StatusOK {
@@ -1324,8 +1352,8 @@ func TestAFirstViewWhoseSecretIsGone(t *testing.T) {
 // A read that fails is not a secret that is not there, and the difference is
 // what stops an operator rotating over a password still in use.
 func TestASecretThatCannotBeRead(t *testing.T) {
-	cache := valkeytest.New()
-	cache.GetErr = valkeytest.ErrFailed
+	cache := keyspacetest.New()
+	cache.GetErr = keyspacetest.ErrFailed
 
 	if _, err := loadManagedSecret(context.Background(), cache, kek(t), "default", 1); err == nil {
 		t.Error("want an error")
@@ -1337,7 +1365,7 @@ func TestASecretThatCannotBeRead(t *testing.T) {
 // A key the deployment configured badly stops a rotation rather than storing
 // something nothing can decrypt.
 func TestARotationWithAnUnusableKey(t *testing.T) {
-	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: "not-a-key"}, valkeytest.New())
+	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: "not-a-key"}, keyspacetest.New())
 
 	rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
 	if rec.Code != http.StatusInternalServerError {
@@ -1353,13 +1381,214 @@ func TestARotationWithAnUnusableKey(t *testing.T) {
 func TestARecordThatCannotBeEncoded(t *testing.T) {
 	original := marshalJSON
 	t.Cleanup(func() { marshalJSON = original })
-	marshalJSON = func(any) ([]byte, error) { return nil, valkeytest.ErrFailed }
+	marshalJSON = func(any) ([]byte, error) { return nil, keyspacetest.ErrFailed }
 
 	ctx := context.Background()
-	if err := saveMeta(ctx, valkeytest.New(), "default", dbCredMeta{}); err == nil {
+	if err := saveMeta(ctx, keyspacetest.New(), "default", dbCredMeta{}); err == nil {
 		t.Error("saveMeta: want an error")
 	}
-	if err := saveManagedSecret(ctx, valkeytest.New(), kek(t), "default", 1, "pw"); err == nil {
+	if err := saveManagedSecret(ctx, keyspacetest.New(), kek(t), "default", 1, "pw"); err == nil {
 		t.Error("saveManagedSecret: want an error")
+	}
+}
+
+// ─── Cache statistics ─────────────────────────────────────────────────────────
+
+// The statistics route answers for the tenant that asked, and only for it.
+func TestCacheStatsAreScopedToTheAskingTenant(t *testing.T) {
+	counter := restcache.NewCounter()
+	counter.Record("proj-1", "posts", restcache.OutcomeHit, "")
+	counter.Record("proj-1", "posts", restcache.OutcomeBypass, restcache.ReasonTier)
+	counter.Record("proj-2", "profiles", restcache.OutcomeHit, "")
+
+	cfg := devConfig()
+	cfg.ManagedProjectRef = "proj-1"
+	handler := oneKeyspace(newMemStore(), cfg, keyspacetest.New(), counter)
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Tenant != "proj-1" {
+		t.Errorf("tenant = %q", report.Tenant)
+	}
+	if len(report.Tables) != 1 || report.Tables[0].Table != "posts" {
+		t.Fatalf("tables = %+v, want this tenant's alone", report.Tables)
+	}
+	if report.Tables[0].Hits != 1 || report.Tables[0].BypassReasons[restcache.ReasonTier] != 1 {
+		t.Errorf("row = %+v", report.Tables[0])
+	}
+	if report.Since.IsZero() {
+		t.Error("a cumulative count with no window is not a fact anyone can use")
+	}
+}
+
+// A free-tier project is exactly the one that needs these numbers — they are
+// what it is being shown it is missing — so the route is not behind the grant
+// that refuses the entry routes.
+func TestCacheStatsAreServedToATenantWithoutTheCache(t *testing.T) {
+	denied := false
+	cache := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &denied})
+
+	counter := restcache.NewCounter()
+	counter.Record("proj-1", "posts", restcache.OutcomeBypass, restcache.ReasonTier)
+
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
+	handler := oneKeyspace(newMemStore(), cfg, cache, counter)
+
+	// The entry route refuses this tenant.
+	if rec := call(t, handler, http.MethodGet, "/cache", serviceKey, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("/cache: status = %d, want the tenant to be refused", rec.Code)
+	}
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", serviceKey, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/cache/stats: %d %s", rec.Code, rec.Body.String())
+	}
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Tables[0].BypassReasons[restcache.ReasonTier] != 1 {
+		t.Errorf("the free tier cannot see what it is missing: %+v", report.Tables)
+	}
+}
+
+// With no keyspace the other cache routes answer 503; the statistics still have
+// something to say, because a bypass is counted whether or not a cache exists.
+func TestCacheStatsSurviveAMissingKeyspace(t *testing.T) {
+	counter := restcache.NewCounter()
+	counter.Record("local", "posts", restcache.OutcomeBypass, restcache.ReasonUnavailable)
+
+	handler := oneKeyspace(newMemStore(), devConfig(), keyspace.Unavailable(), counter)
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats: %d %s", rec.Code, rec.Body.String())
+	}
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Tables[0].BypassReasons[restcache.ReasonUnavailable] != 1 {
+		t.Errorf("row = %+v", report.Tables)
+	}
+}
+
+// A deployment that keeps no counter still answers, with nothing in it. A 404
+// would be a screen's problem to interpret; an empty report is a state it can
+// already render.
+func TestCacheStatsWithNoCounter(t *testing.T) {
+	handler := oneKeyspace(newMemStore(), devConfig(), keyspacetest.New(), nil)
+
+	rec := call(t, handler, http.MethodGet, "/cache/stats", "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stats: %d %s", rec.Code, rec.Body.String())
+	}
+	var report restcache.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Tables) != 0 || report.Totals.Hits != 0 {
+		t.Errorf("report = %+v", report)
+	}
+}
+
+// Every other route in this package refuses the wrong method rather than
+// treating it as the one it knows.
+func TestCacheStatsRefusesAnythingButGET(t *testing.T) {
+	handler := oneKeyspace(newMemStore(), devConfig(), keyspacetest.New(), restcache.NewCounter())
+
+	rec := call(t, handler, http.MethodDelete, "/cache/stats", "", "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", rec.Code)
+	}
+}
+
+// ─── the platform / project keyspace split ────────────────────────────────────
+
+// A rotation writes the KEK-wrapped password, and its only copy is platform
+// state. Written to the project keyspace instead, the control plane would never
+// find it and the rotation would be stranded with "reveal once" already spent.
+func TestCredentialRotationWritesToThePlatformKeyspace(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", DBCredentialsKEK: kek(t), ServiceRoleKey: serviceKey}
+	project, platform := keyspacetest.New(), keyspacetest.New()
+	handler := Handler(Deps{Store: newMemStore(), Config: cfg, Cache: project, Platform: platform, Stats: restcache.NewCounter()})
+
+	rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var wrote []string
+	for _, key := range platform.Keys() {
+		if strings.Contains(key, ":dbcred:") {
+			wrote = append(wrote, key)
+		}
+	}
+	if len(wrote) == 0 {
+		t.Error("the wrapped secret and its meta belong in the platform keyspace")
+	}
+	for _, key := range project.Keys() {
+		if strings.Contains(key, ":dbcred:") {
+			t.Errorf("no credential belongs in the project keyspace, found %q", key)
+		}
+	}
+
+	// And the read path agrees with the write path, which is what makes the
+	// secret retrievable at all.
+	rec = call(t, handler, http.MethodGet, "/database/credentials/status", serviceKey, "")
+	var status statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.CanReveal || status.Generation != 2 {
+		t.Errorf("status should see the rotation it just made: %+v", status)
+	}
+}
+
+// The cache routes are the other half: entries come from the project's own
+// keyspace, while whether the tenant is offered the cache at all is read from
+// the platform one.
+func TestCacheRoutesListTheProjectKeyspaceAndAskThePlatformOne(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
+	platform := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
+	project := keyspacetest.New()
+	entry, err := json.Marshal(restcache.Entry{StatusCode: 200, ContentType: "application/json", Table: "posts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Put(restcache.RestKeyPrefix("proj-1")+"deadbeef", entry, 30)
+
+	handler := Handler(Deps{Store: newMemStore(), Config: cfg, Cache: project, Platform: platform, Stats: restcache.NewCounter()})
+
+	rec := call(t, handler, http.MethodGet, "/cache", serviceKey, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "deadbeef") {
+		t.Errorf("the entry in the project keyspace should be listed: %s", rec.Body.String())
+	}
+}
+
+// The mirror of the restcache test, at the admin boundary: a tenant whose config
+// lives only in the platform keyspace must still be recognised as entitled. Ask
+// the project keyspace instead and every paid project looks unpublished.
+func TestCacheRoutesAreNotRefusedWhenTheConfigIsOnlyInThePlatformKeyspace(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "proj-1", ServiceRoleKey: serviceKey}
+	platform := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
+
+	handler := Handler(Deps{Store: newMemStore(), Config: cfg, Cache: keyspacetest.New(), Platform: platform, Stats: restcache.NewCounter()})
+
+	rec := call(t, handler, http.MethodPatch, "/config/rest", serviceKey, `{"cache_max_ttl":60}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s — the tenant is entitled, so this must not be refused", rec.Code, rec.Body.String())
 	}
 }

@@ -9,8 +9,10 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/cacheceiling"
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
+	"github.com/supatype/server/internal/proxy"
 )
 
 // statusHeader tells the caller what the cache did: HIT, MISS, or BYPASS when
@@ -26,23 +28,69 @@ type IdentityScoped func(ctx context.Context) (map[string]bool, bool)
 
 // Deps is what the cache needs to decide and to store.
 type Deps struct {
-	Store          apiconfig.Store
-	Cache          valkey.Client
+	Store apiconfig.Store
+	// Cache is where cached responses are stored: the project's own keyspace.
+	Cache keyspace.Client
+	// Tenants is where the tenant configuration is read from, which is what
+	// decides whether this project is offered the cache at all. On a split
+	// deployment that is the platform keyspace, a different server from Cache.
+	//
+	// Nil means "the same place as Cache", which is the single-keyspace
+	// deployment and was the only shape before the split.
+	Tenants        keyspace.Client
 	Config         *config.Config
 	SchemaFor      func(*http.Request) string
 	MaxRowsFor     func(*http.Request) string
 	IdentityScoped IdentityScoped
+
+	// Declared is what this request's schema permits caching, per table: the ceiling the stored
+	// allowlist is chosen from (§13.2).
+	//
+	// Consulted on every request rather than only when the allowlist is written, because the two
+	// move independently. A push that drops a model's `cache` block lowers the ceiling and does
+	// not touch the allowlist, and without this every read after it would still be served from a
+	// cache the schema no longer permits.
+	//
+	// Nil, or a nil return, is "nothing may be cached" — the same reading cacheceiling.Narrow
+	// takes on the write path. Treating an absent declaration as permission would make an old
+	// manifest an open door, and would let the two paths disagree about the same project.
+	Declared func(*http.Request) map[string]proxy.TableCache
+
+	// Stats counts what the cache did, per table. Nil is allowed and means the
+	// outcomes are not counted; see Counter.
+	Stats *Counter
+}
+
+// declaredCache is this request's ceiling, or nil when there is none to read.
+func (d Deps) declaredCache(req *http.Request) map[string]proxy.TableCache {
+	if d.Declared == nil {
+		return nil
+	}
+	return d.Declared(req)
+}
+
+// tenants is where the tenant configuration is read from, falling back to the
+// store when no separate keyspace was given.
+func (d Deps) tenants() keyspace.Client {
+	if d.Tenants != nil {
+		return d.Tenants
+	}
+	return d.Cache
 }
 
 // plan is what the cache decided to do with one request.
+//
+// tenant and table are carried even though the key already contains both: the
+// key is a hash, and the counter needs them in the clear.
 type plan struct {
-	key   string
-	ttl   int
-	table string
-	scope string
+	key    string
+	ttl    int
+	tenant string
+	table  string
+	scope  string
 }
 
-// Middleware caches opt-in GET/HEAD /rest/v1 responses in Valkey.
+// Middleware caches opt-in GET/HEAD /rest/v1 responses in the keyspace.
 func Middleware(d Deps, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		p, cacheable, bypassed := d.planFor(req)
@@ -56,6 +104,7 @@ func Middleware(d Deps, next http.Handler) http.Handler {
 
 		served, healthy := tryServeHit(req.Context(), d.Cache, w, req, p.key, p.ttl)
 		if healthy && served {
+			d.Stats.Record(p.tenant, p.table, OutcomeHit, "")
 			return
 		}
 		d.serveAndStore(w, req, next, p, healthy)
@@ -76,27 +125,64 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 	clientMaxAge := ParseClientMaxAge(req.Header)
 	asked := clientMaxAge > 0
 
-	if !ServerCacheOffered(req.Context(), d.Config, d.Cache, req) {
+	// Resolved before the first refusal so a bypass can be attributed. Both are
+	// string work on what is already in hand, and the tenant ref is what every
+	// count is filed under.
+	tenant := TenantRef(req, d.Config.ManagedProjectRef)
+	table := RestTableFromPath(req.URL.Path)
+
+	// A request that did not ask to be cached is not counted anywhere below:
+	// every bypass recorded here is one a caller wanted and did not get.
+	bypass := func(reason string) {
+		if asked {
+			d.Stats.Record(tenant, table, OutcomeBypass, reason)
+		}
+	}
+
+	if offered, reason := serverCacheOffer(req.Context(), d.Config, d.tenants(), req); !offered {
+		bypass(reason)
 		return plan{}, false, asked
 	}
 
 	restCfg, err := d.Store.Get(req.Context())
 	if err != nil {
+		// Counted but not reported in the header, which is not an inconsistency:
+		// the caller was not refused, the request simply went uncached, while
+		// the operator reading the report is the one who needs to see that it
+		// keeps happening.
 		logrus.WithError(err).Warn("restcache: api config read failed — bypass")
+		bypass(ReasonConfigUnreadable)
 		return plan{}, false, false
 	}
 
-	table := RestTableFromPath(req.URL.Path)
+	// The ceiling first: a table the schema does not declare is not "off", it is not permitted, and
+	// that is a different thing to tell someone. Checked before the allowlist so the reason names
+	// the constraint they would have to change rather than the box they already ticked.
+	permitted, declared := cacheceiling.Permits(d.declaredCache(req), table)
+	if !declared {
+		bypass(ReasonNotDeclared)
+		// Counted, not announced. The BYPASS header means the cache was asked for and could not
+		// be run at all; a table that is simply not cacheable is a configuration answer, and it
+		// reaches its audience through the per-table report rather than a response header on
+		// every request. Same treatment the runtime allowlist already gets below.
+		return plan{}, false, false
+	}
+
 	tableCfg, tableAllowed := restCfg.Rest.TableCacheAllowed(table)
-	ttl := EffectiveTTL(restCfg.Rest.CacheMaxTTL, clientMaxAge, tableAllowed)
+	ttl := EffectiveTTL(cacheceiling.CapTTL(restCfg.Rest.CacheMaxTTL, permitted), clientMaxAge, tableAllowed)
 	if ttl <= 0 || d.Cache == nil {
+		if d.Cache == nil {
+			bypass(ReasonUnavailable)
+		} else {
+			bypass(ReasonTableNotCached)
+		}
 		return plan{}, false, asked && d.Cache == nil
 	}
 
-	usePublic := d.publicScope(req, table, tableCfg.AllowPublic)
+	usePublic := d.publicScope(req, table, tableCfg.AllowPublic && permitted.Public)
 	return plan{
 		key: BuildKey(keyParts{
-			Tenant:   TenantRef(req, d.Config.ManagedProjectRef),
+			Tenant:   tenant,
 			Schema:   d.SchemaFor(req),
 			Method:   req.Method,
 			Path:     req.URL.Path,
@@ -107,9 +193,10 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 			Language: req.Header.Get("Accept-Language"),
 			MaxRows:  d.MaxRowsFor(req),
 		}),
-		ttl:   ttl,
-		table: table,
-		scope: cacheScopeLabel(usePublic),
+		ttl:    ttl,
+		tenant: tenant,
+		table:  table,
+		scope:  cacheScopeLabel(usePublic),
 	}, true, false
 }
 
@@ -182,8 +269,9 @@ func (d Deps) serveAndStore(w http.ResponseWriter, req *http.Request, next http.
 	}
 
 	label := "MISS"
+	reason := ""
 	if !healthy {
-		label = "BYPASS"
+		label, reason = "BYPASS", ReasonCacheUnhealthy
 	}
 	if storable(rec) {
 		entry := Entry{
@@ -198,10 +286,18 @@ func (d Deps) serveAndStore(w http.ResponseWriter, req *http.Request, next http.
 			RawQuery:    req.URL.RawQuery,
 		}
 		if err := storeEntry(req.Context(), d.Cache, p.key, entry, p.ttl); err != nil {
-			logrus.WithError(err).Warn("restcache: valkey SET failed")
-			label = "BYPASS"
+			logrus.WithError(err).Warn("restcache: keyspace SET failed")
+			label, reason = "BYPASS", ReasonStoreFailed
 		}
 		w.Header().Set("Vary", VaryHeader(req))
+	}
+
+	// The counter follows the header rather than the internals: what a caller
+	// was told happened is what the report should say happened.
+	if label == "MISS" {
+		d.Stats.Record(p.tenant, p.table, OutcomeMiss, "")
+	} else {
+		d.Stats.Record(p.tenant, p.table, OutcomeBypass, reason)
 	}
 
 	w.Header().Set(statusHeader, label)
@@ -224,12 +320,12 @@ func storable(rec *httptest.ResponseRecorder) bool {
 // tryServeHit answers from the cache if it can.
 //
 // served says the response has been written. ok says the cache itself was
-// usable: a Valkey that will not answer, or an entry that will not decode, is
+// usable: a keyspace that will not answer, or an entry that will not decode, is
 // a bypass rather than a miss, because a miss implies the cache is working.
-func tryServeHit(ctx context.Context, vk valkey.Client, w http.ResponseWriter, req *http.Request, key string, ttl int) (served, ok bool) {
+func tryServeHit(ctx context.Context, vk keyspace.Client, w http.ResponseWriter, req *http.Request, key string, ttl int) (served, ok bool) {
 	raw, err := vk.GetBytes(ctx, key)
 	if err != nil {
-		logrus.WithError(err).Warn("restcache: valkey GET failed")
+		logrus.WithError(err).Warn("restcache: keyspace GET failed")
 		return false, false
 	}
 	if raw == nil {
@@ -258,7 +354,7 @@ func tryServeHit(ctx context.Context, vk valkey.Client, w http.ResponseWriter, r
 	return true, true
 }
 
-func storeEntry(ctx context.Context, vk valkey.Client, key string, entry Entry, ttl int) error {
+func storeEntry(ctx context.Context, vk keyspace.Client, key string, entry Entry, ttl int) error {
 	raw, err := marshalEntry(entry)
 	if err != nil {
 		return err

@@ -52,9 +52,17 @@ func TenantRef(req *http.Request, managedProjectRef string) string {
 	return "local"
 }
 
-// RestKeyPrefix returns the Valkey SCAN prefix for a tenant's REST cache keys.
+// RestKeyPrefix returns the keyspace SCAN prefix for a tenant's REST cache keys.
+//
+// The head is cache:, not tenant:, and the tenant ref comes after the class.
+// Durability in pg_keyspace is configured by literal longest-prefix match, so a
+// key's tier is decided by the text that precedes the part that varies. Under
+// tenant:{ref}:rest: the ref sits between the fixed head and the class, and no
+// static rule can separate the response cache — which must be ephemeral, being
+// a cache — from the tenant config and DB credentials beside it, which must
+// survive a restart. Under cache:rest: one rule covers every tenant's cache.
 func RestKeyPrefix(tenant string) string {
-	return fmt.Sprintf("tenant:%s:rest:", tenant)
+	return fmt.Sprintf("cache:rest:%s:", tenant)
 }
 
 type keyParts struct {
@@ -70,7 +78,7 @@ type keyParts struct {
 	MaxRows  string
 }
 
-// BuildKey returns a Valkey key tenant:{ref}:rest:{hash}.
+// BuildKey returns a keyspace key cache:rest:{ref}:{hash}.
 func BuildKey(p keyParts) string {
 	var b strings.Builder
 	b.WriteString(p.Tenant)
@@ -93,7 +101,7 @@ func BuildKey(p keyParts) string {
 	b.WriteByte(0)
 	b.WriteString(p.MaxRows)
 	sum := sha256.Sum256([]byte(b.String()))
-	return fmt.Sprintf("tenant:%s:rest:%s", p.Tenant, hex.EncodeToString(sum[:]))
+	return fmt.Sprintf("cache:rest:%s:%s", p.Tenant, hex.EncodeToString(sum[:]))
 }
 
 // VaryHeader builds a stable Vary value for cacheable REST GET responses.

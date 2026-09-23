@@ -3,17 +3,20 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/deno"
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/outerhealth"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/studioauth"
 	"github.com/supatype/server/internal/studiobootstrap"
@@ -42,8 +45,26 @@ type Deps struct {
 	// APIStore is the on-disk API configuration the admin API edits and the REST
 	// mount reads.
 	APIStore apiconfig.Store
-	// Cache is never nil; see data.Resources.Cache.
-	Cache valkey.Client
+	// Cache is the project's keyspace — where cached responses are stored. Never
+	// nil; see data.Resources.Cache.
+	Cache keyspace.Client
+	// PlatformCache is the platform keyspace — where the tenant configuration and
+	// the wrapped DB credentials live. Never nil.
+	//
+	// Both are here because the response cache needs both and for different
+	// reasons: what it stores belongs to the project, while whether it is allowed
+	// to store anything at all is read from the tenant configuration, which is
+	// platform state. Handing it one client for both is the mistake this field
+	// exists to prevent — on a split deployment the tenant config simply is not in
+	// the project keyspace, and a miss there is indistinguishable from a tenant
+	// nobody ever published, which turns the cache off for every paid project.
+	PlatformCache keyspace.Client
+	// CacheStats counts what the response cache did, per table. It is the only
+	// source of that number: pg_keyspace counts per keyspace and worker, and
+	// the key it counts is opaque to it, so the table has to be counted here
+	// where it is still in the clear. Both the REST mount that fills it and the
+	// admin route that reports it read this one counter.
+	CacheStats *restcache.Counter
 	// Studio is the Studio auth configuration, including membership.
 	Studio studioauth.Config
 	// Hooks runs a project's schema-declared model hooks around a REST write.
@@ -72,17 +93,19 @@ func NewDeps(
 	sendEmailHook http.Handler,
 ) *Deps {
 	d := &Deps{
-		Config:       cfg,
-		ManifestFor:  manifestFor,
-		HealthProbes: healthProbes,
-		Auth:         authHandler,
-		Deno:         denoManager,
-		Version:      version,
-		Resources:    resources,
-		SendEmail:    sendEmailHook,
-		APIStore:     apiconfig.NewFileStore(cfg.ApiConfigPath),
-		Cache:        resources.Cache(),
-		Baseline:     manifestFor(nil),
+		Config:        cfg,
+		ManifestFor:   manifestFor,
+		HealthProbes:  healthProbes,
+		Auth:          authHandler,
+		Deno:          denoManager,
+		Version:       version,
+		Resources:     resources,
+		SendEmail:     sendEmailHook,
+		APIStore:      apiConfigStore(cfg, resources.PlatformCache()),
+		Cache:         resources.Cache(),
+		PlatformCache: resources.PlatformCache(),
+		CacheStats:    restcache.NewCounter(),
+		Baseline:      manifestFor(nil),
 	}
 	d.Studio = newStudioConfig(cfg, resources)
 	d.HookCallback = newHookCallback(d)
@@ -160,6 +183,49 @@ func (d *Deps) AdminPool() (sqlrunner.Pool, error) {
 		return nil, err
 	}
 	return pool, nil
+}
+
+// apiConfigStore picks where the API configuration is kept.
+//
+// The platform keyspace when this is a single-tenant managed pod that has one, and a file
+// otherwise. That is not a preference between two equal options: on a managed pod the file is on
+// the container's own filesystem with no volume mounted for it, so every restart brought the
+// process back with DefaultApiConfig() and silently turned the REST response cache off for the
+// whole project. The keyspace is durable (everything under `tenant:` is, by plan decision D4),
+// reachable from every replica, and already holds this pod's tenant config beside it.
+//
+// The file is still right for dev and self-host, where the working directory persists and is the
+// thing a developer expects to edit.
+//
+// Both conditions are required. Without a project ref there is no key to write under — a
+// multi-tenant pod resolves its tenant per request, and one shared api_config key would give every
+// tenant the last one's settings. Without a reachable keyspace there is nothing to write to, and a
+// store that errors on every read is worse than a file that merely forgets.
+func apiConfigStore(cfg *config.Config, platform keyspace.Client) apiconfig.Store {
+	ref := strings.TrimSpace(cfg.ManagedProjectRef)
+	if ref != "" && strings.TrimSpace(cfg.Mode) == "managed" && platform != nil && platform.Available() {
+		return apiconfig.NewKeyspaceStore(platform, ref)
+	}
+	return apiconfig.NewFileStore(cfg.ApiConfigPath)
+}
+
+// KeyspaceMonitor hands out the admin pool as the read path to pg_keyspace's
+// monitoring views, or nothing when this deployment has no database.
+//
+// Resolved at mount time rather than per request, because the routes it feeds
+// render "unavailable" as a first-class state — a deployment without the
+// extension is a supported deployment, not a 503 to explain.
+//
+// The nil is returned explicitly, for the same reason AdminPool converts
+// explicitly: a typed nil pointer placed in an interface is not a nil
+// interface, and the handler's nil check would pass straight through to a
+// method call on nothing.
+func (d *Deps) KeyspaceMonitor() admin.StatsQuerier {
+	pool, err := d.Resources.AdminPool()
+	if err != nil || pool == nil {
+		return nil
+	}
+	return pool
 }
 
 // IdentityScopedTables binds the caller-dependence classification to this

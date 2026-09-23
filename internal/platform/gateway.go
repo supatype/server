@@ -29,7 +29,7 @@ const (
 	activityTimeout = 200 * time.Millisecond
 	// orgLookupTimeout bounds the organisation lookup.
 	orgLookupTimeout = 150 * time.Millisecond
-	// tallyTimeout bounds the write to Valkey.
+	// tallyTimeout bounds the write to the keyspace.
 	tallyTimeout = 50 * time.Millisecond
 
 	// asyncWorkers caps how much of the control plane this process can occupy at

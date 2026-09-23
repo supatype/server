@@ -188,14 +188,20 @@ func TestNewRefuses(t *testing.T) {
 
 // ─── What the bootstrap builds ────────────────────────────────────────────────
 
-// requireValkey skips unless there is a Valkey to run the managed-mode paths
-// against. The route manifest for a managed pod comes from it, so there is
-// nothing to assert without one.
-func requireValkey(t *testing.T) string {
+// requireKeyspace skips unless there is a keyspace to run the managed-mode
+// paths against. The route manifest for a managed pod comes from it, so there
+// is nothing to assert without one.
+//
+// The Valkey-era name is still read, for the same reason the config still
+// accepts it: it is in shells and CI files this change does not reach.
+func requireKeyspace(t *testing.T) string {
 	t.Helper()
-	addr := strings.TrimSpace(os.Getenv("SUPATYPE_TEST_VALKEY_ADDR"))
+	addr := strings.TrimSpace(os.Getenv("SUPATYPE_TEST_KEYSPACE_ADDR"))
 	if addr == "" {
-		t.Skip("SUPATYPE_TEST_VALKEY_ADDR is not set")
+		addr = strings.TrimSpace(os.Getenv("SUPATYPE_TEST_VALKEY_ADDR"))
+	}
+	if addr == "" {
+		t.Skip("SUPATYPE_TEST_KEYSPACE_ADDR is not set")
 	}
 	return addr
 }
@@ -234,13 +240,13 @@ func servesHealth(t *testing.T, env map[string]string, header http.Header) int {
 // over its own file.
 func TestNewMergesTheManagedManifest(t *testing.T) {
 	requireAuthEnvironment(t)
-	addr := requireValkey(t)
+	addr := requireKeyspace(t)
 
 	if got := servesHealth(t, map[string]string{
 		"SUPATYPE_MODE":                "managed",
 		"SUPATYPE_TENANT_HMAC_SECRET":  "tenant-secret",
 		"SUPATYPE_SERVICE_ROLE_KEY":    "service-role",
-		"SUPATYPE_VALKEY_ADDR":         addr,
+		"SUPATYPE_KEYSPACE_ADDR":       addr,
 		"SUPATYPE_MANAGED_PROJECT_REF": "proj-bootstrap-test",
 	}, nil); got != http.StatusOK {
 		t.Errorf("/health: status = %d", got)
@@ -252,7 +258,9 @@ func TestNewMergesTheManagedManifest(t *testing.T) {
 // lookup, which is what makes it usable as the pod's readiness probe.
 func TestNewServesManyTenants(t *testing.T) {
 	requireAuthEnvironment(t)
-	addr := requireValkey(t)
+	// Deliberately the Valkey-era spelling: this is the bootstrap end of the
+	// alias, and an accepted name that nothing exercises stops being accepted.
+	addr := requireKeyspace(t)
 
 	header := http.Header{}
 	header.Set("X-Supatype-Tenant", "proj-some-tenant")
@@ -360,23 +368,23 @@ func TestNewToleratesAWorkingDirectoryItCannotName(t *testing.T) {
 	}
 }
 
-// A managed deployment that cannot reach Valkey refuses to start. Its route
-// manifests and tenant configuration come from there, so carrying on would mean
-// serving every tenant the file's defaults.
-func TestNewRefusesAManagedPodWithNoValkey(t *testing.T) {
+// A managed deployment that cannot reach its keyspace refuses to start. Its
+// route manifests and tenant configuration come from there, so carrying on
+// would mean serving every tenant the file's defaults.
+func TestNewRefusesAManagedPodWithNoKeyspace(t *testing.T) {
 	requireAuthEnvironment(t)
 
 	t.Setenv("SUPATYPE_MODE", "managed")
 	t.Setenv("SUPATYPE_TENANT_HMAC_SECRET", "tenant-secret")
 	t.Setenv("SUPATYPE_SERVICE_ROLE_KEY", "service-role")
-	t.Setenv("SUPATYPE_VALKEY_ADDR", "127.0.0.1:59999")
+	t.Setenv("SUPATYPE_KEYSPACE_ADDR", "127.0.0.1:59999")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_, drain, err := New(ctx)
 	cancel()
 	if err == nil {
 		drain()
-		t.Fatal("started without the Valkey it reads its tenants from")
+		t.Fatal("started without the keyspace it reads its tenants from")
 	}
 }
 
@@ -397,6 +405,26 @@ func TestNewToleratesAManifestItCannotWatch(t *testing.T) {
 // Both read through the connections the gateway already holds rather than
 // opening ones of their own. A Deps that answered no pool would take the SQL
 // runner and every identity-scoped table down with it.
+// The same pool, handed to the admin API as the read path to pg_keyspace's
+// monitoring views. They are SQL over shared memory living in the project's own
+// Postgres, so neither keyspace client can answer for them.
+func TestDepsHandOverTheKeyspaceMonitor(t *testing.T) {
+	requireAuthEnvironment(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SQLDSN() == "" {
+		t.Skip("no SQL DSN configured")
+	}
+	d := depsFor(t, cfg, nil)
+
+	if monitor := d.KeyspaceMonitor(); monitor == nil {
+		t.Fatal("no monitor, so the stats routes would report unavailable on a deployment that has a database")
+	}
+}
+
 func TestDepsHandOverTheAdminPool(t *testing.T) {
 	requireAuthEnvironment(t)
 

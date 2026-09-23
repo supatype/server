@@ -27,7 +27,7 @@ type Config struct {
 	// Mode controls TLS and tenant resolution behaviour.
 	// "dev" = no TLS, permissive CORS, Vite HMR proxy
 	// "standalone" = ACME TLS, configurable CORS
-	// "managed" = HMAC tenant header verification, Valkey config cache
+	// "managed" = HMAC tenant header verification, keyspace config cache
 	Mode string `envconfig:"SUPATYPE_MODE" default:"dev"`
 
 	// SupatypeURL is the public base URL of this deployment (injected into the Deno edge subprocess as SUPATYPE_URL).
@@ -94,13 +94,42 @@ type Config struct {
 	// TenantHMACSecret is the shared HMAC secret for verifying X-Supatype-Tenant-Sig (Mode=managed).
 	TenantHMACSecret string `envconfig:"SUPATYPE_TENANT_HMAC_SECRET"`
 
-	// ValkeyAddr is the Valkey/Redis address for tenant config cache (Mode=managed).
-	ValkeyAddr string `envconfig:"SUPATYPE_VALKEY_ADDR"`
+	// KeyspaceAddr is the RESP address of the keyspace holding the tenant config
+	// cache (Mode=managed) and the REST response cache. It is pg_keyspace inside
+	// Postgres, or a Valkey or Redis server where a deployment points it at one;
+	// what the address has to answer is RESP, not a particular product.
+	//
+	// Read through KeyspaceAddress, which also accepts the three older spellings.
+	KeyspaceAddr string `envconfig:"SUPATYPE_KEYSPACE_ADDR"`
+
+	// KeyspaceAddrBare is the unprefixed spelling, for a deployment that sets its
+	// variables without the SUPATYPE_ prefix. Same value, lower precedence.
+	KeyspaceAddrBare string `envconfig:"KEYSPACE_ADDR"`
+
+	// ProjectKeyspaceAddr is the RESP address of *this project's own* keyspace,
+	// which holds its REST response cache and nothing else.
+	//
+	// It is a second address because the two keyspaces hold different kinds of
+	// thing. The tenant configuration and the wrapped DB credentials are platform
+	// state: one control plane writes them centrally, and a pod that cannot read
+	// them cannot serve. A cached response belongs to the project, is worth
+	// nothing to anyone else, and is best kept in the project's own Postgres —
+	// where its memory is charged to that project and its statistics describe
+	// that project without anything having to be filtered per tenant.
+	//
+	// Unset, it falls back to KeyspaceAddress, which is the single-keyspace
+	// deployment: self-host, dev, and cloud before the split. Read through
+	// ProjectKeyspaceAddress.
+	ProjectKeyspaceAddr string `envconfig:"SUPATYPE_PROJECT_KEYSPACE_ADDR"`
+
+	// ProjectKeyspaceAddrBare is the unprefixed spelling. Same value, lower
+	// precedence.
+	ProjectKeyspaceAddrBare string `envconfig:"PROJECT_KEYSPACE_ADDR"`
 
 	// ManagedProjectRef is the cloud project ref (slug) for a single-tenant managed pod.
-	// When set with Mode=managed and ValkeyAddr, the route manifest is merged from
-	// Valkey keys tenant:{ref}:config and tenant:{ref}:manifest.
-	// When empty (with managed + Valkey), manifests are resolved per request from
+	// When set with Mode=managed and a keyspace address, the route manifest is merged
+	// from keyspace keys tenant:{ref}:config and tenant:{ref}:manifest.
+	// When empty (with managed + a keyspace), manifests are resolved per request from
 	// X-Supatype-Tenant (after HMAC verification) with a short TTL cache.
 	ManagedProjectRef string `envconfig:"SUPATYPE_MANAGED_PROJECT_REF"`
 
@@ -152,7 +181,7 @@ type Config struct {
 	// ServiceRoleKey is used to enrich pg_graphql proxy requests with auth headers.
 	ServiceRoleKey string `envconfig:"SUPATYPE_SERVICE_ROLE_KEY"`
 
-	// DBCredentialsKEK is the base64-encoded 32-byte key used to encrypt managed DB credentials in Valkey.
+	// DBCredentialsKEK is the base64-encoded 32-byte key used to encrypt managed DB credentials in the keyspace.
 	DBCredentialsKEK string `envconfig:"SUPATYPE_DB_CREDENTIALS_KEK"`
 
 	// AllowSecretReadback controls whether non-managed modes can return DB passwords via admin endpoints.
@@ -202,9 +231,12 @@ type Config struct {
 	// users. Without it the dedupe key falls back to the local user id.
 	MAUEmailSalt string `envconfig:"MAU_EMAIL_SALT"`
 
-	// ValkeyAddrLegacy is the unprefixed spelling the cloud gateway accepted as
-	// a fallback to ValkeyAddr. Kept so the surface does not change here; the
-	// rename removes it.
+	// ValkeyAddr and ValkeyAddrLegacy are the spellings from before the store
+	// became pg_keyspace. They are accepted, not deprecated out: the values live
+	// in .env files and compose overrides this repository does not own, and a
+	// self-hoster who upgrades the binary should not lose their cache to a
+	// renamed variable. KeyspaceAddress states the precedence.
+	ValkeyAddr       string `envconfig:"SUPATYPE_VALKEY_ADDR"`
 	ValkeyAddrLegacy string `envconfig:"VALKEY_ADDR"`
 
 	// ── Database access for server-side features ─────────────────────────────
@@ -263,6 +295,39 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// KeyspaceAddress is the RESP address this process caches in, or "" for a
+// deployment with no keyspace.
+//
+// Four spellings resolve to one value. The prefixed, current name wins, then
+// its unprefixed form, then the two Valkey-era names in the same order. The
+// order matters only for an operator mid-migration who has both set: the one
+// they edited most recently is the one they meant, and that is the new one.
+func (c *Config) KeyspaceAddress() string {
+	for _, addr := range []string{c.KeyspaceAddr, c.KeyspaceAddrBare, c.ValkeyAddr, c.ValkeyAddrLegacy} {
+		if addr = strings.TrimSpace(addr); addr != "" {
+			return addr
+		}
+	}
+	return ""
+}
+
+// ProjectKeyspaceAddress is the RESP address this process caches responses in.
+//
+// It falls back to KeyspaceAddress rather than to "", and that default is the
+// whole compatibility story: a deployment with one keyspace sets one address and
+// both halves resolve to it, so nothing changes until an operator deliberately
+// splits them. Falling back to "" instead would turn every existing deployment's
+// response cache off on upgrade, silently, and look like a performance
+// regression rather than a configuration change.
+func (c *Config) ProjectKeyspaceAddress() string {
+	for _, addr := range []string{c.ProjectKeyspaceAddr, c.ProjectKeyspaceAddrBare} {
+		if addr = strings.TrimSpace(addr); addr != "" {
+			return addr
+		}
+	}
+	return c.KeyspaceAddress()
 }
 
 // SQLDSN is the connection string for the server-side features that read the

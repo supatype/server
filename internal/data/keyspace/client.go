@@ -1,4 +1,4 @@
-package valkey
+package keyspace
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 )
 
 // ErrCircuitOpen is returned when the circuit breaker is open and requests
-// are being shed to protect Valkey from cascading failures.
-var ErrCircuitOpen = errors.New("valkey: circuit breaker open")
+// are being shed to protect the keyspace from cascading failures.
+var ErrCircuitOpen = errors.New("keyspace: circuit breaker open")
 
 // TenantConfig holds routing and configuration for a single tenant,
 // as written by the cloud provisioner and read by supatype-server in managed mode.
@@ -48,6 +48,16 @@ type TenantConfig struct {
 	// unvalidated, silently. Same shape as the manifest's field so one type describes both paths.
 	Hooks map[string]proxy.TableHooks `json:"hooks,omitempty"`
 
+	// Cache is the per-table cache declaration, table → what the schema permits, as
+	// `supatype push` computes it.
+	//
+	// Beside Hooks and for the same reason: cloud has no manifest file on disk, so without this a
+	// project's declaration never reaches the pod that enforces it. That direction matters more
+	// here than it does for hooks — an absent declaration is read as "nothing may be cached"
+	// (cacheceiling.Narrow), so a control plane that writes hooks and not cache would turn every
+	// paid project's cache off and report the schema as the reason.
+	Cache map[string]proxy.TableCache `json:"cache,omitempty"`
+
 	// CorsAllowedOrigins is merged into the route manifest when present.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 
@@ -55,7 +65,7 @@ type TenantConfig struct {
 	StaticCacheHashedAssets string            `json:"static_cache_hashed_assets,omitempty"`
 	StaticCachePrefixes     map[string]string `json:"static_cache_prefixes,omitempty"`
 
-	// RestCacheEnabled gates Valkey-backed REST GET caching on Cloud (false on free tier).
+	// RestCacheEnabled gates keyspace-backed REST GET caching on Cloud (false on free tier).
 	RestCacheEnabled *bool `json:"rest_cache_enabled,omitempty"`
 }
 
@@ -78,6 +88,10 @@ const (
 // After cbFailThreshold consecutive errors the circuit opens and all
 // requests return ErrCircuitOpen immediately. After cbOpenDuration the
 // circuit enters half-open state: one probe request is allowed through.
+//
+// The library stays valkey-go after the rename because what it speaks is RESP,
+// and both backends answer it: pg_keyspace inside Postgres, or a Valkey or
+// Redis server where one is configured.
 type conn struct {
 	vc vkgo.Client
 
@@ -96,15 +110,15 @@ func New(addr string) (Client, error) {
 		InitAddress: []string{addr},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("valkey: connect %s: %w", addr, err)
+		return nil, fmt.Errorf("keyspace: connect %s: %w", addr, err)
 	}
 	return &conn{vc: vc}, nil
 }
 
-// Available reports that this client talks to a real Valkey.
+// Available reports that this client talks to a real keyspace.
 func (c *conn) Available() bool { return true }
 
-// GetTenantConfig fetches the TenantConfig for ref from Valkey.
+// GetTenantConfig fetches the TenantConfig for ref from the keyspace.
 // Key pattern: tenant:{ref}:config
 //
 // Returns ErrCircuitOpen if the circuit breaker is open.
@@ -118,7 +132,7 @@ func (c *conn) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, 
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 
-	key := fmt.Sprintf("tenant:%s:config", ref)
+	key := TenantConfigKey(ref)
 	data, err := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build()).AsBytes()
 	if err != nil {
 		if vkgo.IsValkeyNil(err) {
@@ -126,12 +140,12 @@ func (c *conn) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, 
 			return nil, nil
 		}
 		c.recordFailure()
-		return nil, fmt.Errorf("valkey: GET %s: %w", key, err)
+		return nil, fmt.Errorf("keyspace: GET %s: %w", key, err)
 	}
 
 	var cfg TenantConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("valkey: unmarshal %s: %w", key, err)
+		return nil, fmt.Errorf("keyspace: unmarshal %s: %w", key, err)
 	}
 
 	c.recordSuccess()
@@ -152,7 +166,7 @@ func (c *conn) GetBytes(ctx context.Context, key string) ([]byte, error) {
 			return nil, nil
 		}
 		c.recordFailure()
-		return nil, fmt.Errorf("valkey: GET %s: %w", key, err)
+		return nil, fmt.Errorf("keyspace: GET %s: %w", key, err)
 	}
 	c.recordSuccess()
 	return data, nil
@@ -176,7 +190,7 @@ func (c *conn) SetBytes(ctx context.Context, key string, value []byte, ttlSecond
 	}
 	if err := result.Error(); err != nil {
 		c.recordFailure()
-		return fmt.Errorf("valkey: SET %s: %w", key, err)
+		return fmt.Errorf("keyspace: SET %s: %w", key, err)
 	}
 	c.recordSuccess()
 	return nil
@@ -195,7 +209,7 @@ func (c *conn) Del(ctx context.Context, keys ...string) error {
 	result := c.vc.Do(rctx, c.vc.B().Del().Key(keys...).Build())
 	if err := result.Error(); err != nil {
 		c.recordFailure()
-		return fmt.Errorf("valkey: DEL %v: %w", keys, err)
+		return fmt.Errorf("keyspace: DEL %v: %w", keys, err)
 	}
 	c.recordSuccess()
 	return nil
@@ -219,11 +233,11 @@ func (c *conn) AddToExpiringSet(ctx context.Context, key, member string, expireA
 	defer cancel()
 	if err := c.vc.Do(rctx, c.vc.B().Sadd().Key(key).Member(member).Build()).Error(); err != nil {
 		c.recordFailure()
-		return fmt.Errorf("valkey: SADD %s: %w", key, err)
+		return fmt.Errorf("keyspace: SADD %s: %w", key, err)
 	}
 	if err := c.vc.Do(rctx, c.vc.B().Expireat().Key(key).Timestamp(expireAt.Unix()).Build()).Error(); err != nil {
 		c.recordFailure()
-		return fmt.Errorf("valkey: EXPIREAT %s: %w", key, err)
+		return fmt.Errorf("keyspace: EXPIREAT %s: %w", key, err)
 	}
 	c.recordSuccess()
 	return nil
@@ -242,7 +256,7 @@ func (c *conn) ScanPage(ctx context.Context, cursor uint64, pattern string, coun
 	entry, err := c.vc.Do(rctx, c.vc.B().Scan().Cursor(cursor).Match(pattern).Count(int64(count)).Build()).AsScanEntry()
 	if err != nil {
 		c.recordFailure()
-		return nil, 0, fmt.Errorf("valkey: SCAN: %w", err)
+		return nil, 0, fmt.Errorf("keyspace: SCAN: %w", err)
 	}
 	c.recordSuccess()
 	return entry.Elements, entry.Cursor, nil
@@ -258,13 +272,13 @@ func (c *conn) TTLSeconds(ctx context.Context, key string) (int, error) {
 	n, err := c.vc.Do(rctx, c.vc.B().Ttl().Key(key).Build()).AsInt64()
 	if err != nil {
 		c.recordFailure()
-		return 0, fmt.Errorf("valkey: TTL %s: %w", key, err)
+		return 0, fmt.Errorf("keyspace: TTL %s: %w", key, err)
 	}
 	c.recordSuccess()
 	return int(n), nil
 }
 
-// Close shuts down the underlying Valkey client.
+// Close shuts down the underlying RESP client.
 func (c *conn) Close() {
 	c.vc.Close()
 }

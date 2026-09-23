@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Entry is a cached upstream REST response stored in Valkey.
+// Entry is a cached upstream REST response stored in the keyspace.
 type Entry struct {
 	StatusCode  int       `json:"status_code"`
 	ContentType string    `json:"content_type"`

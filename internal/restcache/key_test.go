@@ -82,7 +82,7 @@ func TestBuildKeyStable(t *testing.T) {
 	if k1 != k2 {
 		t.Fatalf("unstable keys %q %q", k1, k2)
 	}
-	if k1[:len("tenant:demo:rest:")] != "tenant:demo:rest:" {
+	if k1[:len("cache:rest:demo:")] != "cache:rest:demo:" {
 		t.Fatalf("bad prefix %q", k1)
 	}
 }

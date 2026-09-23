@@ -17,10 +17,10 @@ func TestServerCacheOffered_nonManagedAlwaysTrue(t *testing.T) {
 	}
 }
 
-func TestServerCacheOffered_managedWithoutValkeyFalse(t *testing.T) {
+func TestServerCacheOffered_managedWithoutKeyspaceFalse(t *testing.T) {
 	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abc"}
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
 	if ServerCacheOffered(context.Background(), cfg, nil, req) {
-		t.Fatal("expected managed without valkey to deny server cache")
+		t.Fatal("expected managed without a keyspace to deny server cache")
 	}
 }

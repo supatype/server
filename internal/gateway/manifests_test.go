@@ -43,7 +43,7 @@ func TestATenantHeaderWithoutAPerTenantLookup(t *testing.T) {
 	}
 }
 
-// stubTenants is the per-tenant lookup, without a Valkey behind it.
+// stubTenants is the per-tenant lookup, without a keyspace behind it.
 type stubTenants struct {
 	byRef   map[string]*proxy.RouteManifest
 	err     error
@@ -61,7 +61,7 @@ func (s *stubTenants) Flush() { s.flushes++ }
 
 // A managed deployment answers each tenant from that tenant's own manifest, and
 // falls back to the deployment's when the lookup has nothing or fails. Falling
-// back is the point: a Valkey that is briefly away must not take the pod down.
+// back is the point: a keyspace that is briefly away must not take the pod down.
 func TestAManagedDeploymentAnswersPerTenant(t *testing.T) {
 	tenants := &stubTenants{byRef: map[string]*proxy.RouteManifest{
 		"proj-a": {Schema: "tenant_a"},
@@ -90,7 +90,7 @@ func TestAManagedDeploymentAnswersPerTenant(t *testing.T) {
 		t.Errorf("no request at all: schema = %q", got)
 	}
 
-	tenants.err = errors.New("valkey is away")
+	tenants.err = errors.New("keyspace is away")
 	if got := live.For(withTenant("proj-a")).Schema; got != "public" {
 		t.Errorf("a lookup that failed: schema = %q, want the deployment's", got)
 	}
@@ -148,7 +148,7 @@ func TestMergingWhatTheControlPlanePublished(t *testing.T) {
 		t.Errorf("File() = %q, want the file as read", got)
 	}
 
-	mergeErr = errors.New("valkey is away")
+	mergeErr = errors.New("keyspace is away")
 	live.Reapply(&proxy.RouteManifest{Schema: "later"})
 	if got := live.For(req).Schema; got != "app_merged" {
 		t.Errorf("after a failed merge: schema = %q, want the previous live manifest", got)

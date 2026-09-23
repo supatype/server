@@ -17,10 +17,12 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 638 names
+# total: 642 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
+    struct internal/config.Config
+KEYSPACE_ADDR
     struct internal/config.Config
 LOG_LEVEL
     struct internal/config.Config
@@ -35,6 +37,8 @@ OTEL_EXPORTER_PROMETHEUS_PORT
 PORT
     struct internal/conf.GlobalConfiguration
 POSTGRES_PASSWORD
+    struct internal/config.Config
+PROJECT_KEYSPACE_ADDR
     struct internal/config.Config
 REQUEST_ID_HEADER
     struct internal/conf.GlobalConfiguration
@@ -661,6 +665,8 @@ SUPATYPE_JWT_SECRET
     struct internal/config.Config
 SUPATYPE_JWT_VALID_METHODS
     struct internal/conf.GlobalConfiguration
+SUPATYPE_KEYSPACE_ADDR
+    struct internal/config.Config
 SUPATYPE_LOG_DISABLE_COLORS
     struct internal/conf.GlobalConfiguration
 SUPATYPE_LOG_FIELDS
@@ -908,6 +914,8 @@ SUPATYPE_PROFILER_HOST
     struct internal/conf.GlobalConfiguration
 SUPATYPE_PROFILER_PORT
     struct internal/conf.GlobalConfiguration
+SUPATYPE_PROJECT_KEYSPACE_ADDR
+    struct internal/config.Config
 SUPATYPE_RATE_LIMIT_ANONYMOUS_USERS
     struct internal/conf.GlobalConfiguration
 SUPATYPE_RATE_LIMIT_EMAIL_SENT

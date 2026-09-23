@@ -1,4 +1,4 @@
-package valkey
+package keyspace
 
 import (
 	"testing"
@@ -72,6 +72,57 @@ func TestTenantConfigWithoutHooksLeavesTheFileManifestAlone(t *testing.T) {
 
 	if _, ok := base.Hooks["posts"]["afterChange"]; !ok {
 		t.Fatalf("an unrelated tenant config dropped the hook map: %+v", base.Hooks)
+	}
+}
+
+// The declaration has to arrive the same way, and an absent one is read as "nothing may be
+// cached" — so a control plane that carried hooks and not cache would switch every paid project's
+// cache off and name the schema as the reason.
+func TestTenantConfigCarriesTheCacheDeclaration(t *testing.T) {
+	enabled := true
+	base := &proxy.RouteManifest{Schema: "public"}
+	tc := &TenantConfig{
+		Cache: map[string]proxy.TableCache{"posts": {Enabled: &enabled}},
+	}
+
+	tc.mergeRoutingInto(base)
+
+	got, ok := base.Cache["posts"]
+	if !ok {
+		t.Fatalf("the cache declaration did not reach the manifest: %+v", base.Cache)
+	}
+	if got.Enabled == nil || !*got.Enabled {
+		t.Fatalf("declaration = %+v, want enabled", got)
+	}
+}
+
+func TestTheCacheDeclarationIsReplacedWholesale(t *testing.T) {
+	// A table dropped from the schema has to stop being cacheable. A per-table merge would keep
+	// the old entry and go on permitting exactly the table the push removed.
+	enabled := true
+	base := &proxy.RouteManifest{
+		Schema: "public",
+		Cache:  map[string]proxy.TableCache{"drafts": {Enabled: &enabled}},
+	}
+	(&TenantConfig{Cache: map[string]proxy.TableCache{"posts": {Enabled: &enabled}}}).mergeRoutingInto(base)
+
+	if _, stale := base.Cache["drafts"]; stale {
+		t.Fatalf("a table the push removed is still declared: %+v", base.Cache)
+	}
+}
+
+func TestTenantConfigWithoutACacheDeclarationLeavesTheFileManifestAlone(t *testing.T) {
+	// Self-host reads its declaration from the manifest file. A tenant config that says nothing
+	// about caching must not be the thing that turns it off.
+	enabled := true
+	base := &proxy.RouteManifest{
+		Schema: "public",
+		Cache:  map[string]proxy.TableCache{"posts": {Enabled: &enabled}},
+	}
+	(&TenantConfig{Schema: "public"}).mergeRoutingInto(base)
+
+	if _, ok := base.Cache["posts"]; !ok {
+		t.Fatalf("an unrelated tenant config dropped the declaration: %+v", base.Cache)
 	}
 }
 

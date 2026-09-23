@@ -168,3 +168,123 @@ func TestLoadAcceptsAnyValueForTheCustomBools(t *testing.T) {
 		t.Error("an unrecognised value must leave the switch off")
 	}
 }
+
+// Four names, one address. The point of the test is the precedence rather than
+// the plumbing: an operator part-way through the rename has two of these set,
+// and which one wins decides whether their cache is reached at all.
+func TestKeyspaceAddressPrefersTheCurrentSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"nothing set", nil, ""},
+		{"current name", map[string]string{"SUPATYPE_KEYSPACE_ADDR": "db:6379"}, "db:6379"},
+		{"unprefixed current name", map[string]string{"KEYSPACE_ADDR": "db:6379"}, "db:6379"},
+		{"valkey-era name", map[string]string{"SUPATYPE_VALKEY_ADDR": "valkey:6379"}, "valkey:6379"},
+		{"unprefixed valkey-era name", map[string]string{"VALKEY_ADDR": "valkey:6379"}, "valkey:6379"},
+		{
+			"both eras set",
+			map[string]string{"SUPATYPE_KEYSPACE_ADDR": "db:6379", "SUPATYPE_VALKEY_ADDR": "valkey:6379"},
+			"db:6379",
+		},
+		{
+			"both spellings of the current name",
+			map[string]string{"SUPATYPE_KEYSPACE_ADDR": "db:6379", "KEYSPACE_ADDR": "bare:6379"},
+			"db:6379",
+		},
+		{
+			"unprefixed current name beats the prefixed old one",
+			map[string]string{"KEYSPACE_ADDR": "db:6379", "SUPATYPE_VALKEY_ADDR": "valkey:6379"},
+			"db:6379",
+		},
+		{"whitespace is not an address", map[string]string{"SUPATYPE_KEYSPACE_ADDR": "   "}, ""},
+		{
+			"whitespace does not mask the next name",
+			map[string]string{"SUPATYPE_KEYSPACE_ADDR": " ", "SUPATYPE_VALKEY_ADDR": "valkey:6379"},
+			"valkey:6379",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.KeyspaceAddress(); got != tc.want {
+				t.Errorf("KeyspaceAddress() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The project keyspace address falls back to the platform one rather than to "",
+// which is what keeps a single-keyspace deployment working unchanged: set one
+// address and both halves resolve to it. Falling back to "" would switch every
+// existing deployment's response cache off on upgrade, silently.
+func TestProjectKeyspaceAddressFallsBackToTheKeyspaceAddress(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"nothing set", nil, ""},
+		{
+			"only one keyspace configured",
+			map[string]string{"SUPATYPE_KEYSPACE_ADDR": "db:6379"},
+			"db:6379",
+		},
+		{
+			"split",
+			map[string]string{
+				"SUPATYPE_KEYSPACE_ADDR":         "postgres-platform:6379",
+				"SUPATYPE_PROJECT_KEYSPACE_ADDR": "postgres:6379",
+			},
+			"postgres:6379",
+		},
+		{
+			"unprefixed spelling",
+			map[string]string{
+				"SUPATYPE_KEYSPACE_ADDR": "postgres-platform:6379",
+				"PROJECT_KEYSPACE_ADDR":  "postgres:6379",
+			},
+			"postgres:6379",
+		},
+		{
+			"prefixed beats unprefixed",
+			map[string]string{
+				"SUPATYPE_PROJECT_KEYSPACE_ADDR": "postgres:6379",
+				"PROJECT_KEYSPACE_ADDR":          "bare:6379",
+			},
+			"postgres:6379",
+		},
+		{
+			"whitespace does not mask the fallback",
+			map[string]string{
+				"SUPATYPE_KEYSPACE_ADDR":         "db:6379",
+				"SUPATYPE_PROJECT_KEYSPACE_ADDR": "   ",
+			},
+			"db:6379",
+		},
+		{
+			"the fallback follows the valkey-era spellings too",
+			map[string]string{"VALKEY_ADDR": "valkey:6379"},
+			"valkey:6379",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.ProjectKeyspaceAddress(); got != tc.want {
+				t.Errorf("ProjectKeyspaceAddress() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

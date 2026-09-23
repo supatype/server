@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/supatype/server/internal/config"
-	"github.com/supatype/server/internal/data/valkey"
+	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/utilities"
 )
@@ -41,14 +41,22 @@ type cacheEntryDetail struct {
 	BodyJSON    json.RawMessage `json:"body_json,omitempty"`
 }
 
-func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc valkey.Client) {
+func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc, platform keyspace.Client, stats *restcache.Counter) {
+	// Mounted before the availability check, and outside offeredOnly, because
+	// both of the cases those refuse are cases this route has something to say
+	// about. A free-tier project's report is how it is shown what its own
+	// traffic would have been served from cache, and a deployment whose
+	// keyspace is missing has a count of bypasses that explains the latency it
+	// is seeing.
+	mux.HandleFunc("/cache/stats", only(http.MethodGet, cacheStats(cfg, stats)))
+
 	if !vc.Available() {
 		mux.HandleFunc("/cache", cacheUnavailable)
 		mux.HandleFunc("/cache/", cacheUnavailable)
 		return
 	}
 
-	mux.HandleFunc("/cache", offeredOnly(cfg, vc, func(w http.ResponseWriter, r *http.Request, prefix string) {
+	mux.HandleFunc("/cache", offeredOnly(cfg, platform, func(w http.ResponseWriter, r *http.Request, prefix string) {
 		switch r.Method {
 		case http.MethodGet:
 			listCacheEntries(w, r, vc, prefix)
@@ -59,7 +67,7 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc valkey.Client) 
 		}
 	}))
 
-	mux.HandleFunc("/cache/entries/", offeredOnly(cfg, vc, func(w http.ResponseWriter, r *http.Request, prefix string) {
+	mux.HandleFunc("/cache/entries/", offeredOnly(cfg, platform, func(w http.ResponseWriter, r *http.Request, prefix string) {
 		key, ok := entryKey(w, r, prefix)
 		if !ok {
 			return
@@ -84,9 +92,13 @@ func mountCacheRoutes(mux *http.ServeMux, cfg *config.Config, vc valkey.Client) 
 //
 // Both cache routes opened with the same two steps; the prefix is what keeps
 // one tenant's admin API from reaching another's entries.
-func offeredOnly(cfg *config.Config, vc valkey.Client, next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+//
+// The client here is the one holding the tenant configuration, which is what
+// says whether the cache is offered — the entries themselves are read from the
+// project keyspace by the handler this wraps.
+func offeredOnly(cfg *config.Config, tenants keyspace.Client, next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !restcache.ServerCacheOffered(r.Context(), cfg, vc, r) {
+		if !restcache.ServerCacheOffered(r.Context(), cfg, tenants, r) {
 			cacheNotOffered(w, r)
 			return
 		}
@@ -117,8 +129,18 @@ func entryKey(w http.ResponseWriter, r *http.Request, prefix string) (string, bo
 	return key, true
 }
 
+// cacheStats reports what the response cache did for this tenant, per table.
+//
+// Scoped by the same tenant resolution the entry routes use, so one project's
+// admin API cannot read another's numbers on a pod serving many.
+func cacheStats(cfg *config.Config, stats *restcache.Counter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		utilities.WriteJSON(w, http.StatusOK, stats.Snapshot(restcache.TenantRef(r, cfg.ManagedProjectRef)))
+	}
+}
+
 func cacheUnavailable(w http.ResponseWriter, _ *http.Request) {
-	writeErr(w, http.StatusServiceUnavailable, "valkey not configured")
+	writeErr(w, http.StatusServiceUnavailable, "keyspace not configured")
 }
 
 func cacheNotOffered(w http.ResponseWriter, _ *http.Request) {
@@ -134,7 +156,7 @@ func tenantCachePrefix(cfg *config.Config, r *http.Request) string {
 	return restcache.RestKeyPrefix(restcache.TenantRef(r, cfg.ManagedProjectRef))
 }
 
-func listCacheEntries(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix string) {
+func listCacheEntries(w http.ResponseWriter, r *http.Request, vc keyspace.Client, prefix string) {
 	tableFilter := strings.TrimSpace(r.URL.Query().Get("table"))
 	cursor, _ := strconv.ParseUint(r.URL.Query().Get("cursor"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -182,7 +204,7 @@ func listCacheEntries(w http.ResponseWriter, r *http.Request, vc valkey.Client, 
 // An entry that vanished between the scan and the read, and one that will not
 // decode, are both skipped rather than failing the listing: neither is a reason
 // the operator cannot see the rest of their cache.
-func summarizeKey(r *http.Request, vc valkey.Client, key, tableFilter string) (cacheEntrySummary, bool, error) {
+func summarizeKey(r *http.Request, vc keyspace.Client, key, tableFilter string) (cacheEntrySummary, bool, error) {
 	raw, err := vc.GetBytes(r.Context(), key)
 	if err != nil {
 		return cacheEntrySummary{}, false, err
@@ -218,7 +240,7 @@ func summaryOf(key string, entry restcache.Entry, ttl, size int) cacheEntrySumma
 	}
 }
 
-func getCacheEntry(w http.ResponseWriter, r *http.Request, vc valkey.Client, key string) {
+func getCacheEntry(w http.ResponseWriter, r *http.Request, vc keyspace.Client, key string) {
 	raw, err := vc.GetBytes(r.Context(), key)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
@@ -254,7 +276,7 @@ func getCacheEntry(w http.ResponseWriter, r *http.Request, vc valkey.Client, key
 	utilities.WriteJSON(w, http.StatusOK, detail)
 }
 
-func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix string) {
+func flushCache(w http.ResponseWriter, r *http.Request, vc keyspace.Client, prefix string) {
 	tableFilter := strings.TrimSpace(r.URL.Query().Get("table"))
 	var cursor uint64
 	for {
@@ -286,7 +308,7 @@ func flushCache(w http.ResponseWriter, r *http.Request, vc valkey.Client, prefix
 //
 // A key that cannot be read or decoded is left alone: deleting an entry without
 // knowing which table it belongs to would flush more than was asked for.
-func keysForTable(r *http.Request, vc valkey.Client, keys []string, table string) []string {
+func keysForTable(r *http.Request, vc keyspace.Client, keys []string, table string) []string {
 	var matched []string
 	for _, key := range keys {
 		raw, err := vc.GetBytes(r.Context(), key)
@@ -304,7 +326,7 @@ func keysForTable(r *http.Request, vc valkey.Client, keys []string, table string
 	return matched
 }
 
-// CacheKeyParam returns a URL-safe admin path segment for a Valkey key.
+// CacheKeyParam returns a URL-safe admin path segment for a keyspace key.
 func CacheKeyParam(key string) string {
 	return url.PathEscape(base64.RawURLEncoding.EncodeToString([]byte(key)))
 }

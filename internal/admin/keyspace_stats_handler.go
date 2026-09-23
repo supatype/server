@@ -117,8 +117,19 @@ type rowCacheStatus struct {
 	SlotLost  bool   `json:"slot_lost"`
 	BeatAgeMS *int64 `json:"beat_age_ms"`
 
-	Registrations       int64 `json:"registrations"`
-	RegistrationsLoaded int64 `json:"registrations_loaded"`
+	Registrations int64 `json:"registrations"`
+	// Whether this database's registrations have been read into the worker yet.
+	//
+	// `boolean` in `supacache.pg_stat_keyspace_rowcache`, and an `int64` here, so every scan of
+	// that view failed with `cannot scan bool (OID 16) in binary format into *int64` and the
+	// endpoint answered 502.
+	//
+	// Invisible until the row cache is switched on, which is what makes it worth a comment: the
+	// view is EMPTY while `rowcache_decode` is off, so there is no row to scan, no error, and the
+	// handler correctly reports `off`. Turning the feature on is what starts returning a row, so
+	// the panel reported a working row cache as a missing one — and Studio renders a non-404/503
+	// failure as "not running", which is the same words it uses for genuinely off.
+	RegistrationsLoaded bool `json:"registrations_loaded"`
 
 	Entries            int64    `json:"entries"`
 	HitsTotal          int64    `json:"hits_total"`

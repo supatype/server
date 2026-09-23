@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.1](https://github.com/supatype/server/compare/v2.1.0...v2.1.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **admin:** scan registrations_loaded as the boolean it is ([83b2e03](https://github.com/supatype/server/commit/83b2e039dbff24a725b7a50a5aa2b422d0681d08))
+* **admin:** scan registrations_loaded as the boolean it is ([5b701e6](https://github.com/supatype/server/commit/5b701e65140b47d4ded5486393244a7227fe508e))
+
 ## [2.1.0](https://github.com/supatype/server/compare/v2.0.1...v2.1.0) (2026-09-23)
 
 

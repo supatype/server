@@ -118,11 +118,27 @@ func key(sql string) string {
 func pgErr(code string) error { return &pgconn.PgError{Code: code, Message: code} }
 
 // rowCacheRow builds the 16 columns of pg_stat_keyspace_rowcache in order.
+//
+// Column 11 is `registrations_loaded`, and it is a **boolean** in the view. This helper passed
+// `registrations` again — an int64 — so the fake agreed with a handler that had the same column
+// typed as int64, and the whole file passed against a query that answered 502 on every real
+// database where the row cache was running. Kept as a named argument rather than derived from
+// `registrations`, because "how many are registered" and "have they been read in yet" are
+// different questions and conflating them is what hid this.
 func rowCacheRow(decode, coherent, slotLost bool, registrations int64, hitPct any) []any {
+	return rowCacheRowLoaded(decode, coherent, slotLost, registrations, registrations > 0, hitPct)
+}
+
+func rowCacheRowLoaded(
+	decode, coherent, slotLost bool,
+	registrations int64,
+	registrationsLoaded bool,
+	hitPct any,
+) []any {
 	return []any{
 		int64(12), int64(90), int64(10), int64(4096), int64(1 << 20), hitPct,
 		coherent, decode, any(int64(40)), int64(200),
-		registrations, registrations, "proj_db", slotLost,
+		registrations, registrationsLoaded, "proj_db", slotLost,
 		int64(1), int64(0),
 	}
 }
@@ -513,5 +529,34 @@ func TestAnErrorThatIsNotPostgresIsNotMistakenForAMissingExtension(t *testing.T)
 	// than fall through to a nil-pointer read of a code that is not there.
 	if isMissingRelation(context.Canceled) {
 		t.Fatal("a context cancellation is not a missing relation")
+	}
+}
+
+// TestRegistrationsLoadedIsABooleanBecauseTheViewSaysSo pins the one column that cost a diagnosis.
+//
+// `supacache.pg_stat_keyspace_rowcache.registrations_loaded` is `boolean`. This handler scanned it
+// into an `int64`, so every read of the view failed with
+//
+//	cannot scan bool (OID 16) in binary format into *int64
+//
+// and `/admin/v1/cache/rowcache` answered 502.
+//
+// It shipped because the failure is invisible until the feature works. The view is EMPTY while
+// `rowcache_decode` is off: no row, no scan, no error, and the handler correctly reports `off`.
+// Turning the row cache on is what produces a row to scan, so the panel reported the one database
+// where the cache was genuinely running as one where it was not — and Studio renders any
+// non-404/503 failure with the same words it uses for "off", which points the reader at their
+// schema rather than at the endpoint.
+//
+// Asserted with a real bool rather than through the shared helper, so a future edit to that helper
+// cannot quietly restore the old assumption.
+func TestRegistrationsLoadedIsABooleanBecauseTheViewSaysSo(t *testing.T) {
+	for _, loaded := range []bool{true, false} {
+		got := rowCacheBody(t, &fakeQuerier{byQuery: map[string][][]any{
+			"rowcache": {rowCacheRowLoaded(true, true, false, 4, loaded, 87.5)},
+		}})
+		if got.RegistrationsLoaded != loaded {
+			t.Errorf("registrations_loaded = %v, want %v", got.RegistrationsLoaded, loaded)
+		}
 	}
 }

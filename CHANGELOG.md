@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.1.0](https://github.com/supatype/server/compare/v2.0.1...v2.1.0) (2026-09-23)
+
+
+### Features
+
+* **admin:** serve the keyspace and row-cache views to Studio ([8dfdafc](https://github.com/supatype/server/commit/8dfdafc434599bbb6b170d35ffc838477e3f4b9b))
+* **cacheceiling:** the schema is a ceiling the runtime may only narrow ([8e41044](https://github.com/supatype/server/commit/8e410440ce71abae4ea6038a39879b3c04853c6d))
+* **cache:** enforce the schema's ceiling on the read path, and show it ([691ab57](https://github.com/supatype/server/commit/691ab5742329e43125a09af2403e3a52e71eb4f2))
+* **cache:** enforce the schema's ceiling on the read path, and show it ([94b84f1](https://github.com/supatype/server/commit/94b84f17dbc1f30db8fb2ec61c6a35b8e4e6456a))
+* **functions:** relay the worker's log stream, and read its structured lines ([8a64034](https://github.com/supatype/server/commit/8a64034a26cfad3be0792ec25d1528e1763a8abe))
+* **keyspace:** hold two keyspaces, and read each thing from the right one ([cebc456](https://github.com/supatype/server/commit/cebc456160d9eb467fc83c2ddcc138d8231a6499))
+* **keyspace:** rename the cache client to keyspace and add SUPATYPE_KEYSPACE_ADDR ([58a24a8](https://github.com/supatype/server/commit/58a24a833bcd767b8754a900730da83fc160138f))
+* **keyspace:** rename the cache client to keyspace, add SUPATYPE_KEYSPACE_ADDR ([1ce75fd](https://github.com/supatype/server/commit/1ce75fd333ff2e8c477fb8afe72fb383d7c21bf6))
+* **proxy:** carry the schema's cache ceiling on the route manifest ([7d971d8](https://github.com/supatype/server/commit/7d971d8f10709265e59fdf956e039e0549e4037f))
+* **restcache:** count cache outcomes per table and serve them on the admin API ([2159e1a](https://github.com/supatype/server/commit/2159e1ad5a6513bd7d3a5b25e78803d8ae407411))
+* **restcache:** file the response cache under cache:rest:{ref}:{hash} ([5d957d3](https://github.com/supatype/server/commit/5d957d35000e477da02b5eb07f216973d4dfd38e))
+* **rowcache:** register tables for the row cache from the REST allowlist ([c9031d6](https://github.com/supatype/server/commit/c9031d6908456b025db2d75a125eee59741edd23))
+* **studioauth:** signed, expiring preview links ([17a8b39](https://github.com/supatype/server/commit/17a8b396915747b4d86ec083373906964d611414))
+* **studioauth:** tell Studio whether this caller sees drafts ([48c3aba](https://github.com/supatype/server/commit/48c3aba88adc0c3a0f3f4ff93d1e7711ea167453))
+* **studio:** preview links that can be revoked one at a time ([79df06f](https://github.com/supatype/server/commit/79df06fd396b9f3cd44fbb76d17b96ca402caa44))
+
+
+### Bug Fixes
+
+* **apiconfig:** keep a managed pod's API config somewhere that survives a restart ([1e981b6](https://github.com/supatype/server/commit/1e981b60384a30ae94d38913b8cbc8a3b48219ce))
+* **ci:** pin govulncheck, and take the grpc fix it found ([6e17660](https://github.com/supatype/server/commit/6e17660b71928970d10ac5c4e2b560049f15f639))
+* **ci:** pin govulncheck, which [@latest](https://github.com/latest) stopped building ([30e5c0a](https://github.com/supatype/server/commit/30e5c0a9b186895b40eff82e67a35b16595c9400))
+* **ci:** pin govulncheck, which [@latest](https://github.com/latest) stopped building ([951812b](https://github.com/supatype/server/commit/951812bacaa1ad72167173957725a25bc1a95a4a))
+* **coverage:** keep the studioauth note in the one comment key the gate allows ([0c1935c](https://github.com/supatype/server/commit/0c1935c42c81c842eb6bfa60248189ba92d5b996))
+* **deps:** take the grpc fix for GO-2026-6348 ([1e92f89](https://github.com/supatype/server/commit/1e92f89aaaa2d5e9e548cd2786dd1887605e24c2))
+* **deps:** take the grpc fix for GO-2026-6348 ([d09c21e](https://github.com/supatype/server/commit/d09c21e1ec85577737eaf12acb3fc1e835b0536d))
+* **functions:** list only what the worker will actually serve ([411d9d5](https://github.com/supatype/server/commit/411d9d5c39f79c2d7a14072e41754c8ecfb456e5))
+* **proxy:** merge an overlay's validators, which were being dropped entirely ([4b4a9a9](https://github.com/supatype/server/commit/4b4a9a9d874c1d8cbb484eeb048b135882ae2dac))
+
 ## [2.0.1](https://github.com/supatype/server/compare/v2.0.0...v2.0.1) (2026-09-03)
 
 

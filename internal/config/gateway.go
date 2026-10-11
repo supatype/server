@@ -113,7 +113,7 @@ type Config struct {
 	// thing. The tenant configuration and the wrapped DB credentials are platform
 	// state: one control plane writes them centrally, and a pod that cannot read
 	// them cannot serve. A cached response belongs to the project, is worth
-	// nothing to anyone else, and is best kept in the project's own Postgres —
+	// nothing to anyone else, and is best kept in the project's own Postgres,
 	// where its memory is charged to that project and its statistics describe
 	// that project without anything having to be filtered per tenant.
 	//
@@ -164,8 +164,8 @@ type Config struct {
 	StorageURL string `envconfig:"SUPATYPE_STORAGE_URL" default:"http://localhost:5000"`
 
 	// StorageProvider controls which storage backend is used.
-	// "local" — built-in filesystem handler (no external service required, dev default).
-	// ""      — proxy to StorageURL (production / S3 mode).
+	// "local": the built-in filesystem handler (no external service required, dev default).
+	// "":      proxy to StorageURL (production / S3 mode).
 	StorageProvider string `envconfig:"STORAGE_PROVIDER"`
 
 	// StoragePath is the root directory for local filesystem storage.
@@ -218,7 +218,14 @@ type Config struct {
 	// a different service from CloudActivityURL despite the similar name.
 	ControlPlaneURL string `envconfig:"SUPATYPE_CONTROL_PLANE_URL" default:"http://control-plane:8080"`
 
-	// InternalHMACSecret signs server-to-control-plane calls.
+	// ControlPlaneSecret is presented to the control plane on every request
+	// forwarded under /platform/v1. The control plane shares a network with the
+	// functions worker, which runs user code, so it answers only callers that
+	// hold this; the gateway is the only one given it.
+	ControlPlaneSecret string `envconfig:"SUPATYPE_CONTROL_PLANE_SECRET"`
+
+	// InternalHMACSecret signs calls to the cloud control plane (CloudActivityURL).
+	// It is unrelated to ControlPlaneSecret above.
 	InternalHMACSecret string `envconfig:"SUPATYPE_INTERNAL_HMAC_SECRET"`
 
 	// NonProd marks a staging or preview deployment: robots are told to stay out.

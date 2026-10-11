@@ -79,3 +79,65 @@ func TestHandlerRequiresServiceRole(t *testing.T) {
 		t.Error("response should not have come from the upstream")
 	}
 }
+
+// upstreamRecordingSecret stands in for the control plane and records every
+// value of the secret header it was sent.
+func upstreamRecordingSecret(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	var seen []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Values(SecretHeader)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	return upstream, &seen
+}
+
+// forward sends one request through the handler, with the client's own copies
+// of the secret header, and fails unless the upstream answered.
+func forward(t *testing.T, secret, upstream string, clientCopies ...string) {
+	t.Helper()
+	h, err := Handler(&config.Config{Mode: "dev", ControlPlaneURL: upstream, ControlPlaneSecret: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/projects/p/status", nil)
+	for _, v := range clientCopies {
+		req.Header.Add(SecretHeader, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The control plane answers only callers holding the secret, and the gateway
+// is the one that holds it: every forwarded request has to carry it.
+func TestHandlerPresentsTheControlPlaneSecret(t *testing.T) {
+	upstream, seen := upstreamRecordingSecret(t)
+	forward(t, "the-secret", upstream.URL)
+	if len(*seen) != 1 || (*seen)[0] != "the-secret" {
+		t.Errorf("upstream saw %q, want exactly [the-secret]", *seen)
+	}
+}
+
+// A client must not be able to supply the secret itself: a guessed or leaked
+// value sent through the gateway is replaced, never forwarded alongside.
+func TestHandlerReplacesAClientsCopyOfTheSecret(t *testing.T) {
+	upstream, seen := upstreamRecordingSecret(t)
+	forward(t, "the-secret", upstream.URL, "forged", "another")
+	if len(*seen) != 1 || (*seen)[0] != "the-secret" {
+		t.Errorf("upstream saw %q, want exactly [the-secret]", *seen)
+	}
+}
+
+// With no secret configured the client's copy is still removed, so the gateway
+// never becomes a way to relay one.
+func TestHandlerStripsAClientsCopyWhenItHasNoSecret(t *testing.T) {
+	upstream, seen := upstreamRecordingSecret(t)
+	forward(t, "", upstream.URL, "forged")
+	if len(*seen) != 0 {
+		t.Errorf("upstream saw %q, want no secret header", *seen)
+	}
+}

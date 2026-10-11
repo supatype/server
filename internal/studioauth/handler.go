@@ -104,8 +104,8 @@ func VerifyHandler(c Config) http.HandlerFunc {
 // verifyOKResponse reports the capability set Studio renders from.
 //
 // It used to hardcode every permission to true, so an `editor` membership row was
-// handed a full-access UI while the control plane restricted the same role — the
-// two hosts disagreeing about what a role means.
+// handed a full-access UI while the control plane restricted the same role, so
+// the two hosts disagreed about what a role means.
 func verifyOKResponse(result Result, c Config) map[string]interface{} {
 	perms := result.Permissions
 	if perms == nil {
@@ -136,7 +136,7 @@ func verifyOKResponse(result Result, c Config) map[string]interface{} {
 //
 // **Studio needs telling, because row level security cannot tell it.** Studio's
 // data plane goes through the proxy with the service role, which bypasses
-// policies entirely — that is deliberate, Studio is an admin tool gated by its
+// policies entirely. That is deliberate: Studio is an admin tool gated by its
 // own capability system rather than by each project's access rules. But it means
 // the draft-visibility setting, which the generated policies compile in, binds
 // the API and not the UI. A project that narrowed it would still see every draft
@@ -187,78 +187,96 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 // inner must be the main service mux (without /studio routes).
 func ProxyHandler(inner http.Handler, c Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		mode := ModeElevated
-		actor := ""
-
+		mode, actor := ModeElevated, ""
 		if !c.DevBypass() {
-			result := ResolveAccess(req, c)
-			if !result.Allowed {
-				status := http.StatusForbidden
-				if result.Message == "Authentication required" {
-					status = http.StatusUnauthorized
-				}
-				utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
-				return
-			}
-			actor = result.Sub
-
-			// Admission alone is not enough: an `editor` must not reach the SQL
-			// runner or user administration through here.
-			perms := legacyAdminPermissions()
-			if result.Permissions != nil {
-				perms = *result.Permissions
-			}
-			if !AllowsRequest(perms, req.Method, req.URL.Path) {
-				utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
-					"error": "Studio role \"" + result.Role + "\" cannot perform this request",
-				})
-				return
-			}
-
 			var ok bool
-			mode, ok = resolveActingMode(req, perms)
-			if !ok {
-				utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
-					"error": "Studio role \"" + result.Role + "\" cannot act with elevated access",
-				})
+			if mode, actor, ok = admitProxied(w, req, c); !ok {
 				return
 			}
 		}
 
 		// Clone already deep-copies the URL, so the three branches that copied it
-		// again — two of which could not run, because net/http never hands a
-		// server handler a request without one — are gone. An empty path is not
-		// a valid request-target, so that default stays.
+		// again are gone: two of them could not run, because net/http never hands
+		// a server handler a request without one. An empty path is not a valid
+		// request-target, so that default stays.
 		req2 := req.Clone(req.Context())
 		if req2.URL.Path == "" {
 			req2.URL.Path = "/"
 		}
 
-		if mode == ModeElevated {
-			sr := strings.TrimSpace(c.ServiceRoleKey)
-			if sr == "" {
-				utilities.WriteJSON(w, http.StatusServiceUnavailable,
-					map[string]string{"error": "service role key not configured"})
-				return
-			}
-			req2.Header.Set("Authorization", "Bearer "+sr)
-			req2.Header.Set("apikey", sr)
-			recordElevatedRequest(c.Members, req, actor, req2.URL.Path)
-		} else {
-			// Leave the caller's own Authorization in place: PostgREST assumes
-			// their role and their own RLS policies apply. `apikey` still has to
-			// be present for gateways that require one, but it must not be the
-			// service role key — that would re-elevate the request.
-			if anon := strings.TrimSpace(c.AnonKey); anon != "" {
-				req2.Header.Set("apikey", anon)
-			} else {
-				req2.Header.Del("apikey")
-			}
+		if !setActingIdentity(w, req, req2, c, mode, actor) {
+			return
 		}
 
 		w.Header().Set(ActingModeHeader, mode)
 		inner.ServeHTTP(w, req2)
 	})
+}
+
+// setActingIdentity puts the credentials for mode on the forwarded request.
+// It reports false, having written the response, when elevation is asked for
+// and no service role key is configured.
+func setActingIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, mode, actor string) bool {
+	if mode != ModeElevated {
+		// Leave the caller's own Authorization in place: PostgREST assumes their
+		// role and their own RLS policies apply. `apikey` still has to be present
+		// for gateways that require one, but it must not be the service role key,
+		// because that would re-elevate the request.
+		if anon := strings.TrimSpace(c.AnonKey); anon != "" {
+			req2.Header.Set("apikey", anon)
+		} else {
+			req2.Header.Del("apikey")
+		}
+		return true
+	}
+
+	sr := strings.TrimSpace(c.ServiceRoleKey)
+	if sr == "" {
+		utilities.WriteJSON(w, http.StatusServiceUnavailable,
+			map[string]string{"error": "service role key not configured"})
+		return false
+	}
+	req2.Header.Set("Authorization", "Bearer "+sr)
+	req2.Header.Set("apikey", sr)
+	recordElevatedRequest(c.Members, req, actor, req2.URL.Path)
+	return true
+}
+
+// admitProxied decides whether one request may pass the Studio proxy, and as
+// whom. On a refusal it has already written the response.
+//
+// Admission alone is not enough: the request must also be one the caller's role
+// covers, judged on the path the router will actually route.
+func admitProxied(w http.ResponseWriter, req *http.Request, c Config) (mode, actor string, ok bool) {
+	result := ResolveAccess(req, c)
+	if !result.Allowed {
+		status := http.StatusForbidden
+		if result.Message == "Authentication required" {
+			status = http.StatusUnauthorized
+		}
+		utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
+		return "", "", false
+	}
+
+	perms := legacyAdminPermissions()
+	if result.Permissions != nil {
+		perms = *result.Permissions
+	}
+	if !AllowsRequest(perms, req.Method, routedPath(req)) {
+		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
+			"error": "Studio role \"" + result.Role + "\" cannot perform this request",
+		})
+		return "", "", false
+	}
+
+	mode, ok = resolveActingMode(req, perms)
+	if !ok {
+		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
+			"error": "Studio role \"" + result.Role + "\" cannot act with elevated access",
+		})
+		return "", "", false
+	}
+	return mode, result.Sub, true
 }
 
 // recordElevatedRequest notes that a request bypassed RLS.

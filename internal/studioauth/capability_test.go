@@ -68,7 +68,7 @@ func TestAllowsRequest(t *testing.T) {
 	developer, _ := PermissionsForRole("developer")
 	admin, _ := PermissionsForRole(RoleAdmin)
 
-	// Every role edits content rows — that is the point of the editor role.
+	// Every role edits content rows, which is the point of the editor role.
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch} {
 		if !AllowsRequest(editor, method, "/rest/v1/posts") {
 			t.Fatalf("editor must be able to %s content rows", method)
@@ -76,7 +76,7 @@ func TestAllowsRequest(t *testing.T) {
 	}
 
 	// The SQL runner still connects with the project's admin DSN, so it is
-	// elevated regardless of who asked — admin-only until it drops to the acting
+	// elevated regardless of who asked, and so admin-only until it drops to the acting
 	// user's role.
 	if AllowsRequest(developer, http.MethodPost, "/sql") {
 		t.Fatal("developer must not reach the elevated SQL runner")

@@ -9,6 +9,16 @@ import (
 	"github.com/supatype/server/internal/config"
 )
 
+// testServiceKey is the service-role key every test deployment is configured
+// with, and serviceRequest is a request that presents it.
+const testServiceKey = "the-key"
+
+func serviceRequest(path string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+testServiceKey)
+	return req
+}
+
 func TestHandlerRejectsAnUnusableUpstream(t *testing.T) {
 	for name, upstream := range map[string]string{
 		"unparseable": "http://[::1]:namedport",
@@ -42,15 +52,13 @@ func TestHandlerProxiesToTheConfiguredUpstream(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// Dev mode is config now, not an environment variable: the service-role
-	// middleware reads cfg.Mode.
-	h, err := Handler(&config.Config{Mode: "dev", ControlPlaneURL: upstream.URL})
+	h, err := Handler(&config.Config{Mode: "dev", ServiceRoleKey: testServiceKey, ControlPlaneURL: upstream.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects", nil))
+	h.ServeHTTP(rec, serviceRequest("/projects"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, body %s", rec.Code, rec.Body.String())
 	}
@@ -60,23 +68,37 @@ func TestHandlerProxiesToTheConfiguredUpstream(t *testing.T) {
 }
 
 // Without a service role the mount must refuse, since it fronts the control
-// plane.
+// plane. Dev mode is no exception: the gateway presents the control plane
+// secret on every request it forwards, so a keyless path in dev let a function
+// deployed to a dev stack act on the control plane through the gateway.
 func TestHandlerRequiresServiceRole(t *testing.T) {
-	h, err := Handler(&config.Config{
-		Mode:            "managed",
-		ServiceRoleKey:  "the-key",
-		ControlPlaneURL: "http://control-plane:8080",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects", nil))
-	if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusForbidden {
-		t.Errorf("unauthenticated request got %d, want 401 or 403", rec.Code)
-	}
-	if strings.Contains(rec.Body.String(), "projects") {
-		t.Error("response should not have come from the upstream")
+	for _, mode := range []string{"dev", "standalone", "managed"} {
+		t.Run(mode, func(t *testing.T) {
+			reached := false
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer upstream.Close()
+
+			h, err := Handler(&config.Config{
+				Mode:               mode,
+				ServiceRoleKey:     testServiceKey,
+				ControlPlaneURL:    upstream.URL,
+				ControlPlaneSecret: "the-secret",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects", nil))
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("unauthenticated request got %d, want 401", rec.Code)
+			}
+			if reached || strings.Contains(rec.Body.String(), "projects") {
+				t.Error("the request reached the control plane")
+			}
+		})
 	}
 }
 
@@ -97,11 +119,11 @@ func upstreamRecordingSecret(t *testing.T) (*httptest.Server, *[]string) {
 // of the secret header, and fails unless the upstream answered.
 func forward(t *testing.T, secret, upstream string, clientCopies ...string) {
 	t.Helper()
-	h, err := Handler(&config.Config{Mode: "dev", ControlPlaneURL: upstream, ControlPlaneSecret: secret})
+	h, err := Handler(&config.Config{Mode: "dev", ServiceRoleKey: testServiceKey, ControlPlaneURL: upstream, ControlPlaneSecret: secret})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/projects/p/status", nil)
+	req := serviceRequest("/projects/p/status")
 	for _, v := range clientCopies {
 		req.Header.Add(SecretHeader, v)
 	}

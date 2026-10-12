@@ -1,15 +1,15 @@
 // Package functions provides the studio admin API for edge functions.
 //
-// Routes (all require service-role Bearer token):
+// Routes (all require the service-role Bearer token, in every mode):
 //
-//	GET  /list              — list deployed functions (scanned from functionsDir)
-//	GET  /{name}/logs       — recent log lines for a function (?since=1h)
-//	GET  /env               — list shared env var key names from .env.local
-//	POST /env               — set a shared env var in .env.local
-//	DELETE /env/{key}       — remove a shared env var from .env.local
-//	GET  /{name}/env        — list function-specific env var key names
-//	POST /{name}/env        — set a function-specific env var
-//	DELETE /{name}/env/{key}— remove a function-specific env var
+//	GET    /list             list deployed functions (scanned from functionsDir)
+//	GET    /{name}/logs      recent log lines for a function (?since=1h)
+//	GET    /env              list shared env var key names from .env.local
+//	POST   /env              set a shared env var in .env.local
+//	DELETE /env/{key}        remove a shared env var from .env.local
+//	GET    /{name}/env       list function-specific env var key names
+//	POST   /{name}/env       set a function-specific env var
+//	DELETE /{name}/env/{key} remove a function-specific env var
 package functions
 
 import (
@@ -78,13 +78,16 @@ func RequireServiceRoleMiddleware(cfg *config.Config) func(http.Handler) http.Ha
 // read was justified as supporting rotation without a restart, but nothing
 // rotates it in place: the deployment sets it in the environment and a change
 // replaces the pod. Reading it once keeps the whole surface in one place.
+//
+// Dev mode is not exempt. It used to be, and two surfaces sit behind this
+// check: function administration and the control plane at `/platform/v1`,
+// where the gateway presents the control plane secret on every request it
+// forwards. A keyless dev path therefore let any edge function deployed to a
+// dev stack reach both through the gateway. Every legitimate dev caller already
+// holds the key: the CLI reads it from the project's `.env`, and Studio's dev
+// bypass injects it when it elevates.
 func requireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimSpace(cfg.Mode) == "dev" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		if strings.TrimSpace(cfg.ServiceRoleKey) == "" {
 			utilities.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "service role key not configured"})
 			return
@@ -214,7 +217,7 @@ var validFunctionName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // envFile resolves which env file a request is about.
 //
-// The three operations — list, set, remove — are the same whether the file is
+// The three operations (list, set and remove) are the same whether the file is
 // the shared one or one function's; only which file differs. They were written
 // out twice each, six handlers for three behaviours, and the copies had already
 // drifted over which errors they checked.

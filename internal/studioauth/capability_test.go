@@ -31,8 +31,9 @@ func TestRolePermissionsMatchTheControlPlane(t *testing.T) {
 		"admin": {
 			Read: true, Write: true, SchemaView: true,
 			SQLEditor: true, ElevatedSQL: true, ManageMembers: true,
+			RealtimeInspect: true,
 		},
-		"developer": {Read: true, Write: true, SchemaView: true, SQLEditor: true},
+		"developer": {Read: true, Write: true, SchemaView: true, SQLEditor: true, RealtimeInspect: true},
 		"editor":    {Read: true, Write: true},
 	}
 	if len(cases) != len(KnownStudioRoles()) {

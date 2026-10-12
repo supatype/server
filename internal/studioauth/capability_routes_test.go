@@ -61,6 +61,31 @@ var platformRules = []proxyRule{
 	{http.MethodOptions, "/platform/v1/projects/ref/functions/env", true, false, false},
 }
 
+// The Realtime Inspector's control-plane routes: the one narrow exception to
+// "the control plane is admin only". Developers debug realtime, so they may
+// read channels, connections and the stream, and send a test broadcast; every
+// other platform path, realtime settings included, stays admin only.
+var realtimeInspectorRules = []proxyRule{
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/connections", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/stream", true, true, false},
+	{http.MethodPost, "/platform/v1/projects/ref/realtime/broadcast", true, true, false},
+	{http.MethodGet, "/platform/v1/project", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/settings", true, false, false},
+	{http.MethodPatch, "/platform/v1/projects/ref/realtime/settings", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/metrics", true, false, false},
+	{http.MethodPost, "/platform/v1/projects/ref/realtime/channels", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/broadcast", true, false, false},
+	{http.MethodPost, "/platform/v1/project", true, false, false},
+	// Matched on whole segments: a tail that climbs out of the inspector's
+	// routes is judged as the platform path it is.
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/../../schema/migrations", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/../realtime/channels", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/%2e%2e/realtime/channels", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/ref/x/realtime/channels", true, false, false},
+}
+
 // Everything else behind the gateway is administration that only the service
 // role can do, and a route added later must land here rather than fall through
 // to "may write content rows".
@@ -91,6 +116,7 @@ func TestAllowsRequestMatrix(t *testing.T) {
 		"named":        namedRules,
 		"platform":     platformRules,
 		"service role": serviceRoleRules,
+		"inspector":    realtimeInspectorRules,
 	}
 	for group, rules := range groups {
 		for _, rule := range rules {
@@ -110,7 +136,7 @@ func TestAllowsRequestMatrix(t *testing.T) {
 // nothing at all.
 func TestAllowsRequestUnknownRoleReachesNothing(t *testing.T) {
 	var none StudioPermissions
-	for _, rules := range [][]proxyRule{dataPlaneRules, namedRules, platformRules, serviceRoleRules} {
+	for _, rules := range [][]proxyRule{dataPlaneRules, namedRules, platformRules, serviceRoleRules, realtimeInspectorRules} {
 		for _, rule := range rules {
 			if AllowsRequest(none, rule.method, rule.path) {
 				t.Errorf("no capability must not reach %s %q", rule.method, rule.path)

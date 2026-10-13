@@ -69,7 +69,7 @@ func buildAdminAPI(d *Deps) http.Handler {
 // manifest per request, and one map read once would hand every tenant the first one's ceiling.
 //
 // A nil manifest yields nil, which the admin API reads as "nothing is permitted" rather than "no
-// constraint". That is the safe direction — treating an absent declaration as permission would
+// constraint". That is the safe direction: treating an absent declaration as permission would
 // turn a manifest written before this field existed into an open door.
 func (d *Deps) DeclaredCache(req *http.Request) map[string]proxy.TableCache {
 	if d == nil || d.ManifestFor == nil {
@@ -168,9 +168,11 @@ func restProxyHandler(d *Deps) http.Handler {
 // buildGraphQL answers /graphql/v1 by calling the graphql_public.graphql RPC on
 // PostgREST, so the path is rewritten rather than forwarded.
 //
-// It authenticates upstream as the service role and passes the caller's own
-// token along in a separate header, so the RPC can act on the caller's behalf
-// without the gateway's privilege being confused with theirs.
+// The caller's own Authorization and apikey go upstream unchanged, exactly as
+// on the REST mount: pg_graphql runs inside Postgres as whichever role
+// PostgREST assumes from that token, so the caller's RLS policies and column
+// grants apply. The gateway never substitutes its service role key here; doing
+// so ran every GraphQL query with row security bypassed, whoever sent it.
 func buildGraphQL(d *Deps) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		u, err := url.Parse(GraphQLUpstream(d.ManifestFor(req), d.Config))
@@ -178,42 +180,19 @@ func buildGraphQL(d *Deps) http.Handler {
 			badGateway(w, "bad gateway")
 			return
 		}
-		rpc := rewriteToGraphQLRPC(req)
-		endUserAuth := strings.TrimSpace(req.Header.Get("Authorization"))
-		upstreamProxy(u, withHeaders(func(*http.Request) map[string]string {
-			return graphQLHeaders(d.Config.ServiceRoleKey, endUserAuth)
-		})).ServeHTTP(w, rpc)
+		upstreamProxy(u).ServeHTTP(w, rewriteToGraphQLRPC(req))
 	})
 }
 
 // rewriteToGraphQLRPC points a copy of the request at the RPC endpoint.
 func rewriteToGraphQLRPC(req *http.Request) *http.Request {
-	// Clone already deep-copies the URL, so copying it again — and handling a
-	// nil one that net/http never hands a server handler — bought nothing.
+	// Clone already deep-copies the URL, so copying it again, or handling a
+	// nil one that net/http never hands a server handler, bought nothing.
 	rpc := req.Clone(req.Context())
 	rpc.URL.Path = "/rpc/graphql"
 	rpc.URL.RawPath = ""
 	rpc.Header.Set("Content-Profile", "graphql_public")
 	return rpc
-}
-
-// graphQLHeaders authenticates as the service role and forwards the caller's
-// own token separately. An unconfigured service role sends neither.
-func graphQLHeaders(serviceRoleKey, endUserAuth string) map[string]string {
-	headers := map[string]string{}
-	key := strings.TrimSpace(serviceRoleKey)
-	if key == "" {
-		return headers
-	}
-	if strings.HasPrefix(strings.ToLower(key), "bearer ") {
-		headers["Authorization"] = key
-	} else {
-		headers["Authorization"] = "Bearer " + key
-	}
-	if endUserAuth != "" {
-		headers["X-Supatype-End-User-Authorization"] = endUserAuth
-	}
-	return headers
 }
 
 // buildStorage serves objects from disk when a local store is configured, and
@@ -390,7 +369,7 @@ func parseStaticPrefixesJSON(raw string) map[string]string {
 	}
 	var out map[string]string
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		logrus.WithError(err).Warn("SUPATYPE_STATIC_CACHE_PREFIXES_JSON: invalid JSON — ignoring")
+		logrus.WithError(err).Warn("SUPATYPE_STATIC_CACHE_PREFIXES_JSON: invalid JSON, ignoring")
 		return nil
 	}
 	return out

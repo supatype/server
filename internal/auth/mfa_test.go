@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gobuffalo/pop/v6"
 	"github.com/gofrs/uuid"
 
 	"github.com/pquerna/otp"
@@ -370,6 +371,24 @@ func (ts *MFATestSuite) AAL2RequiredToUpdatePasswordAfterEnrollment() {
 
 }
 
+// backdateFactors moves every factor's created_at an hour into the past, so an
+// expiry of 0 has passed for each of them on any clock.
+//
+// created_at is stamped by this process's clock and the expiry cleanup compares
+// it with the database's current_timestamp. With an expiry of 0 the two clocks
+// must agree to the millisecond: a database clock even slightly behind (about
+// 10ms behind on a Docker Desktop host) left the previous factor unexpired
+// when enrolls came back to back, and the next one failed with 422 on its
+// friendly name. Production cannot hit this: the configured expiry is at least
+// 300s.
+func backdateFactors(ts *MFATestSuite) {
+	ts.T().Helper()
+	table := (&pop.Model{Value: models.Factor{}}).TableName()
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		"update "+table+" set created_at = created_at - interval '1 hour' where user_id = ?", ts.TestUser.ID,
+	).Exec())
+}
+
 func (ts *MFATestSuite) TestMultipleEnrollsCleanupExpiredFactors() {
 	// All factors are deleted when a subsequent enroll is made
 	ts.API.config.MFA.FactorExpiryDuration = 0 * time.Second
@@ -382,6 +401,7 @@ func (ts *MFATestSuite) TestMultipleEnrollsCleanupExpiredFactors() {
 	var w *httptest.ResponseRecorder
 	token := accessTokenResp.Token
 	for i := 0; i < numFactors; i++ {
+		backdateFactors(ts)
 		w = performEnrollFlow(ts, token, "first-name", models.TOTP, "https://issuer.com", "", http.StatusOK)
 	}
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,15 @@ import (
 // short of the floor with nothing failing to say why.
 const authTestConfig = "../../hack/test.env"
 
-func requireAuthEnvironment(t *testing.T) {
+// requireAuthEnvironment loads the auth test configuration, skips when its
+// database is not reachable, and returns that database's DSN.
+//
+// Loading test.env overwrites DATABASE_URL with the file's value, while the
+// auth service reads SUPATYPE_DB_DATABASE_URL first. Without pinning
+// DATABASE_URL back to the DSN the auth service actually reached, the gateway's
+// own pool (which reads DATABASE_URL) dialled the file's localhost:5432 even
+// when the suite's database was elsewhere.
+func requireAuthEnvironment(t *testing.T) string {
 	t.Helper()
 
 	cfg, err := conf.LoadGlobal(authTestConfig)
@@ -52,6 +61,20 @@ func requireAuthEnvironment(t *testing.T) {
 		t.Skipf("the database is not reachable: %v", err)
 	}
 	_ = db.Close()
+	t.Setenv("DATABASE_URL", cfg.DB.URL)
+	return cfg.DB.URL
+}
+
+// withWrongPassword is dsn with its password replaced, so the server reaches
+// the suite's real database and is refused by it.
+func withWrongPassword(t *testing.T, dsn string) string {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	if err != nil || u.User == nil {
+		t.Fatalf("the test DSN has no user to give a wrong password: %v", err)
+	}
+	u.User = url.UserPassword(u.User.Username(), "not-the-password")
+	return u.String()
 }
 
 // The server starts, serves, and gives back everything it took.
@@ -141,7 +164,7 @@ func TestNewToleratesAWatchDirectoryThatIsNotThere(t *testing.T) {
 // these missing would answer requests it cannot serve correctly: managed mode
 // with no tenant secret trusts any X-Supatype-Tenant header it is sent.
 func TestNewRefuses(t *testing.T) {
-	requireAuthEnvironment(t)
+	badCredential := withWrongPassword(t, requireAuthEnvironment(t))
 
 	manifest := filepath.Join(t.TempDir(), "manifest.json")
 	if err := os.WriteFile(manifest, []byte("{not json"), 0o600); err != nil {
@@ -167,8 +190,11 @@ func TestNewRefuses(t *testing.T) {
 		"an auth configuration that will not decode": {
 			"SUPATYPE_HOOK_SEND_EMAIL_ENABLED": "maybe",
 		},
+		// Both names: the auth service prefers the prefixed one, so setting only
+		// DATABASE_URL tested nothing wherever the suite's DSN came from it.
 		"a database that refuses the credential": {
-			"DATABASE_URL": "postgresql://postgres:not-the-password@127.0.0.1:5432/supatype_studio_test",
+			"DATABASE_URL":             badCredential,
+			"SUPATYPE_DB_DATABASE_URL": badCredential,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -321,7 +347,7 @@ func TestNewMountsTheSendEmailHookReceiver(t *testing.T) {
 		drain()
 	})
 
-	// Unsigned, so it is refused — the point is that something refused it rather
+	// Unsigned, so it is refused. The point is that something refused it rather
 	// than the route being absent.
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(

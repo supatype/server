@@ -228,10 +228,10 @@ func TestRestInjectsSchemaHeader(t *testing.T) {
 	}
 }
 
-// TestGraphQLUsesServiceRoleAndForwardsEndUserAuth locks the two-token shape of
-// the GraphQL mount: it authenticates upstream as the service role, and passes
-// the caller's own token along in a separate header rather than dropping it.
-func TestGraphQLUsesServiceRoleAndForwardsEndUserAuth(t *testing.T) {
+// TestGraphQLRunsAsTheCaller locks a security rule: the GraphQL mount hands
+// PostgREST the caller's own Authorization, unchanged, so their role and RLS
+// policies apply. The gateway's service role key must never stand in for it.
+func TestGraphQLRunsAsTheCaller(t *testing.T) {
 	r := newRig(t, "dev")
 	rec := r.do(http.MethodPost, "/graphql/v1/", func(req *http.Request) {
 		req.Header.Set("Authorization", "Bearer end-user-token")
@@ -240,11 +240,11 @@ func TestGraphQLUsesServiceRoleAndForwardsEndUserAuth(t *testing.T) {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
 	got, _ := r.lastHit()
-	if auth := got.header.Get("Authorization"); auth != "Bearer service-role-key" {
-		t.Errorf("Authorization = %q, want the service role key", auth)
+	if auth := got.header.Get("Authorization"); auth != "Bearer end-user-token" {
+		t.Errorf("Authorization = %q, want the caller's own token", auth)
 	}
-	if fwd := got.header.Get("X-Supatype-End-User-Authorization"); fwd != "Bearer end-user-token" {
-		t.Errorf("X-Supatype-End-User-Authorization = %q, want the caller's token", fwd)
+	if fwd := got.header.Get("X-Supatype-End-User-Authorization"); fwd != "" {
+		t.Errorf("X-Supatype-End-User-Authorization = %q, want none: nothing reads it", fwd)
 	}
 	if profile := got.header.Get("Content-Profile"); profile != "graphql_public" {
 		t.Errorf("Content-Profile = %q, want graphql_public", profile)

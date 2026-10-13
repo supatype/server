@@ -77,9 +77,9 @@ func TestTheStandaloneChain(t *testing.T) {
 	}
 }
 
-// Managed mode without a JWT secret still builds its chain — refusing to start
+// Managed mode without a JWT secret still builds its chain. Refusing to start
 // would take out a pod for a misconfiguration the data plane already handles by
-// refusing requests — but the chain is the same shape either way.
+// refusing requests, and the chain is the same shape either way.
 func TestTheManagedChainWithoutASecret(t *testing.T) {
 	withSecret := ModeChain(&config.Config{Mode: "managed", JWTSecret: "s"}, nil)
 	without := ModeChain(&config.Config{Mode: "managed"}, nil)
@@ -195,40 +195,14 @@ func TestKeyspaceMonitorWithoutADatabase(t *testing.T) {
 	}
 }
 
-// ─── The GraphQL headers ──────────────────────────────────────────────────────
-
-// The proxy authenticates as the service role and forwards the caller's own
-// token separately, so pg_graphql sees both. An unconfigured service role sends
-// neither, rather than an empty bearer.
-func TestGraphQLHeaders(t *testing.T) {
-	for name, tc := range map[string]struct {
-		key, endUser string
-		wantAuth     string
-		wantEndUser  string
-	}{
-		"a bare key": {"service-key", "Bearer caller", "Bearer service-key", "Bearer caller"},
-		"a key that already says bearer": {
-			"Bearer service-key", "Bearer caller", "Bearer service-key", "Bearer caller",
-		},
-		"oddly cased":              {"BEARER service-key", "", "BEARER service-key", ""},
-		"no caller token":          {"service-key", "", "Bearer service-key", ""},
-		"no service role":          {"", "Bearer caller", "", ""},
-		"a service role of spaces": {"   ", "Bearer caller", "", ""},
-	} {
-		headers := graphQLHeaders(tc.key, tc.endUser)
-		if got := headers["Authorization"]; got != tc.wantAuth {
-			t.Errorf("%s: Authorization = %q, want %q", name, got, tc.wantAuth)
-		}
-		if got := headers["X-Supatype-End-User-Authorization"]; got != tc.wantEndUser {
-			t.Errorf("%s: end-user header = %q, want %q", name, got, tc.wantEndUser)
-		}
-	}
-}
+// ─── The GraphQL rewrite ──────────────────────────────────────────────────────
 
 // The GraphQL mount rewrites to the RPC endpoint on a copy, so the caller's own
-// request is untouched.
+// request is untouched, and the caller's credentials ride along unchanged.
 func TestRewriteToGraphQLRPC(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/graphql/v1?op=x", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer caller")
+	req.Header.Set("apikey", "anon-key")
 
 	rpc := rewriteToGraphQLRPC(req)
 	if rpc.URL.Path != "/rpc/graphql" {
@@ -243,12 +217,16 @@ func TestRewriteToGraphQLRPC(t *testing.T) {
 	if req.URL.Path != "/graphql/v1" {
 		t.Errorf("the original request was rewritten: %q", req.URL.Path)
 	}
+	if rpc.Header.Get("Authorization") != "Bearer caller" || rpc.Header.Get("apikey") != "anon-key" {
+		t.Errorf("the caller's credentials changed: %q, %q",
+			rpc.Header.Get("Authorization"), rpc.Header.Get("apikey"))
+	}
 }
 
 // ─── The admin config endpoint ────────────────────────────────────────────────
 
 // Studio reads the pushed admin config from here. A project that has not pushed
-// is a 404 — there is nothing to render — and anything else is a failure to
+// is a 404, since there is nothing to render, and anything else is a failure to
 // read, which is a different problem.
 func TestTheStudioConfigEndpoint(t *testing.T) {
 	dir := t.TempDir()
@@ -584,7 +562,7 @@ func TestLocalStorageIsServedFromDisk(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	buildStorage(d).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/bucket", nil))
-	// Unauthenticated, so it is refused rather than proxied — the point is that
+	// Unauthenticated, so it is refused rather than proxied. The point is that
 	// the local handler answered at all.
 	if rec.Code == http.StatusBadGateway {
 		t.Errorf("the local store proxied instead of serving: %s", rec.Body.String())

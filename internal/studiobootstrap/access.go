@@ -8,12 +8,13 @@
 // enforcement and evaluated here for the interface, from the same AST.
 //
 // Only *row-independent* rules can be answered without a row. Everything else is
-// reported as row-dependent rather than guessed — an honest "it depends" is what
+// reported as row-dependent rather than guessed. An honest "it depends" is what
 // lets Studio ask per row, and a guess is what makes a UI lie.
 package studiobootstrap
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -21,11 +22,11 @@ import (
 type Verdict string
 
 const (
-	// VerdictAllow — every caller in this session passes, whatever the row.
+	// VerdictAllow: every caller in this session passes, whatever the row.
 	VerdictAllow Verdict = "allow"
-	// VerdictDeny — no row can satisfy it, so Studio should not offer the action.
+	// VerdictDeny: no row can satisfy it, so Studio should not offer the action.
 	VerdictDeny Verdict = "deny"
-	// VerdictRow — depends on the row. Studio must ask per row (or let the
+	// VerdictRow: depends on the row. Studio must ask per row (or let the
 	// database refuse) rather than assume either way.
 	VerdictRow Verdict = "row"
 )
@@ -69,7 +70,7 @@ type operand struct {
 // Evaluate reports what can be determined about a rule without a row.
 func Evaluate(raw json.RawMessage, caller Caller) Verdict {
 	if len(raw) == 0 {
-		// No rule for an operation means denied — deny-by-default is the whole
+		// No rule for an operation means denied: deny-by-default is the whole
 		// premise, so an absent rule must never read as permission.
 		return VerdictDeny
 	}
@@ -198,7 +199,7 @@ func evaluateCompare(r *rule, caller Caller) Verdict {
 	// A comparison against null is never true in SQL, whichever operator it is:
 	// `NULL <> 'x'` is NULL, not true, so the policy does not grant. Negating
 	// sameValue would have said otherwise and offered an action the database
-	// then refuses — which is exactly the drift this package exists to stop.
+	// then refuses, which is exactly the drift this package exists to stop.
 	if left == nil || right == nil {
 		return VerdictDeny
 	}
@@ -216,7 +217,7 @@ func evaluateCompare(r *rule, caller Caller) Verdict {
 	}
 }
 
-// resolveOperand returns an operand's value, and false when it names a column —
+// resolveOperand returns an operand's value, and false when it names a column,
 // which only a row can supply.
 func resolveOperand(o *operand, caller Caller) (any, bool) {
 	switch o.Kind {
@@ -238,7 +239,7 @@ func resolveOperand(o *operand, caller Caller) (any, bool) {
 
 // claimByPath walks a dotted path, mirroring `auth.claim_text` in SQL. A missing
 // segment yields nil, so comparing against an absent claim denies rather than
-// erroring — the same behaviour the policy has.
+// erroring, the same behaviour the policy has.
 func claimByPath(claims map[string]any, path string) any {
 	if claims == nil || path == "" {
 		return nil
@@ -276,11 +277,7 @@ func scalarText(v any) string {
 		}
 		return "false"
 	case float64:
-		// Whole numbers render without a trailing ".0", matching the SQL side.
-		if value == float64(int64(value)) {
-			return strings.TrimSuffix(strings.TrimRight(formatFloat(value), "0"), ".")
-		}
-		return formatFloat(value)
+		return numberText(value)
 	default:
 		encoded, err := json.Marshal(value)
 		if err != nil {
@@ -290,12 +287,17 @@ func scalarText(v any) string {
 	}
 }
 
-func formatFloat(v float64) string {
-	encoded, err := json.Marshal(v)
-	if err != nil {
-		return ""
+// numberText renders a decoded JSON number as Postgres prints the same jsonb
+// number as text: plain decimal notation, no exponent, no trailing ".0" on a
+// whole number, and every significant digit kept. Trimming zeros off the right
+// of a whole number turned 10 into "1" and 70 into "7", so distinct claims
+// compared equal and Studio showed an allow the policy refuses.
+func numberText(v float64) string {
+	if v == 0 {
+		// Covers -0, which Postgres prints as "0".
+		return "0"
 	}
-	return string(encoded)
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 func boolVerdict(ok bool) Verdict {

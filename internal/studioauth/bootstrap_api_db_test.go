@@ -42,7 +42,7 @@ const bootstrapAST = `{
 // The bootstrap endpoints over HTTP, against a real Postgres.
 //
 // Skipped unless SUPATYPE_TEST_DSN points at a throwaway database. Run the
-// DB-backed packages with `-p 1` — they share one database and the same
+// DB-backed packages with `-p 1`: they share one database and the same
 // `_supatype` table names.
 func TestBootstrapEndpoints(t *testing.T) {
 	dsn := os.Getenv("SUPATYPE_TEST_DSN")
@@ -221,7 +221,7 @@ func TestBootstrapEndpoints(t *testing.T) {
 			t.Errorf("sub: got %q", body.Sub)
 		}
 		// The Studio role and the application role are separate namespaces, and the
-		// session reports both — a rule tests the app role, so conflating them would
+		// session reports both. A rule tests the app role, so conflating them would
 		// report access the database will not grant.
 		if body.Role != "editor" {
 			t.Errorf("studio role: got %q", body.Role)
@@ -238,6 +238,39 @@ func TestBootstrapEndpoints(t *testing.T) {
 		}
 		if _, leaked := body.Access["audit_log"]; leaked {
 			t.Error("session disclosed a table the caller cannot reach")
+		}
+	})
+
+	// A viewer reads and changes nothing, whatever the app's own rules would let
+	// them write, so Studio offers them no create, edit or delete.
+	t.Run("session offers a viewer nothing to write", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `UPDATE _supatype.studio_members SET role = 'viewer' WHERE user_id = $1`, bootstrapUser); err != nil {
+			t.Fatalf("make viewer: %v", err)
+		}
+		defer func() {
+			_, _ = pool.Exec(ctx, `UPDATE _supatype.studio_members SET role = 'editor' WHERE user_id = $1`, bootstrapUser)
+		}()
+
+		rec := call(session, tokenFor("authenticated"), "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Role   string                       `json:"role"`
+			Mode   string                       `json:"mode"`
+			Access map[string]map[string]string `json:"access"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.Role != "viewer" || body.Mode != ModeSelf {
+			t.Fatalf("role=%q mode=%q", body.Role, body.Mode)
+		}
+		want := map[string]string{"read": "allow", "create": "deny", "update": "deny", "delete": "deny"}
+		for op, verdict := range want {
+			if got := body.Access["posts"][op]; got != verdict {
+				t.Errorf("posts %s: got %q, want %q", op, got, verdict)
+			}
 		}
 	})
 

@@ -19,9 +19,16 @@ RUN RELEASE_VERSION=unspecified make build
 
 # Always use alpine:3 so the latest version is used. This will keep CA certs more up to date.
 FROM alpine:3
+
+# The server's own licence. The base image's packages carry their own; this
+# label and /LICENSE describe the server binary, so they ship with every build
+# of the image rather than only with the release workflow's.
+LABEL org.opencontainers.image.licenses="MIT"
+
 RUN adduser -D -u 1000 supatype
 
 RUN apk add --no-cache ca-certificates
+COPY --chmod=0644 LICENSE /LICENSE
 COPY --from=build /go/src/github.com/supatype/server/supatype-server /usr/local/bin/supatype-server
 COPY --from=build /go/src/github.com/supatype/server/migrations /usr/local/etc/auth/migrations/
 # The old name, kept as a symlink: an image tag is not the only thing that names

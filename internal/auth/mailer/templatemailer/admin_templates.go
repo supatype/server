@@ -2,8 +2,8 @@ package templatemailer
 
 import (
 	"context"
-	"fmt"
 	"strings"
+	"time"
 
 	"github.com/supatype/server/internal/conf"
 )
@@ -26,11 +26,91 @@ func CanonicalPathTemplateType(p string) (string, bool) {
 	}
 }
 
-func (o *Cache) purge(typ string) {
-	o.rw.Lock()
-	defer o.rw.Unlock()
-	delete(o.m, typ)
+// UseSavedTemplates makes templates saved in store win over the configured
+// ones. It is called once, while the API is built and before it serves.
+func (m *Mailer) UseSavedTemplates(store SavedTemplateStore) {
+	m.saved = newSavedTemplates(store)
 }
+
+// entry is the template mail of type typ is sent with: the saved edit when
+// there is one, otherwise the configured or built-in template.
+func (m *Mailer) entry(ctx context.Context, cfg *conf.GlobalConfiguration, typ string) (*tplCacheEntry, error) {
+	if m.saved != nil {
+		if ent, ok := m.saved.entry(ctx, typ); ok {
+			return ent, nil
+		}
+	}
+	return m.tc.get(ctx, cfg, typ)
+}
+
+// AdminTemplate is what Studio's Email templates view shows for one type.
+type AdminTemplate struct {
+	Subject string
+	Body    string
+	// SavedAt is when the edit in force was saved, and nil when the configured
+	// or built-in template is in force.
+	SavedAt *time.Time
+}
+
+// AdminTemplateSnapshot returns the template in force for typ. It reads the
+// store directly rather than through the cache, so the view never shows an
+// answer older than the database's.
+func (m *Mailer) AdminTemplateSnapshot(ctx context.Context, typ string) (AdminTemplate, error) {
+	if m.saved != nil {
+		saved, err := m.saved.store.Find(ctx, typ)
+		if err != nil {
+			return AdminTemplate{}, err
+		}
+		if saved != nil {
+			at := saved.UpdatedAt
+			return AdminTemplate{Subject: saved.Subject, Body: saved.Body, SavedAt: &at}, nil
+		}
+	}
+	subject := getEmailContentConfig(
+		&m.cfg.Mailer.Subjects,
+		typ,
+		getEmailContentConfig(defaultTemplateSubjects, typ, ""),
+	)
+	html, err := m.tc.resolveMergedBodyHTML(ctx, m.cfg, typ)
+	return AdminTemplate{Subject: subject, Body: html}, err
+}
+
+// AdminTemplateSave saves subject and html as the template of typ, after
+// checking both parse, and returns when it was saved.
+func (m *Mailer) AdminTemplateSave(ctx context.Context, typ, subject, html string) (time.Time, error) {
+	if m.saved == nil {
+		return time.Time{}, ErrNoSavedTemplateStore
+	}
+	if _, _, err := parseSavedTemplate(subject, html); err != nil {
+		return time.Time{}, &InvalidTemplateError{err: err}
+	}
+	tpl := &SavedTemplate{Subject: subject, Body: html}
+	if err := m.saved.store.Save(ctx, typ, tpl); err != nil {
+		return time.Time{}, err
+	}
+	m.saved.forget(typ)
+	return tpl.UpdatedAt, nil
+}
+
+// AdminTemplateReset removes the saved template of typ, so the configured or
+// built-in template is in force again.
+func (m *Mailer) AdminTemplateReset(ctx context.Context, typ string) error {
+	if m.saved == nil {
+		return ErrNoSavedTemplateStore
+	}
+	if err := m.saved.store.Delete(ctx, typ); err != nil {
+		return err
+	}
+	m.saved.forget(typ)
+	return nil
+}
+
+// InvalidTemplateError is a subject or body that does not parse as a template.
+type InvalidTemplateError struct{ err error }
+
+func (e *InvalidTemplateError) Error() string { return "invalid template: " + e.err.Error() }
+
+func (e *InvalidTemplateError) Unwrap() error { return e.err }
 
 // resolveMergedBodyHTML returns inline HTML loaded the same way as loadEntryBody, without parsing templates.
 func (o *Cache) resolveMergedBodyHTML(ctx context.Context, cfg *conf.GlobalConfiguration, typ string) (string, error) {
@@ -45,63 +125,4 @@ func (o *Cache) resolveMergedBodyHTML(ctx context.Context, cfg *conf.GlobalConfi
 		raw = cfg.SiteURL + raw
 	}
 	return o.fetch(ctx, cfg, raw)
-}
-
-// AdminTemplateSnapshot returns merged subject/body HTML for Studio (Settings → Authentication → Email templates).
-func (m *Mailer) AdminTemplateSnapshot(ctx context.Context, typ string) (subject string, html string, err error) {
-	subject = getEmailContentConfig(
-		&m.cfg.Mailer.Subjects,
-		typ,
-		getEmailContentConfig(defaultTemplateSubjects, typ, ""),
-	)
-	html, err = m.tc.resolveMergedBodyHTML(ctx, m.cfg, typ)
-	return subject, html, err
-}
-
-// AdminTemplateUpdate applies subject/HTML at runtime for the mailer and drops the cached entry for typ.
-func (m *Mailer) AdminTemplateUpdate(typ, subjectLine, html string) error {
-	if err := patchMailerSubjectField(&m.cfg.Mailer.Subjects, typ, subjectLine); err != nil {
-		return err
-	}
-	if err := patchMailerTemplateField(&m.cfg.Mailer.Templates, typ, html); err != nil {
-		return err
-	}
-	m.tc.purge(typ)
-	return nil
-}
-
-func patchMailerSubjectField(cfg *conf.EmailContentConfiguration, typ, v string) error {
-	switch typ {
-	case InviteTemplate:
-		cfg.Invite = v
-	case ConfirmationTemplate:
-		cfg.Confirmation = v
-	case RecoveryTemplate:
-		cfg.Recovery = v
-	case EmailChangeTemplate:
-		cfg.EmailChange = v
-	case MagicLinkTemplate:
-		cfg.MagicLink = v
-	default:
-		return fmt.Errorf("unknown mail template key: %q", typ)
-	}
-	return nil
-}
-
-func patchMailerTemplateField(cfg *conf.EmailContentConfiguration, typ, v string) error {
-	switch typ {
-	case InviteTemplate:
-		cfg.Invite = v
-	case ConfirmationTemplate:
-		cfg.Confirmation = v
-	case RecoveryTemplate:
-		cfg.Recovery = v
-	case EmailChangeTemplate:
-		cfg.EmailChange = v
-	case MagicLinkTemplate:
-		cfg.MagicLink = v
-	default:
-		return fmt.Errorf("unknown mail template key: %q", typ)
-	}
-	return nil
 }

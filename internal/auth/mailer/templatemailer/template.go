@@ -37,6 +37,10 @@ type Mailer struct {
 	cfg *conf.GlobalConfiguration
 	mc  mailer.Client
 	tc  *Cache
+
+	// saved is nil until UseSavedTemplates is called, and then templates saved
+	// through the admin API win over the configured ones.
+	saved *savedTemplates
 }
 
 // FromConfig returns a new mailer configured using the global configuration.
@@ -128,7 +132,7 @@ func (m *Mailer) mail(
 	}
 	headers := m.Headers(cfg, typ)
 
-	ent, err := m.tc.get(ctx, cfg, tpl)
+	ent, err := m.entry(ctx, cfg, tpl)
 	if err != nil {
 		return err
 	}

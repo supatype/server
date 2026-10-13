@@ -10,60 +10,62 @@ import (
 
 // Studio roles and what each may do.
 //
-// This must agree with `STUDIO_ROLE_PERMISSIONS` in the control plane
-// (supatype-cloud, src/middleware/studio-capability.ts) and `STUDIO_ROLES` in the
-// CLI. The same membership row has to mean the same thing whether the project
-// runs self-hosted or managed. Two hosts quietly disagreeing about what
-// "developer" allows is how a role becomes meaningless.
+// One role set serves both hosts: owner, admin, developer, editor, billing and
+// viewer, with what each may do written once in role_matrix.json. The control
+// plane (supatype-cloud) and the CLI carry the same document and pin the same
+// hash, so the same membership row means the same thing whether the project runs
+// self-hosted or managed. Self-host grants admin, developer, editor and viewer;
+// owner and billing are Cloud org roles and grant nothing here.
 //
-//	Capability                                   admin  developer  editor
-//	Edit content rows                             yes      yes       yes
-//	Schema / migrations view                      yes      yes       no
-//	SQL editor (as the acting user's role)        yes      yes       no
-//	Elevated SQL / DDL / destructive              yes      no        no
-//	Studio members + keys                         yes      no        no
-//	Realtime Inspector (channels, stream, test)   yes      yes       no
+//	Capability                                   admin  developer  editor  viewer
+//	Read content rows                             yes      yes       yes     yes
+//	Edit content rows                             yes      yes       yes     no
+//	Schema and migration history view             yes      yes       no      yes
+//	SQL editor (as the acting user's role)        yes      yes       no      no
+//	Elevated SQL, DDL, destructive                yes      no        no      no
+//	Studio members and keys                       yes      no        no      no
+//	Realtime Inspector (channels, stream, test)   yes      yes       no      no
 //
 // Unknown roles get nothing. A typo in a `studio_members` row must fail closed
 // rather than inherit whatever the nearest known role allows.
 
-// StudioPermissions is the capability set Studio renders from.
+// StudioPermissions is the capability set Studio renders from. Its JSON names
+// are the shared document's permission names, one field each.
 type StudioPermissions struct {
 	// Read and Write cover content rows, which is to say the data plane.
 	Read  bool `json:"read"`
 	Write bool `json:"write"`
 	// SchemaView covers the schema and migration history views.
 	SchemaView bool `json:"schemaView"`
+	// PushSchema and Deploy cover schema pushes and functions, hooks and secrets.
+	PushSchema bool `json:"pushSchema"`
+	Deploy     bool `json:"deploy"`
 	// SQLEditor runs queries as the acting user's own role, so RLS applies to
 	// them. This is what makes the editor safe to hand to a contractor: they can
 	// explore and debug without being able to dump the database.
 	SQLEditor bool `json:"sqlEditor"`
 	// ElevatedSQL covers DDL and anything that bypasses RLS.
 	ElevatedSQL bool `json:"elevatedSql"`
-	// ManageMembers covers Studio membership and project API keys.
-	ManageMembers bool `json:"manageMembers"`
 	// RealtimeInspect covers the Realtime Inspector: channels, connections,
 	// the live message stream and test broadcasts. Not realtime settings.
 	RealtimeInspect bool `json:"realtimeInspect"`
+	ViewLogs        bool `json:"viewLogs"`
+	ManageKeys      bool `json:"manageKeys"`
+	ManageDomains   bool `json:"manageDomains"`
+	// ManageMembers covers Studio membership and user administration.
+	ManageMembers bool `json:"manageMembers"`
+	// The rest are Cloud organisation powers. Self-host has no organisation, so
+	// nothing here acts on them; they are carried so the document maps whole.
+	Billing       bool `json:"billing"`
+	OwnOrg        bool `json:"ownOrg"`
+	OrgSettings   bool `json:"orgSettings"`
+	CreateProject bool `json:"createProject"`
+	DeleteProject bool `json:"deleteProject"`
+	ViewUsage     bool `json:"viewUsage"`
 }
 
 // RoleAdmin is the only role that can grant or revoke Studio access.
 const RoleAdmin = "admin"
-
-var studioRolePermissions = map[string]StudioPermissions{
-	RoleAdmin: {
-		Read: true, Write: true, SchemaView: true,
-		SQLEditor: true, ElevatedSQL: true, ManageMembers: true,
-		RealtimeInspect: true,
-	},
-	"developer": {
-		Read: true, Write: true, SchemaView: true, SQLEditor: true,
-		RealtimeInspect: true,
-	},
-	"editor": {
-		Read: true, Write: true,
-	},
-}
 
 // PermissionsForRole returns the capability set for a Studio role, and whether
 // the role is one this deployment understands.
@@ -75,7 +77,7 @@ func PermissionsForRole(role string) (StudioPermissions, bool) {
 // KnownStudioRoles lists the roles a membership row may hold, most privileged
 // first, so the API response and CLI help are stably ordered.
 func KnownStudioRoles() []string {
-	return []string{RoleAdmin, "developer", "editor"}
+	return append([]string(nil), selfHostRoles...)
 }
 
 // dataPlanePrefixes are the routes that carry content: rows, files, realtime and

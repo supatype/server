@@ -178,7 +178,11 @@ type Config struct {
 	// would mean the gateway rejecting its own service's tokens.
 	JWTSecret string `envconfig:"SUPATYPE_JWT_SECRET"`
 
-	// ServiceRoleKey is used to enrich pg_graphql proxy requests with auth headers.
+	// ServiceRoleKey is the project's service role key. Callers present it to
+	// reach service-role-only routes, and the gateway uses it itself only where a
+	// request is explicitly elevated (Studio admins, the model-hook previous()
+	// callback). It is never substituted for a caller's own credentials on a
+	// data route.
 	ServiceRoleKey string `envconfig:"SUPATYPE_SERVICE_ROLE_KEY"`
 
 	// DBCredentialsKEK is the base64-encoded 32-byte key used to encrypt managed DB credentials in the keyspace.

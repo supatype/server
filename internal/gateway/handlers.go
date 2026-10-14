@@ -12,9 +12,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/corsorigins"
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/maskedfields"
 	"github.com/supatype/server/internal/modelhooks"
+	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/objstore"
 	"github.com/supatype/server/internal/platformproxy"
 	"github.com/supatype/server/internal/proxy"
@@ -88,7 +90,17 @@ func buildSQLRunner(d *Deps) http.Handler {
 
 func buildStudioMembers(d *Deps) http.Handler { return studioauth.MembersAPI(d.Studio) }
 
-func buildPreviewLinks(d *Deps) http.Handler   { return studioauth.PreviewAPI(d.Studio) }
+func buildPreviewLinks(d *Deps) http.Handler { return studioauth.PreviewAPI(d.Studio) }
+
+// buildCORSOrigins serves what the CORS layer enforces, from the same policy it reads.
+func buildCORSOrigins(d *Deps) http.Handler {
+	return corsorigins.API(corsorigins.APIConfig{
+		Policy:    d.CORS,
+		Mode:      d.Config.Mode,
+		Extra:     func(req *http.Request) []string { return modes.ManifestOrigins(d.ManifestFor, req) },
+		Authorize: studioauth.CORSAccess(d.Studio),
+	})
+}
 func buildPreviewResolve(d *Deps) http.Handler { return studioauth.PreviewResolveAPI(d.Studio) }
 func buildStudioVerify(d *Deps) http.Handler   { return studioauth.VerifyHandler(d.Studio) }
 func buildStudioSchema(d *Deps) http.Handler   { return studioauth.SchemaHandler(d.Studio) }

@@ -92,26 +92,6 @@ func TestAPIKeyRoleFromTokenAcceptsEveryProjectRole(t *testing.T) {
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 
-func TestUnionCORSOrigins(t *testing.T) {
-	for name, tc := range map[string]struct {
-		env, manifest, want []string
-	}{
-		"nothing anywhere":            {nil, nil, []string{}},
-		"env only":                    {[]string{"a"}, nil, []string{"a"}},
-		"manifest only":               {nil, []string{"b"}, []string{"b"}},
-		"env first, then extra":       {[]string{"a"}, []string{"b"}, []string{"a", "b"}},
-		"the same origin twice":       {[]string{"a"}, []string{"a"}, []string{"a"}},
-		"a duplicate within one list": {[]string{"a", "a", "b"}, nil, []string{"a", "b"}},
-		"padding is trimmed":          {[]string{"  a  "}, []string{"b  "}, []string{"a", "b"}},
-		"empty entries are dropped":   {[]string{"", "   "}, []string{"b"}, []string{"b"}},
-	} {
-		got := unionCORSOrigins(tc.env, tc.manifest)
-		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-			t.Errorf("%s: got %v, want %v", name, got, tc.want)
-		}
-	}
-}
-
 // A request whose Origin nobody allowed is served, and served without CORS
 // headers. That is what makes the browser refuse it while a server-to-server
 // caller, which sends no Origin, is unaffected.

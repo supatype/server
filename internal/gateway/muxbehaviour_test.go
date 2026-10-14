@@ -364,17 +364,23 @@ func TestManagedModePreflightIsAnsweredByCORS(t *testing.T) {
 }
 
 // TestManagedModePreflightFromUnknownOriginIsRefused is the other half of the
-// same mechanism: the CORS layer only short-circuits for an origin on the
-// allowlist. Anything else falls through to the tenant gate, and an unsigned
-// request is refused there.
+// same mechanism: the CORS layer only answers a preflight for an origin on the
+// allowlist, and refuses one from any other origin itself, signed or not. It used
+// to pass it on, and a signed one reached a service whose own CORS answered `*`.
 func TestManagedModePreflightFromUnknownOriginIsRefused(t *testing.T) {
 	r := newRig(t, "managed", withCORSOrigins("https://app.example.com"))
-	rec := r.do(http.MethodOptions, "/rest/v1/posts", func(req *http.Request) {
-		req.Header.Set("Origin", "https://attacker.example.com")
-		req.Header.Set("Access-Control-Request-Method", "GET")
-	})
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401 for an unsigned preflight from an unlisted origin", rec.Code)
+	for name, signed := range map[string]bool{"unsigned": false, "signed": true} {
+		rec := r.do(http.MethodOptions, "/rest/v1/posts", func(req *http.Request) {
+			if signed {
+				withTenant(req)
+			}
+			req.Header.Set("Origin", "https://attacker.example.com")
+			req.Header.Set("Access-Control-Request-Method", "GET")
+		})
+		if rec.Code != http.StatusForbidden || rec.Header().Get("Access-Control-Allow-Origin") != "" {
+			t.Errorf("%s: status = %d, allow-origin = %q; want 403 and none for an unlisted origin",
+				name, rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+		}
 	}
 }
 

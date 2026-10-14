@@ -37,10 +37,16 @@ type Config struct {
 	// AnonKey is the publishable anon JWT (SUPATYPE_ANON_KEY for edge functions).
 	AnonKey string `envconfig:"SUPATYPE_ANON_KEY"`
 
-	// CorsAllowOrigins is a comma-separated allowlist of browser Origins for CORS
-	// (standalone: applied to all requests; managed: union with manifest cors_allowed_origins,
-	// applied outside tenant HMAC so OPTIONS preflight is not blocked).
+	// CorsAllowOrigins is a comma-separated list of browser Origins added to the default CORS
+	// allowlist, after the site URL (managed: then the manifest's cors_allowed_origins). A list
+	// saved from Studio replaces the default. Applied outside tenant HMAC so OPTIONS preflight is
+	// not blocked. `*` allows every origin, and only when written here or saved.
 	CorsAllowOrigins string `envconfig:"SUPATYPE_CORS_ALLOW_ORIGINS"`
+
+	// CorsPlatformOrigins are origins the hosting platform needs whatever the project saves:
+	// Cloud's own Studio signs members in to the project's auth from the browser. Comma-separated;
+	// self-host leaves it empty.
+	CorsPlatformOrigins string `envconfig:"SUPATYPE_CORS_PLATFORM_ORIGINS"`
 
 	// AppMode controls how the root path "/" is handled.
 	// "none" = 404

@@ -125,6 +125,13 @@ func Routes() []Route {
 			Verb:    POST,
 			Build:   buildMetadata,
 		},
+		// Its introspect query alone, for every role that may read rows: Data Explorer and the
+		// schema screens list a schema's tables and columns through it.
+		{
+			Pattern: "/metadata/introspect",
+			Verb:    POST,
+			Build:   buildIntrospect,
+		},
 		{
 			Pattern: "/auth/v1",
 			Verb:    MountAll,

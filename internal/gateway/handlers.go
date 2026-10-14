@@ -88,7 +88,7 @@ func buildMetadata(d *Deps) http.Handler   { return sqlrunner.MetadataHandler(d.
 func buildIntrospect(d *Deps) http.Handler { return sqlrunner.IntrospectHandler(d.Config, d.AdminPool) }
 
 func buildSQLRunner(d *Deps) http.Handler {
-	return sqlrunner.Handler(d.Config, d.AdminPool)
+	return sqlrunner.Handler(d.Config, d.EditorPool)
 }
 
 func buildStudioMembers(d *Deps) http.Handler { return studioauth.MembersAPI(d.Studio) }

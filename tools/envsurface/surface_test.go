@@ -61,6 +61,7 @@ func TestSurfaceStillCarriesKnownNames(t *testing.T) {
 		"DATABASE_URL",             // the bare fallback for the same field
 		"SUPATYPE_MODE",            // gateway config
 		"SUPATYPE_SQL_DATABASE_URL",
+		"SUPATYPE_SQL_EDITOR_DATABASE_URL",
 		"STORAGE_PATH",
 	} {
 		if !strings.Contains(got, "\n"+name+"\n") {

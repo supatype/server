@@ -235,12 +235,16 @@ func TestTheResolvedSchemaIsSetLocallyAndReported(t *testing.T) {
 
 	// is_local => true is what keeps the search_path from leaking to the next
 	// request that borrows this connection.
-	if !strings.Contains(tx.execSQL, "set_config") || !strings.Contains(tx.execSQL, "true") {
-		t.Errorf("search_path was not set locally: %q", tx.execSQL)
+	if len(tx.execs) == 0 {
+		t.Fatal("nothing was executed before the query")
+	}
+	first := tx.execs[0]
+	if !strings.Contains(first.sql, "set_config") || !strings.Contains(first.sql, "true") {
+		t.Errorf("search_path was not set locally: %q", first.sql)
 	}
 	// Passed as a parameter, never interpolated.
-	if len(tx.execArgs) != 1 || tx.execArgs[0] != "other" {
-		t.Errorf("set_config args = %v, want the schema as a bound parameter", tx.execArgs)
+	if len(first.args) != 1 || first.args[0] != "other" {
+		t.Errorf("set_config args = %v, want the schema as a bound parameter", first.args)
 	}
 
 	var body Response
@@ -418,6 +422,35 @@ func TestAFailureDoesNotCommit(t *testing.T) {
 
 	if tx.committed {
 		t.Error("a failed query was committed")
+	}
+}
+
+// Ownership is handed over after the caller's statement has created whatever it
+// creates and before that is committed, so nothing the editor made is ever
+// visible under the editor's name.
+func TestObjectsAreReassignedAfterTheQueryAndBeforeCommit(t *testing.T) {
+	tx := &fakeTx{rows: &fakeRows{columns: []string{"n"}}}
+	post(t, authorised(&config.Config{}), serving(&fakePool{tx: tx}), `{"query":"select 1"}`, nil)
+
+	if len(tx.calls) != 4 {
+		t.Fatalf("calls = %q, want set_config, query, reassign, commit", tx.calls)
+	}
+	if tx.calls[1] != "select 1" || tx.calls[2] != reassignToOwner || tx.calls[3] != "COMMIT" {
+		t.Errorf("calls = %q, want the reassign between the query and the commit", tx.calls)
+	}
+}
+
+// A reassign that fails leaves the editor owning what it made, so the statement
+// must not commit.
+func TestAFailedReassignDoesNotCommit(t *testing.T) {
+	tx := &fakeTx{rows: &fakeRows{columns: []string{"n"}}, reassignErr: errors.New("boom")}
+	rec := post(t, authorised(&config.Config{}), serving(&fakePool{tx: tx}), `{"query":"select 1"}`, nil)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if tx.committed {
+		t.Error("the statement committed with its objects still owned by the editor")
 	}
 }
 

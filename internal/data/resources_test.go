@@ -30,6 +30,70 @@ func TestOpenWithNothingConfigured(t *testing.T) {
 	if _, err := r.AdminPool(); !errors.Is(err, ErrNoDatabase) {
 		t.Errorf("AdminPool: want ErrNoDatabase, got %v", err)
 	}
+	if _, err := r.EditorPool(); !errors.Is(err, ErrNoDatabase) {
+		t.Errorf("EditorPool: want ErrNoDatabase, got %v", err)
+	}
+}
+
+// A deployment that never set the editor DSN keeps one pool, and the editor
+// runs on it.
+func TestTheEditorSharesTheAdminPoolWithoutItsOwnDSN(t *testing.T) {
+	const dsn = "postgres://nobody:nothing@127.0.0.1:1/none"
+	for name, cfg := range map[string]*config.Config{
+		"unset":           {SQLDatabaseURL: dsn},
+		"same connection": {SQLDatabaseURL: dsn, SQLEditorDatabaseURL: dsn},
+	} {
+		r, err := Open(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		t.Cleanup(func() { _ = r.Close() })
+		admin, _ := r.AdminPool()
+		editor, err := r.EditorPool()
+		if err != nil || editor != admin {
+			t.Errorf("%s: EditorPool = %p, %v; want the admin pool %p", name, editor, err, admin)
+		}
+		if len(r.closers) != 1 {
+			t.Errorf("%s: %d pools registered for Close, want 1", name, len(r.closers))
+		}
+	}
+}
+
+// An editor DSN of its own gets a pool of its own, closed with the rest.
+func TestTheEditorGetsItsOwnPoolForItsOwnDSN(t *testing.T) {
+	r, err := Open(context.Background(), &config.Config{
+		SQLDatabaseURL:       "postgres://admin:x@127.0.0.1:1/none",
+		SQLEditorDatabaseURL: "postgres://supatype_sql_editor:x@127.0.0.1:1/none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := r.AdminPool()
+	editor, err := r.EditorPool()
+	if err != nil || editor == nil || editor == admin {
+		t.Fatalf("EditorPool = %p, %v; want a pool distinct from the admin pool %p", editor, err, admin)
+	}
+	if got := editor.Config().ConnConfig.User; got != "supatype_sql_editor" {
+		t.Errorf("editor pool connects as %q", got)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EditorPool(); !errors.Is(err, ErrNoDatabase) {
+		t.Errorf("EditorPool after Close: want ErrNoDatabase, got %v", err)
+	}
+}
+
+// A bad editor DSN fails Open and says which pool, after releasing the admin
+// pool it had already opened.
+func TestOpenRejectsAnUnparseableEditorDSN(t *testing.T) {
+	_, err := Open(context.Background(), &config.Config{
+		SQLDatabaseURL:       "postgres://admin:x@127.0.0.1:1/none",
+		SQLEditorDatabaseURL: "://not a dsn",
+	})
+	if err == nil || !strings.Contains(err.Error(), "editor pool") {
+		t.Fatalf("want an editor pool error, got %v", err)
+	}
 }
 
 // pgxpool parses the DSN eagerly but connects lazily, so a database that is

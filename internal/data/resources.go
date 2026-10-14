@@ -62,7 +62,7 @@ type Resources struct {
 	// It is the *project's* keyspace: the REST response cache and nothing else.
 	cache keyspace.Client
 
-	// platform is the keyspace holding platform state — the tenant configuration
+	// platform is the keyspace holding platform state: the tenant configuration
 	// the control plane publishes, the route manifest merged from it, the wrapped
 	// DB credentials, and the MAU day-sets. Reached through PlatformCache.
 	//
@@ -75,6 +75,12 @@ type Resources struct {
 	// admin serves the Studio SQL runner and Studio membership. It is nil when
 	// no connection string was configured; reach it through AdminPool.
 	admin *pgxpool.Pool
+
+	// editor serves the Studio SQL editor's POST /sql. It is the admin pool
+	// itself when no distinct editor connection string was configured, so a
+	// deployment that predates the editor role keeps a single pool; reach it
+	// through EditorPool.
+	editor *pgxpool.Pool
 
 	// closers run in reverse order of registration, so a resource is never torn
 	// down before something that depends on it.
@@ -89,7 +95,7 @@ type Resources struct {
 // features that need it report ErrNoDatabase per request.
 //
 // The project keyspace is never fatal, in any mode. It holds cached responses,
-// so its absence costs latency and nothing else — and it usually lives in the
+// so its absence costs latency and nothing else. It also usually lives in the
 // project's own Postgres, which may still be accepting connections when this pod
 // starts. Making it fatal would turn a cold start into a crashloop and take the
 // whole gateway down to protect a cache.
@@ -128,16 +134,43 @@ func Open(ctx context.Context, cfg *config.Config) (*Resources, error) {
 		}
 	}
 
-	if dsn := cfg.SQLDSN(); dsn != "" {
-		pool, err := openAdminPool(ctx, dsn)
+	if err := r.openDatabases(ctx, cfg); err != nil {
+		return nil, r.closeAfter(err)
+	}
+	return r, nil
+}
+
+// openDatabases opens the admin pool and, when it names a different connection,
+// the editor pool. An editor DSN equal to the admin one shares the admin pool,
+// for the same reason one keyspace address shares one client.
+func (r *Resources) openDatabases(ctx context.Context, cfg *config.Config) error {
+	adminDSN := cfg.SQLDSN()
+	if adminDSN != "" {
+		pool, err := r.openPool(ctx, adminDSN)
 		if err != nil {
-			return nil, r.closeAfter(fmt.Errorf("data: admin pool: %w", err))
+			return fmt.Errorf("data: admin pool: %w", err)
 		}
 		r.admin = pool
-		r.onClose(func() error { pool.Close(); return nil })
 	}
+	r.editor = r.admin
+	if editorDSN := cfg.SQLEditorDSN(); editorDSN != "" && editorDSN != adminDSN {
+		pool, err := r.openPool(ctx, editorDSN)
+		if err != nil {
+			return fmt.Errorf("data: editor pool: %w", err)
+		}
+		r.editor = pool
+	}
+	return nil
+}
 
-	return r, nil
+// openPool opens one pool and registers it for Close.
+func (r *Resources) openPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	pool, err := openAdminPool(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	r.onClose(func() error { pool.Close(); return nil })
+	return pool, nil
 }
 
 // openAdminPool parses the DSN and builds the pool. Reaching the database is not
@@ -154,11 +187,13 @@ func openAdminPool(_ context.Context, dsn string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	logrus.WithField("dsn_host", poolCfg.ConnConfig.Host).Info("data: admin pool opened")
+	logrus.WithFields(logrus.Fields{"dsn_host": poolCfg.ConnConfig.Host, "dsn_user": poolCfg.ConnConfig.User}).
+		Info("data: database pool opened")
 	return pool, nil
 }
 
-// Cache returns the project keyspace client — the response cache — never nil.
+// Cache returns the project keyspace client, which is the response cache. It is
+// never nil.
 func (r *Resources) Cache() keyspace.Client {
 	if r == nil || r.cache == nil {
 		return keyspace.Unavailable()
@@ -187,6 +222,16 @@ func (r *Resources) AdminPool() (*pgxpool.Pool, error) {
 		return nil, ErrNoDatabase
 	}
 	return r.admin, nil
+}
+
+// EditorPool returns the pool the Studio SQL editor runs statements on, or
+// ErrNoDatabase when none is configured. It is the admin pool unless
+// SUPATYPE_SQL_EDITOR_DATABASE_URL names a different connection.
+func (r *Resources) EditorPool() (*pgxpool.Pool, error) {
+	if r == nil || r.editor == nil {
+		return nil, ErrNoDatabase
+	}
+	return r.editor, nil
 }
 
 // HasDatabase reports whether admin features can reach a database. It decides
@@ -225,6 +270,7 @@ func (r *Resources) Close() error {
 	}
 	r.closers = nil
 	r.admin = nil
+	r.editor = nil
 	r.cache = keyspace.Unavailable()
 	r.platform = keyspace.Unavailable()
 	return errors.Join(errs...)

@@ -79,7 +79,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(Result{
 				Role: "dev-bypass",
 				Sub:  "dev-bypass",
-			}, c))
+			}, c, req))
 			return
 		}
 
@@ -97,7 +97,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(result, c))
+		utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(result, c, req))
 	}
 }
 
@@ -106,7 +106,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 // It used to hardcode every permission to true, so an `editor` membership row was
 // handed a full-access UI while the control plane restricted the same role, so
 // the two hosts disagreed about what a role means.
-func verifyOKResponse(result Result, c Config) map[string]interface{} {
+func verifyOKResponse(result Result, c Config, req *http.Request) map[string]interface{} {
 	perms := result.Permissions
 	if perms == nil {
 		legacy := legacyAdminPermissions()
@@ -114,19 +114,14 @@ func verifyOKResponse(result Result, c Config) map[string]interface{} {
 	}
 
 	// `mode` is the identity data requests will act as, and `canElevate` whether
-	// the caller may change it. Studio shows the elevated banner from these rather
-	// than inferring privilege from the role name.
-	mode := ModeSelf
-	if perms.ElevatedSQL {
-		mode = ModeElevated
-	}
-
+	// the caller may change it. Studio shows the elevated banner and its mode
+	// switch from these rather than inferring privilege from the role name.
 	return map[string]interface{}{
 		"allowed":     true,
 		"role":        result.Role,
 		"sub":         result.Sub,
 		"permissions": perms,
-		"mode":        mode,
+		"mode":        reportedMode(req, *perms),
 		"canElevate":  perms.ElevatedSQL,
 		"seesDrafts":  roleSeesDrafts(result.Role, c),
 	}

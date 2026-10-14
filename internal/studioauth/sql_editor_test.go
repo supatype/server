@@ -1,8 +1,13 @@
 package studioauth
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
+
+	jwt "github.com/golang-jwt/jwt/v5"
 )
 
 // RX1: the SQL editor keeps full access and is open to owners, admins and
@@ -45,5 +50,37 @@ func TestSQLEditorIgnoresTheActingMode(t *testing.T) {
 	got := call(http.MethodPost, sqlEditorPath, http.Header{ActingModeHeader: {ModeSelf}})
 	if got.code != http.StatusOK || got.header.Get("Authorization") != "Bearer service-role-key" {
 		t.Fatalf("expected the elevated runner, got %d %q", got.code, got.header.Get("Authorization"))
+	}
+}
+
+// RX4: Studio's switch sends the mode it wants, and verify reports the mode
+// that request would act in, so the switch shows what is true.
+func TestVerifyReportsTheModeAskedFor(t *testing.T) {
+	cases := []struct {
+		role, asked, want string
+	}{
+		{"admin", "", ModeElevated},
+		{"admin", ModeSelf, ModeSelf},
+		{"developer", "", ModeSelf},
+		{"developer", ModeElevated, ModeSelf},
+	}
+	for _, c := range cases {
+		token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
+		role := c.role
+		cfg := Config{JWTSecret: testSecret, AdminRoles: DefaultAdminRoles, StudioRole: func(string) (string, bool) { return role, true }}
+		req := httptest.NewRequest(http.MethodGet, "/studio/auth/verify", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		if c.asked != "" {
+			req.Header.Set(ActingModeHeader, c.asked)
+		}
+		rec := httptest.NewRecorder()
+		VerifyHandler(cfg).ServeHTTP(rec, req)
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if body.Mode != c.want {
+			t.Fatalf("%s asking %q: mode = %q, want %q", c.role, c.asked, body.Mode, c.want)
+		}
 	}
 }

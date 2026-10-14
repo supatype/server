@@ -65,3 +65,16 @@ func resolveActingMode(req *http.Request, perms StudioPermissions) (mode string,
 		return "", false
 	}
 }
+
+// reportedMode is the mode a request carrying this request's header acts in:
+// the one asked for when the caller may have it, else the default. Verify and
+// session report it, so Studio's mode switch shows what its requests will do.
+func reportedMode(req *http.Request, perms StudioPermissions) string {
+	if mode, ok := resolveActingMode(req, perms); ok {
+		return mode
+	}
+	if perms.ElevatedSQL {
+		return ModeElevated
+	}
+	return ModeSelf
+}

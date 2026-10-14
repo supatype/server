@@ -173,7 +173,8 @@ func renderRoutes(t *testing.T, sc routeScenario) string {
 	t.Helper()
 	clearAmbientEnv(t)
 
-	handler := buildOuterMux(
+	// The router itself, without the per-mode stack in front of it, which is not a route.
+	mux := buildRouter(NewDeps(
 		sc.cfg,
 		func(*http.Request) *proxy.RouteManifest { return sc.manifest },
 		func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(sc.cfg, sc.manifest, "") },
@@ -182,11 +183,7 @@ func renderRoutes(t *testing.T, sc routeScenario) string {
 		"routetable-test",
 		nil,
 		nil,
-	)
-	mux, ok := handler.(*chi.Mux)
-	if !ok {
-		t.Fatalf("standalone mode with no CORS origins should return the bare *chi.Mux, got %T", handler)
-	}
+	))
 
 	var lines []string
 	walk := func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {

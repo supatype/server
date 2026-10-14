@@ -54,6 +54,7 @@ func TruncateAll(conn *storage.Connection) error {
 			(&pop.Model{Value: WebAuthnCredential{}}).TableName(),
 			(&pop.Model{Value: WebAuthnChallenge{}}).TableName(),
 			(&pop.Model{Value: MailTemplate{}}).TableName(),
+			(&pop.Model{Value: CorsOrigins{}}).TableName(),
 		}
 
 		for _, tableName := range tables {

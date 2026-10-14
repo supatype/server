@@ -28,6 +28,7 @@ import (
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/corsorigins"
 	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/deno"
@@ -50,7 +51,7 @@ var (
 
 // getwd is os.Getwd, swapped in tests. A process whose working directory has
 // been removed cannot name it, and the .env files found relative to it are then
-// simply not there — which is a debug line, not a reason to refuse to start.
+// simply not there, which is a debug line, not a reason to refuse to start.
 var getwd = os.Getwd
 
 // New builds the full supatype-server outer handler and starts its background
@@ -58,7 +59,7 @@ var getwd = os.Getwd
 // cancelled. The returned drain func waits for those workers and releases
 // resources (Deno subprocess, keyspace, database); call it after cancelling ctx.
 //
-// New does not bind a listener or configure TLS — the caller serves the
+// New does not bind a listener or configure TLS; the caller serves the
 // returned handler however it likes (stock binary: cmd/serve_cmd.go; cloud:
 // the metering gateway on :9999).
 func New(ctx context.Context) (http.Handler, func(), error) {
@@ -89,7 +90,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	//
 	// Retried while the database is merely unreachable. Returning the error here exits the binary,
 	// which was survivable only because the Compose `db` healthcheck held the container back until
-	// Postgres answered — a stack pointed at an external database has no such container, and no
+	// Postgres answered. A stack pointed at an external database has no such container, and no
 	// healthcheck ever covered a database that restarts later. A wrong password or a missing database
 	// still fails immediately; see internal/auth/storage/dial_retry.go for where that line sits.
 	db, err := storage.DialWithRetry(ctx, func(ctx context.Context) (*storage.Connection, error) {
@@ -239,7 +240,12 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		sendEmailHook = newSendEmailHookReceiver(ah, authCfg.Hook.SendEmail.HTTPHookSecrets)
 	}
 
-	outerMux := buildOuterMux(srvCfg, live.For, healthProbes, ah, dm, utilities.Version, resources, sendEmailHook)
+	// The CORS policy: the site URL and what is configured, and a list saved from Studio kept in the
+	// auth schema on the auth service's own connection, so every replica and every restart read the
+	// same one.
+	corsPolicy := DefaultCORSPolicy(srvCfg, corsorigins.DBStore{DB: db}, authCfg.SiteURL)
+	outerMux := buildOuterMux(srvCfg, live.For, healthProbes, ah, dm, utilities.Version, resources, sendEmailHook,
+		WithCORSPolicy(corsPolicy))
 
 	// ── background workers (stop on ctx cancel; drained by the returned func) ──
 	wrkLog := logrus.WithField("component", "apiworker")

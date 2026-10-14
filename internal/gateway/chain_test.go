@@ -71,7 +71,9 @@ func TestModeChainShape(t *testing.T) {
 			&config.Config{Mode: "managed", JWTSecret: "s"},
 			2,
 		},
-		{"standalone with no origins adds nothing", &config.Config{Mode: "standalone"}, 0},
+		// Always the CORS layer, configured or not: with nothing configured it still decides, and
+		// before SHb its absence let the auth service answer every origin with `*`.
+		{"standalone with no origins still has the CORS layer", &config.Config{Mode: "standalone"}, 1},
 		{
 			"standalone with origins adds the allowlist",
 			&config.Config{Mode: "standalone", CorsAllowOrigins: "https://app.example.com"},

@@ -39,7 +39,8 @@ func TestASavedListSurvivesARestartAndIsSharedByReplicas(t *testing.T) {
 	restarted := NewPolicy(DBStore{DB: db}, defaults)
 	got := restarted.InForce(context.Background(), nil)
 	require.Equal(t, "saved", got.Source)
-	require.Equal(t, []string{"https://partner.example", "https://app.example.com"}, got.Origins)
+	// The site URL first: it is always allowed (SHc), and the saved list follows it.
+	require.Equal(t, []string{"https://app.example.com", "https://partner.example"}, got.Origins)
 	require.True(t, got.Saved.UpdatedAt.Equal(saved.UpdatedAt), "the read matches the save to the microsecond")
 }
 

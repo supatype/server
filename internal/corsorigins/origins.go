@@ -5,7 +5,8 @@
 //   - The default is the project's own site URL, plus the origins its configuration names
 //     (SUPATYPE_CORS_ALLOW_ORIGINS, which the CLI fills from `api.corsOrigins` in
 //     supatype.config.ts, and on Cloud the tenant manifest's list).
-//   - A list saved from Studio replaces that default until it is reset.
+//   - A list saved from Studio replaces that default until it is reset, except for the site URL,
+//     which stays allowed whatever is saved: the project's own app is never locked out.
 //   - Platform origins (Cloud's own Studio, which signs members in to the project's auth from the
 //     browser) are always allowed and cannot be removed from the project.
 //   - `*` allows every origin, and only when someone wrote it down.

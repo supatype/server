@@ -91,7 +91,7 @@ func TestASaveOnOneReplicaReachesAnotherWithinTheTTL(t *testing.T) {
 	}
 	c.t = c.t.Add(DefaultTTL)
 	got := two.InForce(context.Background(), nil)
-	if got.Source != "saved" || strings.Join(got.Origins, ",") != "https://partner.example" {
+	if got.Source != "saved" || strings.Join(got.Origins, ",") != "https://app.example.com,https://partner.example" {
 		t.Errorf("after the TTL: %v", got)
 	}
 }
@@ -105,7 +105,7 @@ func TestADatabaseErrorKeepsTheLastKnownList(t *testing.T) {
 	store.err = errors.New("connection refused")
 	c.t = c.t.Add(DefaultTTL)
 	got := p.InForce(context.Background(), nil)
-	if got.Source != "saved" || strings.Join(got.Origins, ",") != "https://partner.example" {
+	if got.Source != "saved" || strings.Join(got.Origins, ",") != "https://app.example.com,https://partner.example" {
 		t.Errorf("a failed read should keep the saved list in force, got %v", got)
 	}
 }
@@ -117,8 +117,8 @@ func TestPlatformOriginsStayWhateverIsSaved(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := p.InForce(context.Background(), nil)
-	if strings.Join(got.Origins, ",") != "https://studio.supatype.com" {
-		t.Errorf("an empty saved list leaves only the platform's origins, got %v", got.Origins)
+	if strings.Join(got.Origins, ",") != "https://studio.supatype.com,https://app.example.com" {
+		t.Errorf("an empty saved list leaves only the platform's origins and the site URL, got %v", got.Origins)
 	}
 }
 
@@ -147,7 +147,25 @@ func TestAFailedWriteChangesNothing(t *testing.T) {
 	if err := p.Reset(context.Background()); err == nil {
 		t.Error("reset: want the store's error")
 	}
-	if got := p.InForce(context.Background(), nil); strings.Join(got.Origins, ",") != "https://partner.example" {
+	if got := p.InForce(context.Background(), nil); strings.Join(got.Origins, ",") != "https://app.example.com,https://partner.example" {
 		t.Errorf("a failed write must leave the saved list in force, got %v", got.Origins)
+	}
+}
+
+// SHc: the site URL is always allowed, like a platform origin. A saved list cannot take it away.
+func TestTheSiteURLCannotBeSavedAway(t *testing.T) {
+	p := NewPolicy(&fakeStore{}, Defaults{SiteURL: "https://app.example.com/login"})
+	if _, err := p.Save(context.Background(), []string{"https://partner.example"}); err != nil {
+		t.Fatal(err)
+	}
+	got := p.InForce(context.Background(), nil)
+	if strings.Join(got.Origins, ",") != "https://app.example.com,https://partner.example" {
+		t.Errorf("origins = %v, want the site URL kept beside the saved list", got.Origins)
+	}
+	if _, err := p.Save(context.Background(), []string{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.InForce(context.Background(), nil); strings.Join(got.Origins, ",") != "https://app.example.com" {
+		t.Errorf("an empty saved list still leaves the site URL, got %v", got.Origins)
 	}
 }

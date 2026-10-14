@@ -77,16 +77,21 @@ func TestTheStandaloneDefaultIsTheSiteURLPlusWhatIsConfigured(t *testing.T) {
 func TestASavedListReplacesTheDefaultUntilReset(t *testing.T) {
 	store := &memoryStore{}
 	policy := corsorigins.NewPolicy(store, corsorigins.Defaults{
-		SiteURL:  "https://app.example.com",
-		Platform: []string{"https://studio.supatype.com"},
+		SiteURL:    "https://app.example.com",
+		Configured: []string{"https://admin.example.com"},
+		Platform:   []string{"https://studio.supatype.com"},
 	})
 	chain := ModeChainWithPolicy(&config.Config{Mode: "standalone"}, nil, policy)
 
 	if _, err := policy.Save(context.Background(), []string{"https://partner.example"}); err != nil {
 		t.Fatal(err)
 	}
-	if !allowedBy(chain, "https://partner.example") || allowedBy(chain, "https://app.example.com") {
-		t.Error("a saved list should replace the default")
+	if !allowedBy(chain, "https://partner.example") || allowedBy(chain, "https://admin.example.com") {
+		t.Error("a saved list should replace the configured default")
+	}
+	// SHc: the site URL stays allowed whatever is saved.
+	if !allowedBy(chain, "https://app.example.com") {
+		t.Error("the site URL must stay allowed beside a saved list")
 	}
 	if !allowedBy(chain, "https://studio.supatype.com") {
 		t.Error("platform origins stay allowed whatever is saved")
@@ -95,7 +100,7 @@ func TestASavedListReplacesTheDefaultUntilReset(t *testing.T) {
 	if err := policy.Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if allowedBy(chain, "https://partner.example") || !allowedBy(chain, "https://app.example.com") {
+	if allowedBy(chain, "https://partner.example") || !allowedBy(chain, "https://admin.example.com") {
 		t.Error("a reset should return to the default")
 	}
 }

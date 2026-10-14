@@ -108,7 +108,7 @@ func (p *Policy) savedList(ctx context.Context) *Saved {
 
 // Snapshot is what is in force, and why.
 type Snapshot struct {
-	// Origins is every origin allowed now, platform origins included.
+	// Origins is every origin allowed now, the platform's and the site URL included.
 	Origins []string
 	// Source is "saved" when a Studio list is in force, else "default".
 	Source string
@@ -126,7 +126,9 @@ func (p *Policy) InForce(ctx context.Context, extra []string) Snapshot {
 	if saved := p.savedList(ctx); saved != nil {
 		snap.Source, snap.Saved, chosen = "saved", saved, saved.Origins
 	}
-	snap.Origins = Union(p.PlatformOrigins(), chosen)
+	// The site URL is always allowed, like the platform's origins (SHc): the project's own app must
+	// not be locked out by a list saved without it.
+	snap.Origins = Union(p.PlatformOrigins(), lenient([]string{p.defaults.SiteURL}), chosen)
 	return snap
 }
 

@@ -84,3 +84,19 @@ func TestVerifyReportsTheModeAskedFor(t *testing.T) {
 		}
 	}
 }
+
+// RQ3: schema metadata is open to every role with schema view, viewers
+// included, and acts as the service role, which the read-only catalogue needs.
+func TestMetadataIsOpenToSchemaViewers(t *testing.T) {
+	for _, role := range []string{"admin", "developer", "viewer"} {
+		_, call := proxyCapturing(t, role)
+		got := call(http.MethodPost, "/studio/proxy/metadata", nil)
+		if got.code != http.StatusOK || got.header.Get("Authorization") != "Bearer service-role-key" {
+			t.Fatalf("%s: got %d %q", role, got.code, got.header.Get("Authorization"))
+		}
+	}
+	_, editor := proxyCapturing(t, "editor")
+	if got := editor(http.MethodPost, "/studio/proxy/metadata", nil); got.code != http.StatusForbidden {
+		t.Fatalf("editor: expected 403, got %d", got.code)
+	}
+}

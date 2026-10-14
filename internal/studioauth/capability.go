@@ -111,6 +111,11 @@ func AllowsRequest(perms StudioPermissions, method, path string) bool {
 	case under(path, "/sql"):
 		return perms.SQLEditor
 
+	// Studio's named, read-only schema queries (RQ3): catalogs and the ledger,
+	// never rows, for every role that may see the schema.
+	case under(path, "/metadata"):
+		return perms.SchemaView
+
 	// Studio membership and project keys.
 	case under(path, "/admin/studio-members"):
 		if readOnly {

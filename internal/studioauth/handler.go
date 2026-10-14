@@ -236,6 +236,11 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 // platform proxy admits only the service role, so their own token could never
 // reach the control plane, and the control plane is told who they are instead.
 func forwardIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, adm admission, path string) (string, bool) {
+	// The metadata catalogue reads catalogs through the runner's connection, read-only:
+	// the service role reaches it, and there is nothing elevated to record.
+	if under(path, "/metadata") {
+		return ModeElevated, setServiceRole(w, req2, c)
+	}
 	if adm.mode == ModeSelf && IsRealtimeInspectorRoute(req.Method, path) {
 		if !setServiceRole(w, req2, c) {
 			return "", false
@@ -324,10 +329,12 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 // admitActingMode decides how an admitted request acts. The SQL runner is
 // elevated by definition (RX1): it acts as the service role for everyone
 // AllowsRequest admits to it, whatever mode their data requests act in, and is
+// recorded as elevated. So is the read-only metadata catalogue (RQ3), which needs
+// the service role to reach the runner's connection; being read-only, it is not
 // recorded as elevated.
 func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
 	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms}
-	if under(path, "/sql") {
+	if under(path, "/sql") || under(path, "/metadata") {
 		return adm, true
 	}
 	mode, ok := resolveActingMode(req, perms)

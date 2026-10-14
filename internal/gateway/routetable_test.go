@@ -123,6 +123,7 @@ func TestFullRouteTableCoversEveryService(t *testing.T) {
 		"/studio-config",
 		"/admin/studio-members",
 		"/sql",
+		"/metadata",
 		"/health",
 	} {
 		if !hasRouteUnder(got, prefix) {

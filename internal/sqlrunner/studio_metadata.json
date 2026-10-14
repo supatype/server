@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Studio's read-only metadata queries (RQ3). Each runs in a read-only transaction with its parameters bound, never interpolated, for any role holding schemaView. They read catalogs and the engine's ledger, never a table's rows. supatype-server and the control plane carry this same file and pin its hash.",
+  "about": "Studio's read-only metadata queries (RQ3, RQ3b). Each runs in a read-only transaction with its parameters bound, never interpolated, for any role holding schemaView. They read catalogs, the engine's ledgers (managed objects, migrations, seeds) and two server settings, never a table's rows. supatype-server and the control plane carry this same file and pin its hash.",
   "queries": {
     "schemas": {
       "params": [],
@@ -65,6 +65,38 @@
     "ledger_count": {
       "params": ["kind", "status", "table_pattern", "tableless"],
       "sql": "SELECT count(*) AS total FROM _supatype.managed_objects WHERE ($1::text IS NULL OR kind = $1::text) AND ($2::text IS NULL OR status = $2::text) AND ($3::text IS NULL OR (parent = '' AND ($4::boolean OR kind = 'table') AND name ILIKE $3::text ESCAPE '\\') OR (parent <> '' AND split_part(parent, '.', 1) ILIKE $3::text ESCAPE '\\'))"
+    },
+    "policies": {
+      "params": ["schema"],
+      "sql": "SELECT schemaname, tablename, policyname, permissive, cmd, qual, with_check, CASE WHEN COALESCE(array_length(roles, 1), 0) = 0 THEN 'all' ELSE array_to_string(roles::text[], ', ') END AS roles_label FROM pg_catalog.pg_policies WHERE lower(schemaname) = lower($1::text) ORDER BY tablename, policyname"
+    },
+    "rls_status": {
+      "params": ["schema"],
+      "sql": "SELECT c.relname AS tablename, c.relrowsecurity AS rls_enabled FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND lower(n.nspname) = lower($1::text) ORDER BY c.relname"
+    },
+    "migrations_audited": {
+      "params": [],
+      "sql": "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = '_supatype' AND table_name = 'migrations' AND column_name = 'pushed_by') AS audited"
+    },
+    "migrations": {
+      "params": [],
+      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, pushed_by, pushed_by_verified, pushed_via, pushed_from, renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by FROM _supatype.migrations ORDER BY id ASC"
+    },
+    "migrations_legacy": {
+      "params": [],
+      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, NULL AS pushed_by, NULL AS pushed_by_verified, NULL AS pushed_via, NULL AS pushed_from, NULL AS renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by FROM _supatype.migrations ORDER BY id ASC"
+    },
+    "migration_sql": {
+      "params": ["id"],
+      "sql": "SELECT sql_up FROM _supatype.migrations WHERE id = $1::text::int"
+    },
+    "seeds": {
+      "params": [],
+      "sql": "SELECT id, file, ir_hash, schema_fingerprint, applied_at::text, duration_ms, status, rows_written, error_message, engine_version FROM _supatype.seeds ORDER BY applied_at DESC, id DESC"
+    },
+    "database_settings": {
+      "params": [],
+      "sql": "SELECT current_setting('max_connections') AS max_connections, current_setting('statement_timeout') AS statement_timeout"
     }
   }
 }

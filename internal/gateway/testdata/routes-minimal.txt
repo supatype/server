@@ -98,6 +98,7 @@ POST    /auth/v1/*
 POST    /graphql/v1/*
 POST    /hooks/v1/previous/*
 POST    /metadata
+POST    /metadata/introspect
 POST    /platform/v1/*
 POST    /preview-links/resolve
 POST    /rest/v1/*

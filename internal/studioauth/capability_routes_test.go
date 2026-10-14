@@ -40,6 +40,7 @@ var dataPlaneRules = []proxyRule{
 var namedRules = []proxyRule{
 	{http.MethodPost, "/sql", true, true, false},
 	{http.MethodPost, "/metadata", true, true, false},
+	{http.MethodPost, "/metadata/introspect", true, true, true},
 	{http.MethodGet, "/admin/studio-members", true, true, false},
 	{http.MethodPatch, "/admin/studio-members/abc", true, false, false},
 	{http.MethodDelete, "/admin/studio-members/abc", true, false, false},

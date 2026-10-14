@@ -25,7 +25,8 @@ import (
 // which are bound rather than written into the statement. Nothing a caller
 // sends becomes SQL.
 //
-//	POST /metadata   {"name": "...", "params": {...}}
+//	POST /metadata              {"name": "...", "params": {...}}
+//	POST /metadata/introspect   {"params": {"schema": "..."}}
 
 //go:embed studio_metadata.json
 var metadataDocument []byte
@@ -82,6 +83,23 @@ func plainValue(value any) bool {
 // MetadataHandler serves POST /metadata, behind the same service-role gate as
 // the runner: Studio reaches it through its proxy, which admits schema view.
 func MetadataHandler(cfg *config.Config, pools Pools) http.Handler {
+	return metadataHandler(cfg, pools, "")
+}
+
+// IntrospectQuery is the one catalogue query open to every role that may read
+// rows, at /metadata/introspect: the tables and columns behind Data Explorer
+// and the schema screens, which editors use without holding schema view.
+const IntrospectQuery = "introspect"
+
+// IntrospectHandler serves POST /metadata/introspect, which runs only the
+// introspect query. Studio's proxy admits every role that may read rows to it.
+func IntrospectHandler(cfg *config.Config, pools Pools) http.Handler {
+	return metadataHandler(cfg, pools, IntrospectQuery)
+}
+
+// metadataHandler runs the catalogue query a request names, or only `only`
+// when it is set, so a narrower route cannot be used to reach the rest.
+func metadataHandler(cfg *config.Config, pools Pools, only string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
@@ -91,21 +109,37 @@ func MetadataHandler(cfg *config.Config, pools Pools) http.Handler {
 			writeError(w, http.StatusUnauthorized, errors.New("service role key required"))
 			return
 		}
-		var body struct {
-			Name   string         `json:"name"`
-			Params map[string]any `json:"params"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, errors.New("a metadata query name is required"))
+		name, params, err := decodeMetadataRequest(r, only)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		sql, values, err := metadataStatement(body.Name, body.Params)
+		sql, values, err := metadataStatement(name, params)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
 		answerMetadata(w, r.Context(), pools, sql, values)
 	})
+}
+
+// decodeMetadataRequest reads the query's name and parameters. On a route
+// fixed to one query the name may be left out, and any other name is refused.
+func decodeMetadataRequest(r *http.Request, only string) (string, map[string]any, error) {
+	var body struct {
+		Name   string         `json:"name"`
+		Params map[string]any `json:"params"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return "", nil, errors.New("a metadata query name is required")
+	}
+	if only == "" {
+		return body.Name, body.Params, nil
+	}
+	if body.Name != "" && body.Name != only {
+		return "", nil, fmt.Errorf("this route runs only the %s query", only)
+	}
+	return only, body.Params, nil
 }
 
 func answerMetadata(w http.ResponseWriter, ctx context.Context, pools Pools, sql string, values []any) {

@@ -134,6 +134,9 @@ POST    /realtime/v1/*
 POST    /rest/v1/*
 POST    /sql
 POST    /storage/v1/*
+POST    /studio-admin/extensions
+POST    /studio-admin/policies
+POST    /studio-admin/rls
 POST    /studio-config
 POST    /studio/proxy/*
 PUT     /*

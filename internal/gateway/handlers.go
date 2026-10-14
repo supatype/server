@@ -87,6 +87,14 @@ func (d *Deps) DeclaredCache(req *http.Request) map[string]proxy.TableCache {
 func buildMetadata(d *Deps) http.Handler   { return sqlrunner.MetadataHandler(d.Config, d.AdminPool) }
 func buildIntrospect(d *Deps) http.Handler { return sqlrunner.IntrospectHandler(d.Config, d.AdminPool) }
 
+// The SQ2 admin operations run on the superuser admin pool, not the editor pool:
+// enabling an extension, and RLS or policy changes on auth and storage.
+func buildStudioExtensions(d *Deps) http.Handler {
+	return sqlrunner.ExtensionHandler(d.Config, d.AdminPool)
+}
+func buildStudioRLS(d *Deps) http.Handler      { return sqlrunner.RLSHandler(d.Config, d.AdminPool) }
+func buildStudioPolicies(d *Deps) http.Handler { return sqlrunner.PolicyHandler(d.Config, d.AdminPool) }
+
 func buildSQLRunner(d *Deps) http.Handler {
 	return sqlrunner.Handler(d.Config, d.EditorPool)
 }

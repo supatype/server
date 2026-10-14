@@ -132,6 +132,24 @@ func Routes() []Route {
 			Verb:    POST,
 			Build:   buildIntrospect,
 		},
+		// Allow-listed admin operations that need a superuser connection (SQ2), for the roles
+		// that hold the SQL editor: enabling an extension the image ships, and RLS or policy
+		// changes on the auth and storage tables through the image's SECURITY DEFINER helpers.
+		{
+			Pattern: "/studio-admin/extensions",
+			Verb:    POST,
+			Build:   buildStudioExtensions,
+		},
+		{
+			Pattern: "/studio-admin/rls",
+			Verb:    POST,
+			Build:   buildStudioRLS,
+		},
+		{
+			Pattern: "/studio-admin/policies",
+			Verb:    POST,
+			Build:   buildStudioPolicies,
+		},
 		{
 			Pattern: "/auth/v1",
 			Verb:    MountAll,

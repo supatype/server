@@ -334,7 +334,7 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 // recorded as elevated.
 func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
 	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms}
-	if under(path, "/sql") || under(path, "/metadata") {
+	if under(path, "/sql") || under(path, "/metadata") || under(path, "/studio-admin") {
 		return adm, true
 	}
 	mode, ok := resolveActingMode(req, perms)

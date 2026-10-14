@@ -38,7 +38,7 @@ var dataPlaneRules = []proxyRule{
 
 // The routes that already had a rule of their own.
 var namedRules = []proxyRule{
-	{http.MethodPost, "/sql", true, false, false},
+	{http.MethodPost, "/sql", true, true, false},
 	{http.MethodGet, "/admin/studio-members", true, true, false},
 	{http.MethodPatch, "/admin/studio-members/abc", true, false, false},
 	{http.MethodDelete, "/admin/studio-members/abc", true, false, false},

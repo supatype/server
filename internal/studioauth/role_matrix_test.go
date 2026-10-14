@@ -16,7 +16,7 @@ import (
 // roleMatrixSHA256 pins the shared role document. The control plane and the CLI
 // carry the same file and pin the same hash, so a change to what a role may do
 // has to be made in all three, or one of them fails.
-const roleMatrixSHA256 = "fd20d03babf333ad04fa46f5cddda7c3faa391149239724ab2e5e9c667d56129"
+const roleMatrixSHA256 = "db2e046d93ac5142cbf5a1920d9715f5f4537ddce8394059dffeceeb4e2ead0b"
 
 type sharedRoleMatrix struct {
 	Roles         []string            `json:"roles"`

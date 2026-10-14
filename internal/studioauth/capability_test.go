@@ -80,11 +80,13 @@ func TestAllowsRequest(t *testing.T) {
 		}
 	}
 
-	// The SQL runner still connects with the project's admin DSN, so it is
-	// elevated regardless of who asked, and so admin-only until it drops to the acting
-	// user's role.
-	if AllowsRequest(developer, http.MethodPost, "/sql") {
-		t.Fatal("developer must not reach the elevated SQL runner")
+	// The SQL runner connects with the project's admin DSN, so it is elevated
+	// regardless of who asked. The owner opened it to developers anyway (RX1).
+	if !AllowsRequest(developer, http.MethodPost, "/sql") {
+		t.Fatal("developer must reach the SQL runner")
+	}
+	if AllowsRequest(editor, http.MethodPost, "/sql") {
+		t.Fatal("editor must not reach the SQL runner")
 	}
 	if !AllowsRequest(admin, http.MethodPost, "/sql") {
 		t.Fatal("admin must reach the SQL runner")

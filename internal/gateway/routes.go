@@ -119,6 +119,12 @@ func Routes() []Route {
 			Verb:    POST,
 			Build:   buildSQLRunner,
 		},
+		// Studio's named, read-only schema queries, for every role with schema view.
+		{
+			Pattern: "/metadata",
+			Verb:    POST,
+			Build:   buildMetadata,
+		},
 		{
 			Pattern: "/auth/v1",
 			Verb:    MountAll,

@@ -2,7 +2,8 @@
 //
 // Route (requires a service-role Bearer token unless explicitly insecure):
 //
-//	POST /sql   — execute a SQL query and return rows as JSON
+//	POST /sql        execute a SQL query and return rows as JSON
+//	POST /metadata   run one named, read-only Studio metadata query (metadata.go)
 //
 // The Postgres search_path is decided server-side from the JWT role claim.
 // Clients may request a schema override in the body, but it is only honoured
@@ -165,8 +166,8 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 }
 
 // collect reads the result set, refusing one too large to hold in memory.
-func collect(ctx context.Context, tx pgx.Tx, query string) ([]Row, error) {
-	rows, err := tx.Query(ctx, query)
+func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, error) {
+	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		logrus.WithError(err).Error("sqlrunner: query failed")
 		return nil, failure{status: http.StatusUnprocessableEntity, err: err}

@@ -21,7 +21,7 @@ import (
 //	Read content rows                             yes      yes       yes     yes
 //	Edit content rows                             yes      yes       yes     no
 //	Schema and migration history view             yes      yes       no      yes
-//	SQL editor (as the acting user's role)        yes      yes       no      no
+//	SQL editor (elevated: RLS does not apply)     yes      yes       no      no
 //	Elevated SQL, DDL, destructive                yes      no        no      no
 //	Studio members and keys                       yes      no        no      no
 //	Realtime Inspector (channels, stream, test)   yes      yes       no      no
@@ -40,9 +40,9 @@ type StudioPermissions struct {
 	// PushSchema and Deploy cover schema pushes and functions, hooks and secrets.
 	PushSchema bool `json:"pushSchema"`
 	Deploy     bool `json:"deploy"`
-	// SQLEditor runs queries as the acting user's own role, so RLS applies to
-	// them. This is what makes the editor safe to hand to a contractor: they can
-	// explore and debug without being able to dump the database.
+	// SQLEditor opens the SQL runner, which connects as the project's owning
+	// role: row level security does not apply, so its holder can read and change
+	// every row. The owner granted it to developers knowingly (RX1).
 	SQLEditor bool `json:"sqlEditor"`
 	// ElevatedSQL covers DDL and anything that bypasses RLS.
 	ElevatedSQL bool `json:"elevatedSql"`
@@ -104,12 +104,17 @@ func AllowsRequest(perms StudioPermissions, method, path string) bool {
 	readOnly := method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 
 	switch {
-	// The SQL runner still connects with the project's admin DSN, so every query
-	// through it is elevated regardless of who asked. It moves to SQLEditor once
-	// the runner drops to the acting user's role and RLS applies (P1.6/P1.7);
-	// until then, granting a developer access here would hand them DDL.
+	// The SQL runner connects with the project's admin DSN, so every query
+	// through it is elevated regardless of who asked: row level security does not
+	// apply to it. The owner chose to open it to every role holding SQLEditor,
+	// developers included (RX1), knowing it lets them read and change every row.
 	case under(path, "/sql"):
-		return perms.ElevatedSQL
+		return perms.SQLEditor
+
+	// Studio's named, read-only schema queries (RQ3): catalogs and the ledger,
+	// never rows, for every role that may see the schema.
+	case under(path, "/metadata"):
+		return perms.SchemaView
 
 	// Studio membership and project keys.
 	case under(path, "/admin/studio-members"):

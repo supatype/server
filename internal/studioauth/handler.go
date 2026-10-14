@@ -79,7 +79,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(Result{
 				Role: "dev-bypass",
 				Sub:  "dev-bypass",
-			}, c))
+			}, c, req))
 			return
 		}
 
@@ -97,7 +97,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(result, c))
+		utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(result, c, req))
 	}
 }
 
@@ -106,7 +106,7 @@ func VerifyHandler(c Config) http.HandlerFunc {
 // It used to hardcode every permission to true, so an `editor` membership row was
 // handed a full-access UI while the control plane restricted the same role, so
 // the two hosts disagreed about what a role means.
-func verifyOKResponse(result Result, c Config) map[string]interface{} {
+func verifyOKResponse(result Result, c Config, req *http.Request) map[string]interface{} {
 	perms := result.Permissions
 	if perms == nil {
 		legacy := legacyAdminPermissions()
@@ -114,19 +114,14 @@ func verifyOKResponse(result Result, c Config) map[string]interface{} {
 	}
 
 	// `mode` is the identity data requests will act as, and `canElevate` whether
-	// the caller may change it. Studio shows the elevated banner from these rather
-	// than inferring privilege from the role name.
-	mode := ModeSelf
-	if perms.ElevatedSQL {
-		mode = ModeElevated
-	}
-
+	// the caller may change it. Studio shows the elevated banner and its mode
+	// switch from these rather than inferring privilege from the role name.
 	return map[string]interface{}{
 		"allowed":     true,
 		"role":        result.Role,
 		"sub":         result.Sub,
 		"permissions": perms,
-		"mode":        mode,
+		"mode":        reportedMode(req, *perms),
 		"canElevate":  perms.ElevatedSQL,
 		"seesDrafts":  roleSeesDrafts(result.Role, c),
 	}
@@ -241,6 +236,11 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 // platform proxy admits only the service role, so their own token could never
 // reach the control plane, and the control plane is told who they are instead.
 func forwardIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, adm admission, path string) (string, bool) {
+	// The metadata catalogue reads catalogs through the runner's connection, read-only:
+	// the service role reaches it, and there is nothing elevated to record.
+	if under(path, "/metadata") {
+		return ModeElevated, setServiceRole(w, req2, c)
+	}
 	if adm.mode == ModeSelf && IsRealtimeInspectorRoute(req.Method, path) {
 		if !setServiceRole(w, req2, c) {
 			return "", false
@@ -323,7 +323,20 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 		})
 		return admission{}, false
 	}
+	return admitActingMode(w, req, result, perms, path)
+}
 
+// admitActingMode decides how an admitted request acts. The SQL runner is
+// elevated by definition (RX1): it acts as the service role for everyone
+// AllowsRequest admits to it, whatever mode their data requests act in, and is
+// recorded as elevated. So is the read-only metadata catalogue (RQ3), which needs
+// the service role to reach the runner's connection; being read-only, it is not
+// recorded as elevated.
+func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
+	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms}
+	if under(path, "/sql") || under(path, "/metadata") {
+		return adm, true
+	}
 	mode, ok := resolveActingMode(req, perms)
 	if !ok {
 		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
@@ -331,7 +344,8 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 		})
 		return admission{}, false
 	}
-	return admission{mode: mode, actor: result.Sub, role: result.Role, perms: perms}, true
+	adm.mode = mode
+	return adm, true
 }
 
 // recordElevatedRequest notes that a request bypassed RLS.

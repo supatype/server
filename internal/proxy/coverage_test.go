@@ -636,7 +636,7 @@ func TestCloneRouteManifestDeepCopiesEveryMap(t *testing.T) {
 }
 
 // Merging is how a tenant's manifest is layered over the deployment's, so what
-// an empty overlay does — nothing — matters as much as what a full one does.
+// an empty overlay does (nothing at all) matters as much as what a full one does.
 func TestMergeRouteManifestFieldByField(t *testing.T) {
 	base := &RouteManifest{
 		Schema: "base", PostgRESTURL: "http://base-rest", GraphQLURL: "http://base-gql",
@@ -924,7 +924,11 @@ func TestWatchReloadsARealFile(t *testing.T) {
 	path := writeManifest(t, dir, "manifest.json", `{"schema":"app"}`)
 
 	reloaded := make(chan *RouteManifest, 4)
-	if err := Watch(path, func(m *RouteManifest) { reloaded <- m }); err != nil {
+	_, loaded, err := LoadStamped(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Watch(path, loaded, func(m *RouteManifest) { reloaded <- m }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -948,7 +952,7 @@ func TestWatchReloadsARealFile(t *testing.T) {
 // A path with nothing at it cannot be watched, and saying so at startup is
 // better than a watcher that silently never fires.
 func TestWatchReportsAPathItCannotWatch(t *testing.T) {
-	if err := Watch(filepath.Join(t.TempDir(), "absent.json"), func(*RouteManifest) {}); err == nil {
+	if err := Watch(filepath.Join(t.TempDir(), "absent.json"), FileStamp{}, func(*RouteManifest) {}); err == nil {
 		t.Error("want an error")
 	}
 }
@@ -961,7 +965,7 @@ func TestWatchReportsAWatcherItCannotCreate(t *testing.T) {
 	t.Cleanup(func() { newWatcher = original })
 	newWatcher = func() (*fsnotify.Watcher, error) { return nil, errors.New("no handles left") }
 
-	if err := Watch("anything", func(*RouteManifest) {}); err == nil {
+	if err := Watch("anything", FileStamp{}, func(*RouteManifest) {}); err == nil {
 		t.Error("want an error")
 	}
 }

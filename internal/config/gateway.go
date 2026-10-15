@@ -163,8 +163,16 @@ type Config struct {
 	// PostgRESTURL is the upstream PostgREST URL.
 	PostgRESTURL string `envconfig:"SUPATYPE_POSTGREST_URL" default:"http://localhost:3000"`
 
-	// GraphQLURL is the upstream pg_graphql URL (typically same host as PostgREST).
-	GraphQLURL string `envconfig:"SUPATYPE_GRAPHQL_URL" default:"http://localhost:3000"`
+	// GraphQLURL is the upstream pg_graphql URL. Unset, GraphQL goes to
+	// PostgRESTURL, where pg_graphql is an RPC; a tag default here used to make
+	// that fallback unreachable and sent GraphQL to localhost:3000 instead.
+	GraphQLURL string `envconfig:"SUPATYPE_GRAPHQL_URL"`
+
+	// GraphQLDisabled answers /graphql/v1 with 501 graphql_unavailable instead of
+	// forwarding it, for a stack whose Postgres has no pg_graphql (native
+	// `supatype dev`). Off by default, so every Config built without it serves
+	// GraphQL as before.
+	GraphQLDisabled bool `envconfig:"SUPATYPE_GRAPHQL_DISABLED"`
 
 	// StorageURL is the upstream storage service URL (used when StorageProvider != "local").
 	StorageURL string `envconfig:"SUPATYPE_STORAGE_URL" default:"http://localhost:5000"`

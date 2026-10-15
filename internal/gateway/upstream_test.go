@@ -128,3 +128,20 @@ func TestResolveURL(t *testing.T) {
 		t.Error("want a parse error for an unusable upstream")
 	}
 }
+
+// TestGraphQLFollowsPostgRESTWhenNothingNamesIt covers a deployment that sets
+// SUPATYPE_POSTGREST_URL and not SUPATYPE_GRAPHQL_URL, which is native
+// `supatype dev`. pg_graphql is an RPC on PostgREST, so GraphQL belongs there.
+// A tag default of localhost:3000 on the GraphQL URL made that fallback
+// unreachable: native dev answered /graphql/v1 with an empty 502, and would
+// have forwarded it to whatever app a developer runs on port 3000.
+func TestGraphQLFollowsPostgRESTWhenNothingNamesIt(t *testing.T) {
+	t.Setenv("SUPATYPE_POSTGREST_URL", "http://127.0.0.1:55662")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := GraphQLUpstream(&proxy.RouteManifest{}, cfg); got != "http://127.0.0.1:55662" {
+		t.Errorf("GraphQL upstream %q, want PostgREST's http://127.0.0.1:55662", got)
+	}
+}

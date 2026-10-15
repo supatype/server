@@ -1,10 +1,10 @@
 # supatype-server
 
-Unified API gateway for the [Supatype](https://github.com/supatype/supatype) platform — local dev, self-host, and production.
+Unified API gateway for the [Supatype](https://github.com/supatype/supatype) platform: local dev, self-host, and production.
 
 **Product:** [github.com/supatype](https://github.com/supatype) · **Docs:** [supatype.github.io/supatype](https://supatype.github.io/supatype/)
 
-Most users run this via the CLI (`supatype dev` or `supatype self-host compose up`) — you only need this repo if you are hacking on the server itself.
+Most users run this via the CLI (`supatype dev` or `supatype self-host compose up`); you only need this repo if you are hacking on the server itself.
 
 Repository: [github.com/supatype/server](https://github.com/supatype/server)
 
@@ -47,7 +47,7 @@ Set `SUPATYPE_MODE` to control gateway behavior:
 
 ## Quick Start
 
-> **Using Supatype as a product?** Run `npx supatype@latest init` then `supatype dev` — see [docs](https://supatype.github.io/supatype/#local-dev). The steps below are for **server contributors** cloning this repo.
+> **Using Supatype as a product?** Run `npx supatype@latest init` then `supatype dev` (see the [docs](https://supatype.github.io/supatype/#local-dev)). The steps below are for **server contributors** cloning this repo.
 
 ### Prerequisites
 
@@ -114,7 +114,8 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_APP_UPSTREAM`
 - `SUPATYPE_MANIFEST_PATH`
 - `SUPATYPE_POSTGREST_URL`
-- `SUPATYPE_GRAPHQL_URL`
+- `SUPATYPE_GRAPHQL_URL` (unset: PostgREST's URL, where pg_graphql is an RPC)
+- `SUPATYPE_GRAPHQL_DISABLED` (answer `/graphql/v1` with 501 `graphql_unavailable`; native `supatype dev` sets it)
 - `SUPATYPE_STORAGE_URL`
 - `SUPATYPE_FUNCTIONS_WORKER_URL`
 - `SUPATYPE_DENO_PATH`

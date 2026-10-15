@@ -18,8 +18,11 @@ var processStart = time.Now()
 // ProbeConfig lists optional upstreams for /health and /health/ready checks.
 // Empty URLs mean that probe is skipped for readiness (except PostgREST, which must be reachable when URL is non-empty).
 type ProbeConfig struct {
-	PostgRESTURL     string
-	GraphQLURL       string
+	PostgRESTURL string
+	GraphQLURL   string
+	// GraphQLDisabled mirrors SUPATYPE_GRAPHQL_DISABLED: GraphQL is reported as
+	// disabled instead of probed, and does not affect readiness.
+	GraphQLDisabled  bool
 	StorageLocalPath string
 	StorageRemoteURL string
 	DenoBaseURL      string
@@ -66,55 +69,67 @@ func Attach(r chi.Router, cfg *config.Config, version string, probes func() Prob
 }
 
 func collectComponents(probes ProbeConfig, timeout time.Duration) map[string]any {
-	out := make(map[string]any)
+	return map[string]any{
+		"postgrest": postgrestComponent(probes, timeout),
+		"graphql":   graphqlComponent(probes, timeout),
+		"storage":   storageComponent(probes, timeout),
+		"deno":      denoComponent(probes, timeout),
+		"realtime":  realtimeComponent(probes, timeout),
+	}
+}
 
-	// PostgREST — required when URL is set; empty URL = not ready (misconfiguration).
+// postgrestComponent is required when URL is set; an empty URL is not ready (misconfiguration).
+func postgrestComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
 	prURL := strings.TrimSpace(probes.PostgRESTURL)
 	prReady := prURL != "" && probeHTTPGet(joinURL(prURL, "/"), timeout)
-	out["postgrest"] = map[string]any{"url": prURL, "ready": prReady}
+	return map[string]any{"url": prURL, "ready": prReady}
+}
 
+// graphqlComponent reports GraphQL as disabled, without probing it and without a
+// ready value, when SUPATYPE_GRAPHQL_DISABLED is set: the gateway answers
+// /graphql/v1 itself with 501, so the upstream says nothing about what clients get.
+func graphqlComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
+	if probes.GraphQLDisabled {
+		return map[string]any{"enabled": false, "skipped": true, "status": "disabled"}
+	}
 	gqBase := strings.TrimSpace(utilities.FirstNonEmpty(probes.GraphQLURL, probes.PostgRESTURL))
 	gqURL := joinURL(gqBase, "/graphql/v1")
 	gqReady := gqBase != "" && probeHTTPGet(gqURL, timeout)
-	out["graphql"] = map[string]any{"url": gqURL, "ready": gqReady}
+	return map[string]any{"url": gqURL, "ready": gqReady}
+}
 
-	switch {
-	case strings.TrimSpace(probes.StorageLocalPath) != "":
-		p := strings.TrimSpace(probes.StorageLocalPath)
-		stReady := isDirReadable(p)
-		out["storage"] = map[string]any{"mode": "local", "path": p, "ready": stReady}
-	case strings.TrimSpace(probes.StorageRemoteURL) != "":
-		u := strings.TrimSpace(probes.StorageRemoteURL)
-		stReady := probeHTTPGet(joinURL(u, "/"), timeout)
-		out["storage"] = map[string]any{"mode": "remote", "url": u, "ready": stReady}
-	default:
-		out["storage"] = map[string]any{"skipped": true, "ready": true}
+func storageComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
+	if p := strings.TrimSpace(probes.StorageLocalPath); p != "" {
+		return map[string]any{"mode": "local", "path": p, "ready": isDirReadable(p)}
 	}
+	if u := strings.TrimSpace(probes.StorageRemoteURL); u != "" {
+		return map[string]any{"mode": "remote", "url": u, "ready": probeHTTPGet(joinURL(u, "/"), timeout)}
+	}
+	return map[string]any{"skipped": true, "ready": true}
+}
 
+func denoComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
 	deno := strings.TrimSpace(probes.DenoBaseURL)
-	if deno != "" {
-		denoURL := joinURL(deno, "/")
-		dReady := probeHTTPGet(denoURL, timeout)
-		out["deno"] = map[string]any{"url": denoURL, "ready": dReady}
-	} else {
-		out["deno"] = map[string]any{"skipped": true, "ready": true}
+	if deno == "" {
+		return map[string]any{"skipped": true, "ready": true}
 	}
+	denoURL := joinURL(deno, "/")
+	return map[string]any{"url": denoURL, "ready": probeHTTPGet(denoURL, timeout)}
+}
 
+func realtimeComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
+	if !probes.RealtimeEnabled {
+		return map[string]any{"enabled": false, "skipped": true, "ready": true}
+	}
 	selfBase := strings.TrimSpace(probes.SelfBaseURL)
-	if probes.RealtimeEnabled && selfBase != "" {
-		u := joinURL(selfBase, "/realtime/v1/health")
-		rtReady := probeHTTPGet(u, timeout)
-		out["realtime"] = map[string]any{"enabled": true, "url": u, "ready": rtReady}
-	} else if probes.RealtimeEnabled {
-		out["realtime"] = map[string]any{
+	if selfBase == "" {
+		return map[string]any{
 			"enabled": true, "skipped": true, "ready": false,
 			"note": "SelfBaseURL unset; set SUPATYPE_HEALTH_SELF_BASE_URL or fix outer listen URL / TLS domain",
 		}
-	} else {
-		out["realtime"] = map[string]any{"enabled": false, "skipped": true, "ready": true}
 	}
-
-	return out
+	u := joinURL(selfBase, "/realtime/v1/health")
+	return map[string]any{"enabled": true, "url": u, "ready": probeHTTPGet(u, timeout)}
 }
 
 func aggregateReady(components map[string]any) bool {

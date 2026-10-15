@@ -1,7 +1,7 @@
 // Package keyspacetest provides an in-memory keyspace.Client for tests.
 //
-// Four packages had each grown their own stub of the cache — restcache, admin,
-// the gateway and the platform middleware — and each stubbed only the methods
+// Four packages had each grown their own stub of the cache (restcache, admin,
+// the gateway and the platform middleware) and each stubbed only the methods
 // its own tests happened to reach. A stub that does not really store anything
 // cannot tell a hit from a miss, which is exactly what the cache's tests are
 // about, and a stub per package means a change to the interface is discovered
@@ -269,6 +269,9 @@ func (c *Client) TTLSeconds(_ context.Context, key string) (int, error) {
 }
 
 func (c *Client) AddToExpiringSet(_ context.Context, key, member string, expireAt time.Time) error {
+	if err := keyspace.CheckExpireAt(expireAt, time.Now()); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.SetAddErr != nil {

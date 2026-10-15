@@ -39,6 +39,8 @@ type Client interface {
 	Del(ctx context.Context, keys ...string) error
 	ScanPage(ctx context.Context, cursor uint64, pattern string, count int) (keys []string, next uint64, err error)
 	TTLSeconds(ctx context.Context, key string) (int, error)
+	// AddToExpiringSet refuses an expireAt that CheckExpireAt refuses, before
+	// writing anything.
 	AddToExpiringSet(ctx context.Context, key, member string, expireAt time.Time) error
 	Close()
 }

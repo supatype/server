@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -124,39 +125,17 @@ func rfc7239QuotedString(s string) string {
 // strips CORS headers from the upstream response (supatype-server is the sole
 // source of CORS truth), and adds any HeaderOverrides before forwarding.
 func New(target *url.URL, opts ProxyOpts) http.Handler {
-	rp := httputil.NewSingleHostReverseProxy(target)
+	// Rewrite, not the deprecated Director: in Director mode the ReverseProxy
+	// appends the client address to X-Forwarded-For after Director returns, so
+	// the chain augmentForwardedHeaders had already extended named the client
+	// twice. Rewrite mode strips the inbound forwarding headers from Out and adds
+	// nothing, which leaves this hop's handling entirely to the code below.
+	rp := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
+		carryForwardingHeaders(pr)
+		rewriteForUpstream(pr.Out, pr.In.Host, target, opts)
+	}}
 
-	// Replace the default director to get full control over header handling.
-	rp.Director = func(req *http.Request) {
-		clientFacingHost := req.Host
-
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.Host = target.Host
-
-		if opts.StripPrefix != "" {
-			req.URL.Path = strings.TrimPrefix(req.URL.Path, opts.StripPrefix)
-			if req.URL.Path == "" {
-				req.URL.Path = "/"
-			}
-			req.URL.RawPath = strings.TrimPrefix(req.URL.RawPath, opts.StripPrefix)
-		}
-
-		augmentForwardedHeaders(req, clientFacingHost)
-
-		// Apply static header overrides first.
-		for k, v := range opts.HeaderOverrides {
-			req.Header.Set(k, v)
-		}
-		// Apply per-request headers (take precedence over HeaderOverrides).
-		if opts.HeaderFunc != nil {
-			for k, v := range opts.HeaderFunc(req) {
-				req.Header.Set(k, v)
-			}
-		}
-	}
-
-	// Strip CORS headers from upstream — supatype-server adds its own.
+	// Strip CORS headers from upstream: supatype-server adds its own.
 	rp.ModifyResponse = func(resp *http.Response) error {
 		resp.Header.Del("Access-Control-Allow-Origin")
 		resp.Header.Del("Access-Control-Allow-Methods")
@@ -174,4 +153,48 @@ func New(target *url.URL, opts ProxyOpts) http.Handler {
 	}
 
 	return rp
+}
+
+// forwardingHeaders are the ones Rewrite mode strips from the outbound request.
+// This hop extends what the edge sent rather than starting the chain afresh.
+var forwardingHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
+
+func carryForwardingHeaders(pr *httputil.ProxyRequest) {
+	for _, name := range forwardingHeaders {
+		if values, ok := pr.In.Header[name]; ok {
+			// Shared with In rather than copied: clipped, so the Forwarded hop
+			// appended later lands in a new array, and Set replaces the slice.
+			pr.Out.Header[name] = slices.Clip(values)
+		}
+	}
+}
+
+// rewriteForUpstream points out at target, strips the route prefix, records
+// this hop in the forwarding headers, then applies the configured overrides.
+// Not ProxyRequest.SetURL: that joins target's path onto the request's, and the
+// routes here name the upstream's root.
+func rewriteForUpstream(out *http.Request, clientFacingHost string, target *url.URL, opts ProxyOpts) {
+	out.URL.Scheme = target.Scheme
+	out.URL.Host = target.Host
+	out.Host = target.Host
+
+	if opts.StripPrefix != "" {
+		out.URL.Path = strings.TrimPrefix(out.URL.Path, opts.StripPrefix)
+		if out.URL.Path == "" {
+			out.URL.Path = "/"
+		}
+		out.URL.RawPath = strings.TrimPrefix(out.URL.RawPath, opts.StripPrefix)
+	}
+
+	augmentForwardedHeaders(out, clientFacingHost)
+
+	// Static overrides first, then per-request headers, which win on conflict.
+	for k, v := range opts.HeaderOverrides {
+		out.Header.Set(k, v)
+	}
+	if opts.HeaderFunc != nil {
+		for k, v := range opts.HeaderFunc(out) {
+			out.Header.Set(k, v)
+		}
+	}
 }

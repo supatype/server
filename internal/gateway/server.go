@@ -115,7 +115,6 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// closure below is built before it is assigned, and a nil Gateway closes and
 	// wraps as a no-op.
 	var tenantGateway *platform.Gateway
-	ksPlatform := keyspace.Unavailable()
 
 	// fail releases what has been acquired so far and returns the bootstrap error.
 	fail := func(err error) (http.Handler, func(), error) {
@@ -189,7 +188,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// The platform keyspace, not the project one: the route manifest and the MAU
 	// day-sets are written centrally, and reading them from a project's own
 	// keyspace would find nothing and serve file defaults to a configured tenant.
-	ksPlatform = resources.PlatformCache()
+	ksPlatform := resources.PlatformCache()
 
 	mergeFromKeyspace := managed && ksPlatform.Available() && ref != ""
 	perTenantManifest := managed && ksPlatform.Available() && ref == ""

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,7 +54,7 @@ type TenantConfig struct {
 	//
 	// Beside Hooks and for the same reason: cloud has no manifest file on disk, so without this a
 	// project's declaration never reaches the pod that enforces it. That direction matters more
-	// here than it does for hooks — an absent declaration is read as "nothing may be cached"
+	// here than it does for hooks: an absent declaration is read as "nothing may be cached"
 	// (cacheceiling.Narrow), so a control plane that writes hooks and not cache would turn every
 	// paid project's cache off and report the schema as the reason.
 	Cache map[string]proxy.TableCache `json:"cache,omitempty"`
@@ -182,18 +183,13 @@ func (c *conn) SetBytes(ctx context.Context, key string, value []byte, ttlSecond
 	// Built twice rather than once and adjusted: a valkey-go builder is
 	// single-use and recycles the command, so holding one and calling Build
 	// again returns something already sent.
-	var result vkgo.ValkeyResult
+	var cmd vkgo.Completed
 	if ttlSeconds > 0 {
-		result = c.vc.Do(rctx, c.vc.B().Set().Key(key).Value(string(value)).Ex(time.Duration(ttlSeconds)*time.Second).Build())
+		cmd = c.vc.B().Set().Key(key).Value(string(value)).Ex(time.Duration(ttlSeconds) * time.Second).Build()
 	} else {
-		result = c.vc.Do(rctx, c.vc.B().Set().Key(key).Value(string(value)).Build())
+		cmd = c.vc.B().Set().Key(key).Value(string(value)).Build()
 	}
-	if err := result.Error(); err != nil {
-		c.recordFailure()
-		return fmt.Errorf("keyspace: SET %s: %w", key, err)
-	}
-	c.recordSuccess()
-	return nil
+	return c.run(rctx, "SET", key, cmd)
 }
 
 // Del deletes one or more keys.
@@ -225,19 +221,52 @@ func (c *conn) Del(ctx context.Context, keys ...string) error {
 //
 // The expiry is reapplied on every add. Setting it once on creation would risk a
 // set that never expires if the process died between the two commands.
+//
+// An expiry the set cannot carry is refused before anything is sent, and before
+// the circuit is consulted, since it is the caller's mistake and not the
+// server's. See CheckExpireAt.
 func (c *conn) AddToExpiringSet(ctx context.Context, key, member string, expireAt time.Time) error {
+	if err := CheckExpireAt(expireAt, time.Now()); err != nil {
+		return fmt.Errorf("keyspace: EXPIREAT %s: %w", key, err)
+	}
 	if err := c.checkCircuit(); err != nil {
 		return err
 	}
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
-	if err := c.vc.Do(rctx, c.vc.B().Sadd().Key(key).Member(member).Build()).Error(); err != nil {
-		c.recordFailure()
-		return fmt.Errorf("keyspace: SADD %s: %w", key, err)
+	if err := c.run(rctx, "SADD", key, c.vc.B().Sadd().Key(key).Member(member).Build()); err != nil {
+		return err
 	}
-	if err := c.vc.Do(rctx, c.vc.B().Expireat().Key(key).Timestamp(expireAt.Unix()).Build()).Error(); err != nil {
+	return c.run(rctx, "EXPIREAT", key, c.vc.B().Expireat().Key(key).Timestamp(expireAt.Unix()).Build())
+}
+
+// maxExpireAtUnix is the latest EXPIREAT, in seconds, whose milliseconds still
+// fit in an int64. Valkey refuses anything later; pg_keyspace stores it and
+// reports a TTL nobody asked for.
+const maxExpireAtUnix int64 = math.MaxInt64 / 1000
+
+// CheckExpireAt refuses an expiry a set cannot carry. One at or before now
+// deletes the key on every RESP server, so the member just added and every one
+// already in the set would be gone with no error. It is compared in whole
+// seconds because that is what EXPIREAT sends: an expiry half a second away
+// truncates to now. One past maxExpireAtUnix is answered differently by each
+// server, so it is not left to them.
+func CheckExpireAt(expireAt, now time.Time) error {
+	if expireAt.Unix() <= now.Unix() {
+		return fmt.Errorf("expiry %d is not in the future", expireAt.Unix())
+	}
+	if expireAt.Unix() > maxExpireAtUnix {
+		return fmt.Errorf("expiry %d is past the latest a server can hold (%d)", expireAt.Unix(), maxExpireAtUnix)
+	}
+	return nil
+}
+
+// run sends one command whose reply carries nothing but success or failure, and
+// feeds the outcome to the circuit breaker.
+func (c *conn) run(ctx context.Context, name, key string, cmd vkgo.Completed) error {
+	if err := c.vc.Do(ctx, cmd).Error(); err != nil {
 		c.recordFailure()
-		return fmt.Errorf("keyspace: EXPIREAT %s: %w", key, err)
+		return fmt.Errorf("keyspace: %s %s: %w", name, key, err)
 	}
 	c.recordSuccess()
 	return nil

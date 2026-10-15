@@ -378,17 +378,35 @@ func TestEveryOperationReportsALostConnection(t *testing.T) {
 	}
 }
 
-// The SADD lands and the EXPIREAT does not: reported, because a set with no
-// expiry is one that grows for ever.
-func TestAddToExpiringSetReportsAFailedExpiry(t *testing.T) {
+// An expiry the set cannot carry is refused before anything is written. One in
+// the past deletes the set on every backend, members already in it included.
+// One out of range is the server's call, and the two servers differ: Valkey
+// refuses a timestamp whose milliseconds overflow, pg_keyspace stores it and
+// reports a TTL nobody asked for. Either way the client is the one that knows.
+func TestAddToExpiringSetRefusesAnExpiryTheSetCannotCarry(t *testing.T) {
 	c := connectedClient(t)
 	ctx := context.Background()
 	k := key(t, "bad-expiry")
 	t.Cleanup(func() { _ = c.Del(ctx, k) })
 
-	// A timestamp Valkey will not accept as an expiry.
-	if err := c.AddToExpiringSet(ctx, k, "m", time.Unix(-1<<62, 0)); err == nil {
-		t.Error("want an error")
+	if err := c.AddToExpiringSet(ctx, k, "kept", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for name, at := range map[string]time.Time{
+		"just past":    time.Unix(1, 0),
+		"far past":     time.Unix(-1<<62, 0),
+		"out of range": time.Unix(maxExpireAtUnix+1, 0),
+	} {
+		if err := c.AddToExpiringSet(ctx, k, "m", at); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+		if ttl, err := c.TTLSeconds(ctx, k); err != nil || ttl <= 0 || ttl > 3600 {
+			t.Errorf("%s: TTL = %d, %v; want the set and its hour left alone", name, ttl, err)
+		}
+	}
+	// A caller's mistake, not the server's: the circuit stays closed.
+	if err := c.checkCircuit(); err != nil {
+		t.Errorf("checkCircuit = %v", err)
 	}
 }
 
@@ -501,7 +519,7 @@ func TestAnOpenCircuitRefusesEveryOperation(t *testing.T) {
 	if err := c.Del(ctx, "k"); !errors.Is(err, ErrCircuitOpen) {
 		t.Errorf("Del: %v", err)
 	}
-	if err := c.AddToExpiringSet(ctx, "k", "m", time.Now()); !errors.Is(err, ErrCircuitOpen) {
+	if err := c.AddToExpiringSet(ctx, "k", "m", time.Now().Add(time.Hour)); !errors.Is(err, ErrCircuitOpen) {
 		t.Errorf("AddToExpiringSet: %v", err)
 	}
 	if _, _, err := c.ScanPage(ctx, 0, "*", 10); !errors.Is(err, ErrCircuitOpen) {

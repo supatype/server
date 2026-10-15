@@ -51,7 +51,7 @@ Set `SUPATYPE_MODE` to control gateway behavior:
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26.9+
 - Docker (for local Postgres with the provided compose file)
 
 ### 1) Configure environment

@@ -10,6 +10,8 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -20,12 +22,46 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/e2e"
-	"sync"
 
 	"golang.org/x/sync/errgroup"
 )
 
+// restoreEnvironment puts the process environment back as it was once the test
+// ends. Loading a config directory overloads its .env files into the process
+// environment, which is how a running server takes up a reload, so a test that
+// loads one leaves its values behind for every test after it. TestReloadConfig
+// ends on SUPATYPE_SMTP_PORT=ABC, and with -count above one every later
+// e2e.Config() then fails to parse. t.Setenv cannot cover this: the keys are
+// whatever the files hold, and they are set by the code under test.
+func restoreEnvironment(t *testing.T) {
+	t.Helper()
+	before := environment()
+	t.Cleanup(func() {
+		for key := range environment() {
+			if _, kept := before[key]; !kept {
+				require.NoError(t, os.Unsetenv(key))
+			}
+		}
+		for key, value := range before {
+			require.NoError(t, os.Setenv(key, value))
+		}
+	})
+}
+
+// environment is the process environment by name. Entries with no name, such
+// as Windows' per-drive "=C:" directories, are not the test's to restore.
+func environment() map[string]string {
+	env := map[string]string{}
+	for _, entry := range os.Environ() {
+		if key, value, _ := strings.Cut(entry, "="); key != "" {
+			env[key] = value
+		}
+	}
+	return env
+}
+
 func TestLoadConfigFile(t *testing.T) {
+	restoreEnvironment(t)
 	// test bad multi line config value
 	if err := godotenv.Overload("testdata/60_example_newline.env"); err != nil {
 		t.Fatal(err)
@@ -129,6 +165,7 @@ func TestWatchSignals(t *testing.T) {
 }
 
 func TestWatchNotify(t *testing.T) {
+	restoreEnvironment(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
@@ -612,6 +649,7 @@ func TestWatchNotify(t *testing.T) {
 }
 
 func TestReloadConfig(t *testing.T) {
+	restoreEnvironment(t)
 	dir, cleanup := helpTestDir(t)
 	defer cleanup()
 

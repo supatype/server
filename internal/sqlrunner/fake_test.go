@@ -11,9 +11,9 @@ import (
 // A pool, a transaction and a result set that can be told to fail wherever a
 // real one can.
 //
-// The runner's failure paths are the interesting ones — a pool that will not
-// begin, a commit that will not land, a result set that stops halfway — and
-// arranging each of those against a live Postgres means either racing it or
+// The runner's failure paths are the interesting ones: a pool that will not
+// begin, a commit that will not land, a result set that stops halfway. Arranging
+// each of those against a live Postgres means either racing it or
 // not covering it. Stating them is both faster and exact.
 //
 // Everything pgx's interfaces require but this package never calls is present
@@ -42,21 +42,36 @@ type fakeTx struct {
 	queryErr  error
 	commitErr error
 	rows      *fakeRows
+	// reassignErr is returned by the Exec that hands objects to the owner.
+	reassignErr error
 
-	execSQL    string
-	execArgs   []any
+	execs      []execCall
 	querySQL   string
 	committed  bool
 	rolledBack bool
+	// calls is every statement and the commit, in the order they reached the
+	// transaction, so a test can say what must come before what.
+	calls []string
+}
+
+// execCall is one Exec as the transaction received it.
+type execCall struct {
+	sql  string
+	args []any
 }
 
 func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	t.execSQL, t.execArgs = sql, args
+	t.execs = append(t.execs, execCall{sql: sql, args: args})
+	t.calls = append(t.calls, sql)
+	if sql == reassignToOwner && t.reassignErr != nil {
+		return pgconn.CommandTag{}, t.reassignErr
+	}
 	return pgconn.CommandTag{}, t.execErr
 }
 
 func (t *fakeTx) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, error) {
 	t.querySQL = sql
+	t.calls = append(t.calls, sql)
 	if t.queryErr != nil {
 		return nil, t.queryErr
 	}
@@ -68,6 +83,7 @@ func (t *fakeTx) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, error
 
 func (t *fakeTx) Commit(context.Context) error {
 	t.committed = true
+	t.calls = append(t.calls, "COMMIT")
 	return t.commitErr
 }
 

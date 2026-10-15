@@ -263,6 +263,13 @@ type Config struct {
 	// features at a different role than the app's.
 	SQLDatabaseURL string `envconfig:"SUPATYPE_SQL_DATABASE_URL"`
 
+	// SQLEditorDatabaseURL is the DSN the Studio SQL editor's POST /sql runs on.
+	// It connects as supatype_sql_editor, a non-superuser member of the database
+	// owner, so arbitrary SQL from Studio no longer runs as a superuser. Empty
+	// means the editor shares SQLDSN, which is how deployments from before the
+	// variable existed keep working.
+	SQLEditorDatabaseURL string `envconfig:"SUPATYPE_SQL_EDITOR_DATABASE_URL"`
+
 	// DatabaseURL is the generic DSN fallback. The auth service reads the same
 	// variable through its own configuration, which is one of the connection
 	// paths this refactor collapses.
@@ -359,4 +366,13 @@ func (c *Config) SQLDSN() string {
 		return dsn
 	}
 	return strings.TrimSpace(c.DatabaseURL)
+}
+
+// SQLEditorDSN is the connection string for the Studio SQL editor: the editor
+// variable when it is set, and SQLDSN otherwise.
+func (c *Config) SQLEditorDSN() string {
+	if dsn := strings.TrimSpace(c.SQLEditorDatabaseURL); dsn != "" {
+		return dsn
+	}
+	return c.SQLDSN()
 }

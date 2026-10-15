@@ -8,23 +8,24 @@ import "testing"
 // because the surface must not move in this phase.
 func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 	env := map[string]string{
-		"SUPATYPE_CLOUD_ACTIVITY_ENABLED": "true",
-		"SUPATYPE_CLOUD_ACTIVITY_URL":     "http://cp:4001",
-		"SUPATYPE_CONTROL_PLANE_URL":      "http://cp:8080",
-		"SUPATYPE_CONTROL_PLANE_SECRET":   "cp-s3cret",
-		"SUPATYPE_INTERNAL_HMAC_SECRET":   "s3cret",
-		"SUPATYPE_NONPROD":                "true",
-		"SUPATYPE_BLOCK_BOT_UA":           "true",
-		"MAU_EMAIL_SALT":                  "pepper",
-		"VALKEY_ADDR":                     "valkey:6379",
-		"SUPATYPE_SQL_DATABASE_URL":       "postgres://a/b",
-		"DATABASE_URL":                    "postgres://c/d",
-		"SUPATYPE_DB_SCHEMA":              "app",
-		"SUPATYPE_SQLRUNNER_INSECURE":     "yes",
-		"POSTGRES_PASSWORD":               "pw",
-		"STUDIO_OPEN_DEV":                 "on",
-		"STUDIO_ADMIN_ROLES":              "admin,owner",
-		"LOG_LEVEL":                       "debug",
+		"SUPATYPE_CLOUD_ACTIVITY_ENABLED":  "true",
+		"SUPATYPE_CLOUD_ACTIVITY_URL":      "http://cp:4001",
+		"SUPATYPE_CONTROL_PLANE_URL":       "http://cp:8080",
+		"SUPATYPE_CONTROL_PLANE_SECRET":    "cp-s3cret",
+		"SUPATYPE_INTERNAL_HMAC_SECRET":    "s3cret",
+		"SUPATYPE_NONPROD":                 "true",
+		"SUPATYPE_BLOCK_BOT_UA":            "true",
+		"MAU_EMAIL_SALT":                   "pepper",
+		"VALKEY_ADDR":                      "valkey:6379",
+		"SUPATYPE_SQL_DATABASE_URL":        "postgres://a/b",
+		"SUPATYPE_SQL_EDITOR_DATABASE_URL": "postgres://e/f",
+		"DATABASE_URL":                     "postgres://c/d",
+		"SUPATYPE_DB_SCHEMA":               "app",
+		"SUPATYPE_SQLRUNNER_INSECURE":      "yes",
+		"POSTGRES_PASSWORD":                "pw",
+		"STUDIO_OPEN_DEV":                  "on",
+		"STUDIO_ADMIN_ROLES":               "admin,owner",
+		"LOG_LEVEL":                        "debug",
 	}
 	for k, v := range env {
 		t.Setenv(k, v)
@@ -36,18 +37,19 @@ func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 	}
 
 	for name, got := range map[string]string{
-		"SUPATYPE_CLOUD_ACTIVITY_URL":   cfg.CloudActivityURL,
-		"SUPATYPE_CONTROL_PLANE_URL":    cfg.ControlPlaneURL,
-		"SUPATYPE_CONTROL_PLANE_SECRET": cfg.ControlPlaneSecret,
-		"SUPATYPE_INTERNAL_HMAC_SECRET": cfg.InternalHMACSecret,
-		"MAU_EMAIL_SALT":                cfg.MAUEmailSalt,
-		"VALKEY_ADDR":                   cfg.ValkeyAddrLegacy,
-		"SUPATYPE_SQL_DATABASE_URL":     cfg.SQLDatabaseURL,
-		"DATABASE_URL":                  cfg.DatabaseURL,
-		"SUPATYPE_DB_SCHEMA":            cfg.SQLSchema,
-		"POSTGRES_PASSWORD":             cfg.PostgresPassword,
-		"STUDIO_ADMIN_ROLES":            cfg.StudioAdminRoles,
-		"LOG_LEVEL":                     cfg.LogLevel,
+		"SUPATYPE_CLOUD_ACTIVITY_URL":      cfg.CloudActivityURL,
+		"SUPATYPE_CONTROL_PLANE_URL":       cfg.ControlPlaneURL,
+		"SUPATYPE_CONTROL_PLANE_SECRET":    cfg.ControlPlaneSecret,
+		"SUPATYPE_INTERNAL_HMAC_SECRET":    cfg.InternalHMACSecret,
+		"MAU_EMAIL_SALT":                   cfg.MAUEmailSalt,
+		"VALKEY_ADDR":                      cfg.ValkeyAddrLegacy,
+		"SUPATYPE_SQL_DATABASE_URL":        cfg.SQLDatabaseURL,
+		"SUPATYPE_SQL_EDITOR_DATABASE_URL": cfg.SQLEditorDatabaseURL,
+		"DATABASE_URL":                     cfg.DatabaseURL,
+		"SUPATYPE_DB_SCHEMA":               cfg.SQLSchema,
+		"POSTGRES_PASSWORD":                cfg.PostgresPassword,
+		"STUDIO_ADMIN_ROLES":               cfg.StudioAdminRoles,
+		"LOG_LEVEL":                        cfg.LogLevel,
 	} {
 		if got != env[name] {
 			t.Errorf("%s: got %q, want %q", name, got, env[name])
@@ -141,6 +143,24 @@ func TestSQLDSNPrefersTheSupatypeVariable(t *testing.T) {
 
 	if got := (&Config{}).SQLDSN(); got != "" {
 		t.Errorf("no DSN configured should be empty, got %q", got)
+	}
+}
+
+// The editor DSN wins when set, and a deployment that never set it keeps running
+// the editor on the SQL DSN it already had.
+func TestSQLEditorDSNFallsBackToTheSQLDSN(t *testing.T) {
+	both := &Config{SQLEditorDatabaseURL: " postgres://editor/db ", SQLDatabaseURL: "postgres://admin/db"}
+	if got := both.SQLEditorDSN(); got != "postgres://editor/db" {
+		t.Errorf("SUPATYPE_SQL_EDITOR_DATABASE_URL should win, trimmed, got %q", got)
+	}
+
+	fallback := &Config{SQLEditorDatabaseURL: "  ", SQLDatabaseURL: "postgres://admin/db"}
+	if got := fallback.SQLEditorDSN(); got != "postgres://admin/db" {
+		t.Errorf("should fall back to SQLDSN, got %q", got)
+	}
+
+	if got := (&Config{DatabaseURL: "postgres://app/db"}).SQLEditorDSN(); got != "postgres://app/db" {
+		t.Errorf("should fall all the way back to DATABASE_URL, got %q", got)
 	}
 }
 

@@ -111,6 +111,13 @@ func AllowsRequest(perms StudioPermissions, method, path string) bool {
 	case under(path, "/sql"):
 		return perms.SQLEditor
 
+	// The allow-listed admin operations that need a superuser connection (SQ2):
+	// enabling an extension, and RLS or policy changes on the auth and storage
+	// tables. The same roles that hold the SQL editor reach them, and each is
+	// recorded as elevated.
+	case under(path, "/studio-admin"):
+		return perms.SQLEditor
+
 	// The catalogue's introspect query alone: the tables and columns behind Data
 	// Explorer and the schema screens, for every role that may read rows. Editors
 	// use those screens without holding schema view.

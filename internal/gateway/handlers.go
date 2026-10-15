@@ -197,6 +197,9 @@ func restProxyHandler(d *Deps) http.Handler {
 // grants apply. The gateway never substitutes its service role key here; doing
 // so ran every GraphQL query with row security bypassed, whoever sent it.
 func buildGraphQL(d *Deps) http.Handler {
+	if d.Config.GraphQLDisabled {
+		return http.HandlerFunc(graphQLUnavailable)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		u, err := url.Parse(GraphQLUpstream(d.ManifestFor(req), d.Config))
 		if err != nil {
@@ -204,6 +207,19 @@ func buildGraphQL(d *Deps) http.Handler {
 			return
 		}
 		upstreamProxy(u).ServeHTTP(w, rewriteToGraphQLRPC(req))
+	})
+}
+
+// graphQLUnavailable answers /graphql/v1 on a stack whose Postgres has no
+// pg_graphql. Forwarding there got an empty 502 or PostgREST's "could not
+// find the function graphql_public.graphql", which read like a fault in the
+// stack or the caller's query rather than a stack without GraphQL.
+func graphQLUnavailable(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotImplemented)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code":    "graphql_unavailable",
+		"message": "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1.",
 	})
 }
 

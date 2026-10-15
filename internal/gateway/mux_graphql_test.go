@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/supatype/server/internal/config"
@@ -94,5 +97,50 @@ func assertGraphQLUpstream(t *testing.T, name string, got, want graphQLUpstreamS
 		if v == "Bearer service-role-jwt" || v == "service-role-jwt" {
 			t.Errorf("%s: the gateway sent its own service role key upstream: %q", name, v)
 		}
+	}
+}
+
+// TestBuildOuterMux_GraphQLDisabledAnswersWhy covers a stack whose Postgres has
+// no pg_graphql, which is every native `supatype dev` stack. The mount used to
+// forward regardless, and the caller got an empty 502 (nothing on the default
+// GraphQL upstream) or PostgREST's "could not find the function
+// graphql_public.graphql", neither of which says GraphQL is not there. With GraphQL switched off, the gateway answers itself: 501, a stable
+// code, a message naming the way out, and nothing sent upstream.
+func TestBuildOuterMux_GraphQLDisabledAnswersWhy(t *testing.T) {
+	var called atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called.Store(true)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := &config.Config{Mode: "dev", PostgRESTURL: upstream.URL, GraphQLDisabled: true}
+	manifest := &proxy.RouteManifest{Schema: "public", PostgRESTURL: upstream.URL}
+	mf := func(*http.Request) *proxy.RouteManifest { return manifest }
+	hp := func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") }
+	handler := buildOuterMux(cfg, mf, hp, http.NotFoundHandler(), nil, "test", nil, nil)
+
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(method, "/graphql/v1", nil))
+		if rr.Code != http.StatusNotImplemented {
+			t.Fatalf("%s: status %d, want 501", method, rr.Code)
+		}
+		if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("%s: Content-Type %q, want application/json", method, ct)
+		}
+		var body struct{ Code, Message string }
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: body is not JSON: %v: %s", method, err, rr.Body.String())
+		}
+		if body.Code != "graphql_unavailable" {
+			t.Errorf("%s: code %q, want graphql_unavailable", method, body.Code)
+		}
+		if !strings.Contains(body.Message, "Docker provider") {
+			t.Errorf("%s: message does not name the way out: %q", method, body.Message)
+		}
+	}
+	if called.Load() {
+		t.Error("the request reached PostgREST although GraphQL is switched off")
 	}
 }

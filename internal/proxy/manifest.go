@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
@@ -351,9 +353,112 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 // one — which needs an exhausted inotify budget to provoke — can be exercised.
 var newWatcher = fsnotify.NewWatcher
 
-// Watch starts a goroutine that calls fn whenever the manifest file at path
-// changes. The goroutine exits when the watcher is closed.
+// manifestPollInterval is the backstop cadence for noticing a change the OS
+// never reported.
+//
+// fsnotify does not deliver for a host write through a Docker bind mount, which
+// is how every self-host stack on Docker Desktop runs. Verified on a live stack:
+// rewriting the manifest on the host updated the file's mtime inside the
+// container and produced no event at all. So `supatype push` rewrote the hook
+// map, the validator map and the cache ceiling, and the server went on serving
+// the previous ones until somebody restarted it.
+//
+// Two seconds, weighed against what it costs: one stat of one file. The
+// alternative is a developer editing a hook, pushing, and watching nothing
+// happen with nothing anywhere to explain it.
+const manifestPollInterval = 2 * time.Second
+
+// fileStamp identifies a version of the file without reading it.
+type fileStamp struct {
+	mod  time.Time
+	size int64
+}
+
+func (s fileStamp) same(other fileStamp) bool {
+	// ModTime is compared with Equal rather than ==, because == on time.Time
+	// also compares the monotonic reading and the location pointer.
+	return s.size == other.size && s.mod.Equal(other.mod)
+}
+
+func statStamp(path string) (fileStamp, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}, err
+	}
+	return fileStamp{mod: info.ModTime(), size: info.Size()}, nil
+}
+
+// dedupe guards fn with the file's stamp, so the event path and the poll path
+// cannot both apply the same version of the manifest.
+//
+// Applying twice would be harmless but not free: each apply flushes the tenant
+// manifest cache and logs a reload, so a platform where both paths work would
+// log every push twice and invite exactly the wrong conclusion about which one
+// is doing the work.
+func dedupe(path string, fn func(*RouteManifest)) func(*RouteManifest) {
+	var mu sync.Mutex
+	var last fileStamp
+	return func(m *RouteManifest) {
+		s, err := statStamp(path)
+		if err == nil {
+			mu.Lock()
+			seen := s.same(last)
+			if !seen {
+				last = s
+			}
+			mu.Unlock()
+			if seen {
+				return
+			}
+		}
+		fn(m)
+	}
+}
+
+// pollLoop reloads the manifest when its stamp changes, until done is closed.
+//
+// A nil done runs for the life of the process, which is what Watch passes; the
+// channel exists so a test can stop it rather than leak a ticker per case.
+func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}) {
+	// Seeded from the file as it is now, because the caller has already loaded
+	// this version. Without it the first tick would re-apply what is live.
+	last, _ := statStamp(path)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+
+		s, err := statStamp(path)
+		if err != nil || s.same(last) {
+			continue
+		}
+		m, err := Load(path)
+		if err != nil {
+			// Half-written, the ordinary case: an editor or a deploy writes in
+			// two syscalls. The stamp is deliberately not recorded, so the next
+			// tick retries rather than accepting a broken read as current.
+			continue
+		}
+		last = s
+		fn(m)
+	}
+}
+
+// Watch calls fn whenever the manifest file at path changes.
+//
+// Two independent paths, because one of them does not work everywhere: fsnotify
+// for latency where the OS reports writes, and a poll as the backstop where it
+// does not. The returned error is fsnotify's alone; polling is running either
+// way, so a watch is never wholly absent.
 func Watch(path string, fn func(*RouteManifest)) error {
+	guarded := dedupe(path, fn)
+	go pollLoop(path, manifestPollInterval, guarded, nil)
+
 	watcher, err := newWatcher()
 	if err != nil {
 		return err
@@ -369,7 +474,7 @@ func Watch(path string, fn func(*RouteManifest)) error {
 
 	go func() {
 		defer watcher.Close() //nolint:errcheck
-		watchLoop(watcher.Events, watcher.Errors, path, fn)
+		watchLoop(watcher.Events, watcher.Errors, path, guarded)
 	}()
 	return nil
 }

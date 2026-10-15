@@ -115,7 +115,7 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_MANIFEST_PATH`
 - `SUPATYPE_POSTGREST_URL`
 - `SUPATYPE_GRAPHQL_URL` (unset: PostgREST's URL, where pg_graphql is an RPC)
-- `SUPATYPE_GRAPHQL_DISABLED` (answer `/graphql/v1` with 501 `graphql_unavailable`; native `supatype dev` sets it)
+- `SUPATYPE_GRAPHQL_DISABLED` (answer `/graphql/v1` with 501 `graphql_unavailable`; native `supatype dev` sets it. `/health` and `/health/ready` then report `components.graphql.status` as `disabled`, do not probe it, and do not count it toward readiness)
 - `SUPATYPE_STORAGE_URL`
 - `SUPATYPE_FUNCTIONS_WORKER_URL`
 - `SUPATYPE_DENO_PATH`

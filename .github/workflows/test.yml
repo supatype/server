@@ -49,6 +49,27 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # Studio's admin routes (SQ2) enable extensions and write RLS and policies
+      # on auth and storage through SECURITY DEFINER helpers that only the
+      # Supatype image carries, so plain Postgres cannot stand in for it. Without
+      # this database the internal/sqlrunner admin tests skip and the package
+      # cannot reach its pin.
+      #
+      # The probe goes over TCP on purpose: the image initialises against a
+      # temporary server on the Unix socket only, so a socket probe would report
+      # ready while its migrations are still running.
+      secsql:
+        image: supatype/postgres:develop
+        env:
+          POSTGRES_PASSWORD: root
+          POSTGRES_DB: supatype
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U supatype_admin -d supatype"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 36
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -100,6 +121,8 @@ jobs:
           # Same reason: without an address the keyspace client's own tests skip
           # and the package cannot reach its floor.
           SUPATYPE_TEST_KEYSPACE_ADDR: 127.0.0.1:6379
+          # The image's superuser, as the gateway's admin connection is.
+          SUPATYPE_SECSQL_DSN: postgresql://supatype_admin:root@localhost:5433/supatype
         run: make test
       - name: Cleanup coverage
         run: |

@@ -20,7 +20,7 @@ import (
 //
 // A fake proxy cannot show either. It accepts whatever body it is given, so a substitution that
 // PostgREST would reject as malformed looks like a pass, and a `previous()` fetch that builds a URL
-// PostgREST answers 400 to looks like an empty result set — a hook validating against "no prior rows"
+// PostgREST answers 400 to looks like an empty result set, so a hook validating against "no prior rows"
 // then passes every write.
 //
 // Run with a real stack:
@@ -63,12 +63,8 @@ func liveServer(t *testing.T, rest string, hooks map[string]TableHooksView, scri
 	if err != nil {
 		t.Fatalf("parsing the PostgREST URL: %v", err)
 	}
-	proxy := httputil.NewSingleHostReverseProxy(upstream)
-	director := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		director(req)
-		req.Host = upstream.Host
-	}
+	// SetURL also points the Host header at PostgREST, which is what this needs.
+	proxy := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) { pr.SetURL(upstream) }}
 
 	callback := NewCallback(
 		func(*http.Request) string { return rest },
@@ -88,11 +84,11 @@ func liveServer(t *testing.T, rest string, hooks map[string]TableHooksView, scri
 	})
 
 	mux := http.NewServeMux()
-	// chi's Mount strips the pattern, which is how production mounts this — the handler reads the token
+	// chi's Mount strips the pattern, which is how production mounts this: the handler reads the token
 	// from a mount-relative path, so an unstripped mount makes every token look forged.
 	mux.Handle(PreviousPathPrefix,
 		http.StripPrefix(strings.TrimSuffix(PreviousPathPrefix, "/"), callback.Handler()))
-	// Mounted exactly as production mounts it — under StripPrefix("/rest/v1"), because the matching
+	// Mounted exactly as production mounts it, under StripPrefix("/rest/v1"), because the matching
 	// rules read the table from a /rest/v1-relative path. Mounting it unstripped makes every table look
 	// like "rest", so no hook ever fires and every write passes unvalidated: the failure this whole file
 	// exists to catch, and it is invisible against a fake upstream.
@@ -105,7 +101,7 @@ func liveServer(t *testing.T, rest string, hooks map[string]TableHooksView, scri
 // resetFixture empties the table and seeds one row, returning its id.
 //
 // Per test, because the database outlives the run: a row left by a previous failure would otherwise
-// satisfy — or contradict — a later assertion about what is stored, and serial ids make "id=eq.1"
+// satisfy (or contradict) a later assertion about what is stored, and serial ids make "id=eq.1"
 // wrong the moment anything else has inserted.
 func resetFixture(t *testing.T, rest string) int {
 	t.Helper()
@@ -238,7 +234,7 @@ func TestLivePreviousReadsTheRowsAsStored(t *testing.T) {
 	_, rest := liveStack(t)
 	id := resetFixture(t, rest)
 
-	// Seeded by the fixture as "[locked] original" — a hook that guards on prior state.
+	// Seeded by the fixture as "[locked] original", for a hook that guards on prior state.
 	var fetched struct {
 		Rows      []map[string]any `json:"rows"`
 		Truncated bool             `json:"truncated"`

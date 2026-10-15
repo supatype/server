@@ -44,9 +44,12 @@ type fakeTx struct {
 	rows      *fakeRows
 	// reassignErr is returned by the Exec that hands objects to the owner.
 	reassignErr error
+	// queryRowErr is what the row QueryRow returns fails to Scan with.
+	queryRowErr error
 
 	execs      []execCall
 	querySQL   string
+	queryArgs  []any
 	committed  bool
 	rolledBack bool
 	// calls is every statement and the commit, in the order they reached the
@@ -69,8 +72,9 @@ func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 	return pgconn.CommandTag{}, t.execErr
 }
 
-func (t *fakeTx) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, error) {
+func (t *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
 	t.querySQL = sql
+	t.queryArgs = args
 	t.calls = append(t.calls, sql)
 	if t.queryErr != nil {
 		return nil, t.queryErr
@@ -101,8 +105,23 @@ func (t *fakeTx) LargeObjects() pgx.LargeObjects                         { panic
 func (t *fakeTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
 	panic("not used")
 }
-func (t *fakeTx) QueryRow(context.Context, string, ...any) pgx.Row { panic("not used") }
-func (t *fakeTx) Conn() *pgx.Conn                                  { panic("not used") }
+func (t *fakeTx) Conn() *pgx.Conn { panic("not used") }
+
+// QueryRow answers the one single-row lookup this package makes, whether an
+// extension is one the image ships, with a row whose Scan fails with
+// queryRowErr. A lookup that succeeds is the live database's to answer, so
+// without queryRowErr set this is a test that reached it by mistake.
+func (t *fakeTx) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+	t.calls = append(t.calls, sql)
+	if t.queryRowErr == nil {
+		panic("not used")
+	}
+	return fakeRow{err: t.queryRowErr}
+}
+
+type fakeRow struct{ err error }
+
+func (r fakeRow) Scan(...any) error { return r.err }
 
 type fakeRows struct {
 	columns []string
@@ -156,4 +175,5 @@ var (
 	_ Pool     = (*fakePool)(nil)
 	_ pgx.Tx   = (*fakeTx)(nil)
 	_ pgx.Rows = (*fakeRows)(nil)
+	_ pgx.Row  = fakeRow{}
 )

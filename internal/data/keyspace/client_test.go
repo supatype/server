@@ -380,9 +380,9 @@ func TestEveryOperationReportsALostConnection(t *testing.T) {
 
 // An expiry the set cannot carry is refused before anything is written. One in
 // the past deletes the set on every backend, members already in it included.
-// One out of range is the server's call, and the two servers differ: Valkey
-// refuses a timestamp whose milliseconds overflow, pg_keyspace stores it and
-// reports a TTL nobody asked for. Either way the client is the one that knows.
+// One out of range is refused by Valkey and by pg_keyspace alike, as a
+// timestamp whose milliseconds overflow, but only after the SADD has run, so
+// the client is the one that has to know.
 func TestAddToExpiringSetRefusesAnExpiryTheSetCannotCarry(t *testing.T) {
 	c := connectedClient(t)
 	ctx := context.Background()

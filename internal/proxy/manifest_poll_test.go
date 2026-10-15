@@ -15,7 +15,7 @@ import (
 // event at all. `supatype push` rewrote the hook map, the validator map and the cache ceiling, and
 // the server served the previous ones until it was restarted.
 //
-// Driven through pollLoop directly rather than through Watch, because Watch also starts fsnotify
+// Driven through startPoll directly rather than through Watch, because Watch also starts fsnotify
 // and on a developer machine that works. A test that went through Watch would pass on the event
 // path and prove nothing about the one that had to be added.
 
@@ -32,7 +32,7 @@ func poll(t *testing.T, path string) (<-chan *RouteManifest, func()) {
 	t.Helper()
 	reloaded := make(chan *RouteManifest, 4)
 	done := make(chan struct{})
-	go pollLoop(path, 10*time.Millisecond, func(m *RouteManifest) { reloaded <- m }, done)
+	startPoll(path, 10*time.Millisecond, func(m *RouteManifest) { reloaded <- m }, done)
 	return reloaded, func() { close(done) }
 }
 
@@ -105,7 +105,7 @@ func TestDedupeAppliesEachVersionOnce(t *testing.T) {
 	writePollManifest(t, path, "public")
 
 	var applied int
-	guarded := dedupe(path, func(*RouteManifest) { applied++ })
+	guarded := dedupe(func(*RouteManifest) { applied++ }, time.Minute)
 
 	m, err := Load(path)
 	if err != nil {
@@ -126,5 +126,64 @@ func TestDedupeAppliesEachVersionOnce(t *testing.T) {
 	guarded(next)
 	if applied != 2 {
 		t.Fatalf("a genuinely new version was dropped: applied %d times, want 2", applied)
+	}
+}
+
+func TestDedupeNeverDropsAWriteThatLandsDuringAnApply(t *testing.T) {
+	// A push can land between one path reading the manifest and the guard looking at the file.
+	// The guard must not record that newer write as applied while handing on the older content,
+	// or the next path to read the newer content is turned away and the server keeps the stale
+	// manifest until the file changes again.
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	writePollManifest(t, path, "first")
+	older, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	var live *RouteManifest
+	guarded := dedupe(func(m *RouteManifest) { live = m }, time.Minute)
+
+	writePollManifest(t, path, "second_push")
+	guarded(older)
+
+	newer, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	guarded(newer)
+
+	if live == nil || live.Schema != "second_push" {
+		got := "<nothing>"
+		if live != nil {
+			got = live.Schema
+		}
+		t.Fatalf("serving %q after the second push was read and handed on", got)
+	}
+}
+
+func TestDedupeReappliesAnIdenticalPushOutsideTheWindow(t *testing.T) {
+	// The window only absorbs the two paths reporting one push. A re-push of the same content
+	// later is applied again, because on a managed pod that is what retries a keyspace merge that
+	// failed the first time.
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	writePollManifest(t, path, "public")
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	var applied int
+	guarded := dedupe(func(*RouteManifest) { applied++ }, 20*time.Millisecond)
+	guarded(m)
+	guarded(m)
+	if applied != 1 {
+		t.Fatalf("applied %d times inside the window, want 1", applied)
+	}
+
+	time.Sleep(40 * time.Millisecond)
+	guarded(m)
+	if applied != 2 {
+		t.Fatalf("applied %d times after the window, want 2", applied)
 	}
 }

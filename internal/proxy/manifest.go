@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
@@ -84,13 +85,13 @@ type RouteManifest struct {
 
 	// Cache maps table name → what the schema permits caching, written by `supatype push`.
 	//
-	// **A ceiling, not a setting.** The runtime may narrow any of it — lower a TTL, switch a table
-	// off — and may never widen it. A table absent from this map cannot be cached by anyone, which
+	// **A ceiling, not a setting.** The runtime may narrow any of it (lower a TTL, switch a table
+	// off) and may never widen it. A table absent from this map cannot be cached by anyone, which
 	// is the default and the reason absence is meaningful rather than merely empty.
 	//
 	// It arrives on the manifest rather than in the AST snapshot because the schema engine
 	// re-serialises its own parsed struct when it writes that snapshot, and its platform
-	// annotations know only `access` and `searchFields` — an unrecognised key is dropped in
+	// annotations know only `access` and `searchFields`, so an unrecognised key is dropped in
 	// silence. Hooks above take this route for the same reason.
 	Cache map[string]TableCache `json:"cache,omitempty"`
 }
@@ -106,7 +107,7 @@ type TableCache struct {
 	Enabled *bool `json:"enabled,omitempty"`
 
 	// MaxTTL caps how long a response may be held, in seconds. The effective TTL is the smallest
-	// of this, the project's cache_max_ttl, and the client's max-age — every writer may only
+	// of this, the project's cache_max_ttl, and the client's max-age. Every writer may only
 	// shorten it.
 	MaxTTL *int `json:"maxTtl,omitempty"`
 
@@ -114,7 +115,7 @@ type TableCache struct {
 	//
 	// `supatype push` refuses this on a table whose read rule varies by caller, which is where the
 	// check belongs: the model has the rule and the setting in one object. The server still makes
-	// its own runtime decision from the access rules — this only says the schema allows it.
+	// its own runtime decision from the access rules; this only says the schema allows it.
 	Public *bool `json:"public,omitempty"`
 
 	// Rows permits the Mode B row cache on primary-key reads.
@@ -141,7 +142,7 @@ type HookConfig struct {
 	// edge-function ceiling, so a hung hook fails fast instead of holding an invocation slot.
 	TimeoutMs int `json:"timeout,omitempty"`
 
-	// OnUnavailable is what a hook that does not *answer* means — a timeout, a connection failure,
+	// OnUnavailable is what a hook that does not *answer* means: a timeout, a connection failure,
 	// a 5xx, an unparseable body. "reject" fails the write, "log" allows it.
 	//
 	// Deliberately not consulted for a 4xx: that is the hook working correctly and saying no, and it
@@ -152,8 +153,8 @@ type HookConfig struct {
 }
 
 // Load reads and parses the manifest at path.
-// Returns an empty manifest (not an error) if the file does not exist yet —
-// this is normal on first run before `supatype push` has been called.
+// Returns an empty manifest (not an error) if the file does not exist yet.
+// That is normal on first run before `supatype push` has been called.
 func Load(path string) (*RouteManifest, error) {
 	data, err := readFileUnderParent(path)
 	if os.IsNotExist(err) {
@@ -202,7 +203,7 @@ func readFileUnderParent(path string) ([]byte, error) {
 // managed overlay: a tenant manifest that says nothing about the schema must
 // leave the layer below it alone. Defaulting here made every overlay claim
 // "public", so a tenant whose config set another schema had it silently reset
-// the moment it also had a manifest override — and every REST request then went
+// the moment it also had a manifest override, and every REST request then went
 // to the wrong schema. Load applies the default for the file, which is a whole
 // manifest rather than a layer.
 func ParseRouteManifestJSON(data []byte) (*RouteManifest, error) {
@@ -236,7 +237,7 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 	}
 	if len(m.Cache) > 0 {
 		// Copied for the same reason as the maps around it. The struct's own fields are pointers,
-		// but they are never written through after a load — only read — so copying the map is
+		// but they are never written through after a load, only read, so copying the map is
 		// enough to keep one tenant's reload away from another's in-flight request.
 		cm.Cache = make(map[string]TableCache, len(m.Cache))
 		for table, c := range m.Cache {
@@ -328,12 +329,12 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 		}
 	}
 	// Replaced wholesale rather than merged per table. A hook removed from the schema must stop
-	// firing, and a per-key merge would keep calling it — the overlay is the current truth about
+	// firing, and a per-key merge would keep calling it. The overlay is the current truth about
 	// which hooks exist.
 	if overlay.Hooks != nil {
 		base.Hooks = overlay.Hooks
 	}
-	// Validators, on the same terms as Hooks above, and missing until now — so on a managed pod,
+	// Validators, on the same terms as Hooks above, and missing until now. So on a managed pod,
 	// where the overlay is `tenant:{ref}:manifest` and carries what `supatype push` wrote, a
 	// schema's validators never took effect at all. Both maps come from the same push for the same
 	// reason; one was honoured and the other silently discarded, which is the quiet half: the
@@ -343,14 +344,14 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	}
 	// Wholesale for the same reason, and more sharply: Cache is a ceiling. A table dropped from the
 	// schema's declaration must stop being cacheable at once, and a per-table merge would leave the
-	// old permission standing — the one direction the ceiling is not allowed to drift.
+	// old permission standing, which is the one direction the ceiling is not allowed to drift.
 	if overlay.Cache != nil {
 		base.Cache = overlay.Cache
 	}
 }
 
 // newWatcher is the fsnotify constructor, indirected so the failure to create
-// one — which needs an exhausted inotify budget to provoke — can be exercised.
+// one (which needs an exhausted inotify budget to provoke) can be exercised.
 var newWatcher = fsnotify.NewWatcher
 
 // manifestPollInterval is the backstop cadence for noticing a change the OS
@@ -388,42 +389,54 @@ func statStamp(path string) (fileStamp, error) {
 	return fileStamp{mod: info.ModTime(), size: info.Size()}, nil
 }
 
-// dedupe guards fn with the file's stamp, so the event path and the poll path
-// cannot both apply the same version of the manifest.
+// dedupe guards fn with the content last handed to it, so the event path and
+// the poll path cannot both apply the same version of the manifest.
 //
 // Applying twice would be harmless but not free: each apply flushes the tenant
 // manifest cache and logs a reload, so a platform where both paths work would
 // log every push twice and invite exactly the wrong conclusion about which one
 // is doing the work.
-func dedupe(path string, fn func(*RouteManifest)) func(*RouteManifest) {
+//
+// The guard compares content, not the file's stamp. A stamp taken here
+// describes the file as it is now, which can already be a newer push than the
+// content being applied; recording it would turn that newer content away when
+// it arrived and keep the stale manifest live. The lock is held across fn so
+// the two paths never apply at the same time.
+//
+// Identical content is only skipped within window of the last apply, which
+// covers the two paths reporting one push. A deliberate re-push after that is
+// applied again, so it still retries a keyspace merge that failed last time.
+func dedupe(fn func(*RouteManifest), window time.Duration) func(*RouteManifest) {
 	var mu sync.Mutex
-	var last fileStamp
+	var last *RouteManifest
+	var lastAt time.Time
 	return func(m *RouteManifest) {
-		s, err := statStamp(path)
-		if err == nil {
-			mu.Lock()
-			seen := s.same(last)
-			if !seen {
-				last = s
-			}
-			mu.Unlock()
-			if seen {
-				return
-			}
+		mu.Lock()
+		defer mu.Unlock()
+		if last != nil && time.Since(lastAt) < window && reflect.DeepEqual(last, m) {
+			return
 		}
+		last, lastAt = m, time.Now()
 		fn(m)
 	}
 }
 
-// pollLoop reloads the manifest when its stamp changes, until done is closed.
+// startPoll reloads the manifest when its stamp changes, until done is closed.
+//
+// The stamp is seeded before startPoll returns, from the file as it is now,
+// because the caller has already loaded this version. Without it the first
+// tick would re-apply what is live; seeded inside the goroutine instead, a
+// write landing before the goroutine ran would become the seed and never be
+// applied.
 //
 // A nil done runs for the life of the process, which is what Watch passes; the
 // channel exists so a test can stop it rather than leak a ticker per case.
-func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}) {
-	// Seeded from the file as it is now, because the caller has already loaded
-	// this version. Without it the first tick would re-apply what is live.
-	last, _ := statStamp(path)
+func startPoll(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}) {
+	seed, _ := statStamp(path)
+	go pollLoop(path, interval, fn, done, seed)
+}
 
+func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}, last fileStamp) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -456,8 +469,8 @@ func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done
 // does not. The returned error is fsnotify's alone; polling is running either
 // way, so a watch is never wholly absent.
 func Watch(path string, fn func(*RouteManifest)) error {
-	guarded := dedupe(path, fn)
-	go pollLoop(path, manifestPollInterval, guarded, nil)
+	guarded := dedupe(fn, 2*manifestPollInterval)
+	startPoll(path, manifestPollInterval, guarded, nil)
 
 	watcher, err := newWatcher()
 	if err != nil {

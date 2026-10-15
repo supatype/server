@@ -208,7 +208,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	}
 
 	if watchErr := proxy.Watch(srvCfg.ManifestPath, live.ReloadFrom); watchErr != nil {
-		logrus.WithError(watchErr).Debug("serve: manifest watch not started")
+		logrus.WithError(watchErr).Debug("serve: manifest file events unavailable, polling for changes instead")
 	}
 
 	// Start Deno edge functions subprocess when no external worker URL is configured.

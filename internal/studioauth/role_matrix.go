@@ -53,10 +53,9 @@ func permissionsFromMatrix(m roleMatrix, role string) (StudioPermissions, error)
 	for name, holders := range m.Permissions {
 		flags[name] = slices.Contains(holders, role)
 	}
-	encoded, err := json.Marshal(flags)
-	if err != nil {
-		return StudioPermissions{}, err
-	}
+	// A map from strings to bools has no value json cannot encode, so Marshal
+	// has no failure to report here.
+	encoded, _ := json.Marshal(flags)
 	var perms StudioPermissions
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()

@@ -216,3 +216,37 @@ func TestProxyJudgesTheRoutedPath(t *testing.T) {
 		t.Fatalf("an escaped prefix must be judged as routed, got %d at %q", code, landed)
 	}
 }
+
+// Served on its own rather than under a chi mount, the proxy has no route
+// context to read the routed path from, and must judge the escaped form the
+// router will match rather than the decoded one.
+func TestProxyServedWithoutAMountJudgesTheEscapedPath(t *testing.T) {
+	token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
+	cfg := Config{
+		JWTSecret:      testSecret,
+		ServiceRoleKey: "service-role-key",
+		AdminRoles:     DefaultAdminRoles,
+		StudioRole:     func(string) (string, bool) { return "editor", true },
+	}
+	landed := ""
+	inner := chi.NewRouter()
+	inner.Mount("/rest/v1", http.HandlerFunc(func(http.ResponseWriter, *http.Request) { landed = "rest" }))
+	inner.Mount("/", http.HandlerFunc(func(http.ResponseWriter, *http.Request) { landed = "app" }))
+	proxy := ProxyHandler(inner, cfg)
+
+	call := func(target string) int {
+		landed = ""
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		proxy.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if code := call("/rest/v1/posts"); code != http.StatusOK || landed != "rest" {
+		t.Fatalf("an editor reading content rows: got %d at %q", code, landed)
+	}
+	if code := call("/%72est/v1/posts"); code != http.StatusForbidden || landed != "" {
+		t.Fatalf("an escaped prefix must be judged as routed, got %d at %q", code, landed)
+	}
+}

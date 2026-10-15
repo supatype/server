@@ -241,8 +241,8 @@ func (c *conn) AddToExpiringSet(ctx context.Context, key, member string, expireA
 }
 
 // maxExpireAtUnix is the latest EXPIREAT, in seconds, whose milliseconds still
-// fit in an int64. Valkey refuses anything later; pg_keyspace stores it and
-// reports a TTL nobody asked for.
+// fit in an int64. Valkey and pg_keyspace both refuse anything later with
+// "invalid expire time".
 const maxExpireAtUnix int64 = math.MaxInt64 / 1000
 
 // CheckExpireAt refuses an expiry a set cannot carry. One at or before now

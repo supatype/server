@@ -36,7 +36,7 @@ func TestActingModeDefaults(t *testing.T) {
 	}
 }
 
-// Dropping privilege needs no permission — that is what makes the P3 toggle
+// Dropping privilege needs no permission. That is what makes the P3 toggle
 // possible for an admin who wants to see what their users see.
 func TestAnyRoleMayActAsSelf(t *testing.T) {
 	for _, role := range KnownStudioRoles() {
@@ -171,4 +171,41 @@ func TestVerifyReportsActingMode(t *testing.T) {
 	check("admin", ModeElevated, true)
 	check("developer", ModeSelf, false)
 	check("editor", ModeSelf, false)
+}
+
+// Verify reports the mode the caller's requests will act in. A mode the caller
+// may not have, or one that does not exist, is reported as the caller's
+// default rather than echoed back, so Studio's switch never shows a mode its
+// requests will not get.
+func TestVerifyReportsTheDefaultForAModeTheCallerCannotHave(t *testing.T) {
+	token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
+	for _, tc := range []struct{ role, asked, want string }{
+		{"admin", "root", ModeElevated},
+		{"admin", ModeMediated, ModeElevated},
+		{"developer", ModeElevated, ModeSelf},
+		{"developer", "root", ModeSelf},
+		{"admin", ModeSelf, ModeSelf},
+	} {
+		role := tc.role
+		cfg := Config{
+			JWTSecret:  testSecret,
+			AdminRoles: DefaultAdminRoles,
+			StudioRole: func(string) (string, bool) { return role, true },
+		}
+		req := httptest.NewRequest(http.MethodGet, "/studio/auth/verify", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set(ActingModeHeader, tc.asked)
+		rec := httptest.NewRecorder()
+		VerifyHandler(cfg).ServeHTTP(rec, req)
+
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.Mode != tc.want {
+			t.Errorf("%s asking for %q: reported %q, want %q", tc.role, tc.asked, body.Mode, tc.want)
+		}
+	}
 }

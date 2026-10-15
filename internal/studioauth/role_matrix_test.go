@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -116,5 +117,33 @@ func TestViewerIsReadOnlyAndSelf(t *testing.T) {
 	req.Header.Set(ActingModeHeader, ModeElevated)
 	if _, ok := resolveActingMode(req, viewer); ok {
 		t.Fatal("viewer must not elevate")
+	}
+}
+
+// A role document this server cannot honour exactly stops it at start, naming
+// the file and what is wrong, rather than serving a role table that grants less,
+// or more, than the other hosts.
+func TestARoleDocumentThatCannotBeHonouredStopsTheServer(t *testing.T) {
+	for name, tc := range map[string]struct{ doc, says string }{
+		"does not parse": {`{"roles":`, "role_matrix.json"},
+		"a self-host role outside the role set": {
+			`{"roles":["admin"],"selfHostRoles":["admin","auditor"],"permissions":{}}`,
+			`self-host role "auditor" is not in the role set`,
+		},
+		"a permission with no flag": {
+			`{"roles":["admin"],"selfHostRoles":["admin"],"permissions":{"launchMissiles":["admin"]}}`,
+			"permission without a flag",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				got, _ := recover().(string)
+				if !strings.Contains(got, "role_matrix.json") || !strings.Contains(got, tc.says) {
+					t.Fatalf("panic = %q, want one naming role_matrix.json and saying %q", got, tc.says)
+				}
+			}()
+			mustLoadRoleMatrix([]byte(tc.doc))
+			t.Fatal("the document was accepted")
+		})
 	}
 }

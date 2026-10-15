@@ -15,7 +15,7 @@ import (
 // event at all. `supatype push` rewrote the hook map, the validator map and the cache ceiling, and
 // the server served the previous ones until it was restarted.
 //
-// Driven through startPoll directly rather than through Watch, because Watch also starts fsnotify
+// Driven through pollLoop directly rather than through Watch, because Watch also starts fsnotify
 // and on a developer machine that works. A test that went through Watch would pass on the event
 // path and prove nothing about the one that had to be added.
 
@@ -32,7 +32,8 @@ func poll(t *testing.T, path string) (<-chan *RouteManifest, func()) {
 	t.Helper()
 	reloaded := make(chan *RouteManifest, 4)
 	done := make(chan struct{})
-	startPoll(path, 10*time.Millisecond, func(m *RouteManifest) { reloaded <- m }, done)
+	seed, _ := statStamp(path)
+	go pollLoop(path, 10*time.Millisecond, func(m *RouteManifest) { reloaded <- m }, done, seed)
 	return reloaded, func() { close(done) }
 }
 
@@ -185,5 +186,37 @@ func TestDedupeReappliesAnIdenticalPushOutsideTheWindow(t *testing.T) {
 	guarded(m)
 	if applied != 2 {
 		t.Fatalf("applied %d times after the window, want 2", applied)
+	}
+}
+
+func TestWatchSeesAWriteBetweenTheStartupLoadAndWatch(t *testing.T) {
+	// The server loads the manifest, then does other startup work, then calls Watch. A push that
+	// lands in that gap is newer than what is live, and neither path can report it: fsnotify was
+	// not watching yet, and a poll seeded from the file as Watch found it takes the new version as
+	// its baseline. The server would serve the startup manifest until the next push.
+	//
+	// Through Watch rather than pollLoop: the event path cannot rescue this case, since the write
+	// is over before fsnotify starts, so only the poll's baseline decides the outcome.
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	writePollManifest(t, path, "public")
+
+	_, loaded, err := LoadStamped(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	writePollManifest(t, path, "pushed_during_startup")
+
+	reloaded := make(chan *RouteManifest, 4)
+	if err := Watch(path, loaded, func(m *RouteManifest) { reloaded <- m }); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	select {
+	case m := <-reloaded:
+		if m.Schema != "pushed_during_startup" {
+			t.Fatalf("reloaded the wrong content: %q", m.Schema)
+		}
+	case <-time.After(3 * manifestPollInterval):
+		t.Fatal("a write between the startup load and Watch was never applied")
 	}
 }

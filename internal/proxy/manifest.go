@@ -369,24 +369,39 @@ var newWatcher = fsnotify.NewWatcher
 // happen with nothing anywhere to explain it.
 const manifestPollInterval = 2 * time.Second
 
-// fileStamp identifies a version of the file without reading it.
-type fileStamp struct {
+// FileStamp identifies a version of the manifest file without reading it. The
+// zero value stands for a file that did not exist.
+type FileStamp struct {
 	mod  time.Time
 	size int64
 }
 
-func (s fileStamp) same(other fileStamp) bool {
+func (s FileStamp) same(other FileStamp) bool {
 	// ModTime is compared with Equal rather than ==, because == on time.Time
 	// also compares the monotonic reading and the location pointer.
 	return s.size == other.size && s.mod.Equal(other.mod)
 }
 
-func statStamp(path string) (fileStamp, error) {
+func statStamp(path string) (FileStamp, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return fileStamp{}, err
+		return FileStamp{}, err
 	}
-	return fileStamp{mod: info.ModTime(), size: info.Size()}, nil
+	return FileStamp{mod: info.ModTime(), size: info.Size()}, nil
+}
+
+// LoadStamped is Load plus the stamp of the version it read, for handing to
+// Watch so the watch starts from what is live rather than from the file as it
+// is by the time Watch runs.
+//
+// The stamp is taken before the read. A write landing between the two leaves
+// newer content behind an older stamp, which the poll then applies once more:
+// harmless. Taken after the read, the same write would be stamped as loaded
+// and never applied.
+func LoadStamped(path string) (*RouteManifest, FileStamp, error) {
+	stamp, _ := statStamp(path)
+	m, err := Load(path)
+	return m, stamp, err
 }
 
 // dedupe guards fn with the content last handed to it, so the event path and
@@ -421,22 +436,17 @@ func dedupe(fn func(*RouteManifest), window time.Duration) func(*RouteManifest) 
 	}
 }
 
-// startPoll reloads the manifest when its stamp changes, until done is closed.
+// pollLoop reloads the manifest when its stamp moves off last, until done is
+// closed.
 //
-// The stamp is seeded before startPoll returns, from the file as it is now,
-// because the caller has already loaded this version. Without it the first
-// tick would re-apply what is live; seeded inside the goroutine instead, a
-// write landing before the goroutine ran would become the seed and never be
-// applied.
+// last is the stamp of the version the caller already has live, taken when it
+// was loaded. Seeding from the file as it is when polling starts instead would
+// take any write since that load as the baseline, and the server would serve
+// the stale manifest until the file changed again.
 //
 // A nil done runs for the life of the process, which is what Watch passes; the
 // channel exists so a test can stop it rather than leak a ticker per case.
-func startPoll(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}) {
-	seed, _ := statStamp(path)
-	go pollLoop(path, interval, fn, done, seed)
-}
-
-func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}, last fileStamp) {
+func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}, last FileStamp) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -468,9 +478,13 @@ func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done
 // for latency where the OS reports writes, and a poll as the backstop where it
 // does not. The returned error is fsnotify's alone; polling is running either
 // way, so a watch is never wholly absent.
-func Watch(path string, fn func(*RouteManifest)) error {
+//
+// loaded is the stamp LoadStamped returned for the manifest now live. The poll
+// measures change from it, so a write that lands between that load and this
+// call, before fsnotify is watching, is still applied.
+func Watch(path string, loaded FileStamp, fn func(*RouteManifest)) error {
 	guarded := dedupe(fn, 2*manifestPollInterval)
-	startPoll(path, manifestPollInterval, guarded, nil)
+	go pollLoop(path, manifestPollInterval, guarded, nil, loaded)
 
 	watcher, err := newWatcher()
 	if err != nil {

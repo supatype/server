@@ -89,8 +89,12 @@ func newWatchState(
 }
 
 func (rl *Reloader) Watch(ctx context.Context, fn ConfigFunc) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Cancelled with the watcher's own error as the cause. A watcher cancels
+	// before errgroup records what it returned, so the goroutines it stops can
+	// report first; returning context.Cause makes them report the same error
+	// rather than a context.Canceled that hides it.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 
 	ws := newWatchState(fn)
 	if rl.rc.NotifyEnabled || rl.rc.SignalEnabled {
@@ -99,25 +103,21 @@ func (rl *Reloader) Watch(ctx context.Context, fn ConfigFunc) error {
 
 	if rl.rc.NotifyEnabled {
 		ws.eg.Go(func() error {
-			defer func() {
-				if !rl.rc.SignalEnabled {
-					cancel()
-				}
-			}()
-
-			return rl.watchNotify(ctx, ws)
+			err := rl.watchNotify(ctx, ws)
+			if !rl.rc.SignalEnabled {
+				cancel(err)
+			}
+			return err
 		})
 	}
 
 	if rl.rc.SignalEnabled {
 		ws.eg.Go(func() error {
-			defer func() {
-				if rl.rc.NotifyEnabled {
-					cancel()
-				}
-			}()
-
-			return rl.watchSignal(ctx, ws)
+			err := rl.watchSignal(ctx, ws)
+			if rl.rc.NotifyEnabled {
+				cancel(err)
+			}
+			return err
 		})
 	}
 	return ws.eg.Wait()
@@ -134,7 +134,7 @@ func (rl *Reloader) watchReloads(
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 
 		case <-ws.ch:
 			lastUpdate = time.Now()
@@ -186,7 +186,7 @@ func (rl *Reloader) watchSignal(
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		case <-sigCh:
 			ws.notify()
 		}
@@ -236,7 +236,7 @@ func (rl *Reloader) watchNotify(
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 
 		case <-tr.C:
 

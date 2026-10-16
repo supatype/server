@@ -74,3 +74,25 @@ func staleNames(env Env) []string {
 	sort.Strings(found)
 	return found
 }
+
+// removed holds variables whose behaviour is gone entirely, with what to do instead.
+//
+// They warn rather than refuse. A renamed variable that is ignored silently turns a
+// feature off; ignoring one of these leaves the deployment more locked down than
+// it asked for, and the deployment says why in the log.
+var removed = map[string]string{
+	"STUDIO_OPEN_DEV": "Studio no longer has an unauthenticated mode; sign in with a Studio admin " +
+		"(supatype admin create-user) and unset it",
+}
+
+// RemovedWarnings returns one line per removed variable present in env, sorted.
+func RemovedWarnings(env Env) []string {
+	var found []string
+	for _, name := range env.Names() {
+		if advice, ok := removed[name]; ok {
+			found = append(found, name+" is no longer supported and is ignored: "+advice)
+		}
+	}
+	sort.Strings(found)
+	return found
+}

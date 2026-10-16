@@ -12,12 +12,12 @@ import (
 
 // MembersAPI serves the Studio membership assignment API:
 //
-//	GET    /admin/studio-roles              — the role catalogue and its matrix
-//	GET    /admin/studio-members            — current grants
-//	PATCH  /admin/studio-members/{userId}   — set a role  {"role": "editor"}
-//	DELETE /admin/studio-members/{userId}   — revoke
+//	GET    /admin/studio-roles              the role catalogue and its matrix
+//	GET    /admin/studio-members            current grants
+//	PATCH  /admin/studio-members/{userId}   set a role  {"role": "editor"}
+//	DELETE /admin/studio-members/{userId}   revoke
 //
-// Writes `_supatype.studio_members` and nothing else — never `app_metadata`,
+// Writes `_supatype.studio_members` and nothing else, never `app_metadata`,
 // which belongs to the developer's own application roles.
 //
 // Every request re-resolves the caller's capability from the database. A session
@@ -32,7 +32,7 @@ func MembersAPI(c Config) http.Handler {
 				utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 				return
 			}
-			// The catalogue is not sensitive, but it still requires admission —
+			// The catalogue is not sensitive, but it still requires admission:
 			// an unauthenticated caller has no business enumerating the model.
 			if _, ok := requireMemberAdmin(w, req, c, false); !ok {
 				return
@@ -106,7 +106,7 @@ func MembersAPI(c Config) http.Handler {
 				writeMemberError(w, err)
 				return
 			}
-			c.Members.Audit(req.Context(), acting, target, "revoke", "")
+			c.Members.Audit(req.Context(), acting, target, studiomembers.ActionRevoke, "")
 			utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{"userId": target, "role": nil})
 
 		default:
@@ -125,10 +125,6 @@ func requireMemberAdmin(
 	c Config,
 	mutating bool,
 ) (string, bool) {
-	if c.DevBypass() {
-		return "", true
-	}
-
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
 		status := http.StatusForbidden

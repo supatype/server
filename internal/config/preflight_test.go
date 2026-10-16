@@ -166,3 +166,19 @@ func TestEveryRetiredNameMapsToADifferentName(t *testing.T) {
 		}
 	}
 }
+
+// A removed variable is named in a warning but does not stop the service: ignoring it
+// is the locked-down direction.
+func TestRemovedVariablesWarnWithoutRefusing(t *testing.T) {
+	env := MapEnv{"STUDIO_OPEN_DEV": "1", "SUPATYPE_MODE": "dev"}
+	if err := Preflight(env); err != nil {
+		t.Fatalf("a removed variable must not refuse start: %v", err)
+	}
+	warnings := RemovedWarnings(env)
+	if len(warnings) != 1 || !strings.HasPrefix(warnings[0], "STUDIO_OPEN_DEV is no longer supported") {
+		t.Fatalf("warnings = %q", warnings)
+	}
+	if got := RemovedWarnings(MapEnv{"SUPATYPE_MODE": "dev"}); len(got) != 0 {
+		t.Errorf("a clean environment warned: %q", got)
+	}
+}

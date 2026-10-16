@@ -79,6 +79,9 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	if err := config.Preflight(config.OSEnv{}); err != nil {
 		return nil, nil, err
 	}
+	for _, warning := range config.RemovedWarnings(config.OSEnv{}) {
+		logrus.Warn(warning)
+	}
 
 	authCfg, err := conf.LoadGlobalFromEnv()
 	if err != nil {
@@ -157,13 +160,6 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	provider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	smsprovider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	security.SetHTTPTimeout(authCfg.Security.Captcha.Timeout)
-	// Every address this deployment answers on, joined from both configs. Studio
-	// refuses to open without authentication unless all of them are local.
-	srvCfg.PublicURLs = []string{
-		strings.TrimSpace(authCfg.API.ExternalURL),
-		strings.TrimSpace(authCfg.SiteURL),
-		strings.TrimSpace(srvCfg.SupatypeURL),
-	}
 	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
 		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
 	}

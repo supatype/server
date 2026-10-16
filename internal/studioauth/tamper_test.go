@@ -8,8 +8,6 @@ import (
 
 	"time"
 
-	"github.com/supatype/server/internal/config"
-
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -17,7 +15,7 @@ import (
 //
 // The rest of the suite checks that a well-formed caller gets the right answer. These check the
 // opposite direction: that a *malformed or forged* caller gets nothing. That distinction matters
-// because every bug found in this area so far has had the same shape — an operation reporting
+// because every bug found in this area so far has had the same shape: an operation reporting
 // success while doing nothing, or an identity being believed because nothing thought to doubt
 // it. A happy-path test cannot see either.
 //
@@ -78,7 +76,7 @@ func TestTamperedSignatureIsRefused(t *testing.T) {
 		t.Fatal("a token with a corrupted signature was allowed")
 	}
 	if res.Sub != "" {
-		t.Errorf("a refused token still yielded a subject %q — nothing downstream should see an identity", res.Sub)
+		t.Errorf("a refused token still yielded a subject %q; nothing downstream should see an identity", res.Sub)
 	}
 }
 
@@ -193,7 +191,7 @@ func TestTokenNotYetValidIsRefused(t *testing.T) {
 // ─── The privilege-escalation vector that matters most ───────────────────────
 
 // `user_metadata` is writable by the user through the auth service’s own update endpoint. `app_metadata`
-// is not. So the application role must never be read from user_metadata — otherwise any signed-in
+// is not. So the application role must never be read from user_metadata, or any signed-in
 // user can promote themselves by editing their own profile.
 func TestUserMetadataRoleIsIgnored(t *testing.T) {
 	claims := tamperClaims("ordinary-user")
@@ -205,7 +203,7 @@ func TestUserMetadataRoleIsIgnored(t *testing.T) {
 	)
 
 	if caller.AppRole == "admin" {
-		t.Fatal("a role in user_metadata was believed — a user can edit that field, so this is self-promotion")
+		t.Fatal("a role in user_metadata was believed: a user can edit that field, so this is self-promotion")
 	}
 	if caller.AppRole != "anon" {
 		t.Errorf("expected the default app role when only user_metadata names one, got %q", caller.AppRole)
@@ -241,76 +239,6 @@ func TestUserMetadataCannotOverrideAppMetadata(t *testing.T) {
 
 	if caller.AppRole != "viewer" {
 		t.Errorf("user_metadata overrode app_metadata: app role became %q", caller.AppRole)
-	}
-}
-
-// ─── The open-Studio bypass ──────────────────────────────────────────────────
-
-// DevBypass answers unauthenticated requests *as service_role*, which is full database access.
-// It therefore has to be impossible to enable by accident, and impossible to reach in production.
-func TestDevBypassNeedsBothSwitchesAndNeverInProduction(t *testing.T) {
-	cases := []struct {
-		name string
-		mode string
-		open bool
-		want bool
-	}{
-		{"nothing set", "", false, false},
-		{"dev mode alone", "dev", false, false},
-		{"open flag alone", "", true, false},
-		{"open flag in production", "production", true, false},
-		{"open flag in managed", "managed", true, false},
-		{"open flag in standalone", "standalone", true, false},
-		{"both, explicitly", "dev", true, true},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := Config{Mode: tc.mode, OpenDev: tc.open}
-			if got := c.DevBypass(); got != tc.want {
-				t.Errorf("DevBypass()=%v, want %v (mode=%q openDev=%v)", got, tc.want, tc.mode, tc.open)
-			}
-		})
-	}
-}
-
-// "maybe" is not consent. A switch this dangerous must read only explicit
-// affirmatives, and the check runs through the real configuration path rather
-// than a reimplementation of it: the value is parsed by config.Load exactly as a
-// deployment's environment would be, then carried into Studio's own config.
-func TestDevBypassIgnoresAmbiguousFlagValues(t *testing.T) {
-	for _, v := range []string{"maybe", "0", "false", "no", "off", " ", "yolo", "t", "TRUE-ish"} {
-		t.Run(v, func(t *testing.T) {
-			t.Setenv("SUPATYPE_MODE", "dev")
-			t.Setenv("STUDIO_OPEN_DEV", v)
-
-			loaded, err := config.Load()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if ConfigFromServer(loaded).DevBypass() {
-				t.Errorf("STUDIO_OPEN_DEV=%q enabled the open-Studio bypass", v)
-			}
-		})
-	}
-}
-
-// The affirmatives that must keep working, through the same real path.
-func TestDevBypassAcceptsExplicitAffirmatives(t *testing.T) {
-	for _, v := range []string{"1", "true", "TRUE", "yes", "on"} {
-		t.Run(v, func(t *testing.T) {
-			t.Setenv("SUPATYPE_MODE", "dev")
-			t.Setenv("STUDIO_OPEN_DEV", v)
-			t.Setenv("SUPATYPE_API_EXTERNAL_URL", "http://localhost:18473")
-
-			loaded, err := config.Load()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !ConfigFromServer(loaded).DevBypass() {
-				t.Errorf("STUDIO_OPEN_DEV=%q should enable the bypass on a local deployment", v)
-			}
-		})
 	}
 }
 

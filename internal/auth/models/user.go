@@ -16,6 +16,7 @@ import (
 	"github.com/supatype/server/internal/auth/crypto"
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/studiomembers"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -72,6 +73,11 @@ type User struct {
 	IsAnonymous bool       `json:"is_anonymous" db:"is_anonymous"`
 
 	DONTUSEINSTANCEID uuid.UUID `json:"-" db:"instance_id"`
+
+	// studioActorID is the caller DestroyBy records as the actor of the Studio
+	// membership removal BeforeDestroy audits. Not a column: a hook takes only
+	// the transaction, so the delete hands it over on the user.
+	studioActorID string `json:"-" db:"-"`
 }
 
 func NewUserWithPasswordHash(phone, email, passwordHash, aud string, userData map[string]interface{}) (*User, error) {
@@ -779,8 +785,14 @@ func FindUsersInAudience(tx *storage.Connection, aud string, pageParams *Paginat
 	} else {
 		err = q.All(&users)
 	}
+	if err != nil {
+		return nil, err
+	}
 
-	return users, err
+	if err := loadIdentitiesForUsers(tx, users); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 // IsDuplicatedEmail returns whether a user exists with a matching email and
@@ -913,8 +925,93 @@ func (u *User) RemoveUnconfirmedIdentities(tx *storage.Connection, identity *Ide
 	return nil
 }
 
-// SoftDeleteUser performs a soft deletion on the user by obfuscating and clearing certain fields
-func (u *User) SoftDeleteUser(tx *storage.Connection) error {
+// BeforeDestroy runs on every hard delete of a user, the admin API's and the
+// CLI's alike, so none of them leaves a Studio role behind.
+func (u *User) BeforeDestroy(tx *pop.Connection) error {
+	return u.deleteStudioMembership(tx, u.studioActorID)
+}
+
+// DestroyBy hard deletes the user, as tx.Destroy does, and records `actorID`
+// as the actor of the Studio membership removal it audits. A blank `actorID`
+// records none.
+func (u *User) DestroyBy(tx *storage.Connection, actorID string) error {
+	u.studioActorID = actorID
+	defer func() { u.studioActorID = "" }()
+	return tx.Destroy(u)
+}
+
+// deleteStudioMembership removes the user's row from `_supatype.studio_members`,
+// so a deleted user does not keep a Studio role, and audits the removal in the
+// members API's audit shape with `actorID` as its actor. Like a revoke, it is
+// refused for the project's last Studio admin, through the members API's own
+// guard, since deleting them would leave nobody able to grant access.
+//
+// The tables belong to the schema engine and exist only once a project has been
+// pushed, so a database without them has nothing to remove.
+func (u *User) deleteStudioMembership(tx *pop.Connection, actorID string) error {
+	var tables struct {
+		Members bool `db:"members"`
+		Audit   bool `db:"audit"`
+	}
+	if err := tx.RawQuery(
+		`SELECT to_regclass('_supatype.studio_members') IS NOT NULL AS members,
+		        to_regclass('_supatype.studio_audit') IS NOT NULL AS audit`).First(&tables); err != nil {
+		return errors.Wrap(err, "error checking for Studio memberships")
+	}
+	if !tables.Members {
+		return nil
+	}
+	if err := u.guardLastStudioAdmin(tx); err != nil {
+		return err
+	}
+
+	var removed []struct {
+		Role string `db:"role"`
+	}
+	if err := tx.RawQuery(
+		`DELETE FROM _supatype.studio_members WHERE user_id = ? RETURNING role`, u.ID).All(&removed); err != nil {
+		return errors.Wrap(err, "error deleting Studio membership")
+	}
+	if !tables.Audit {
+		return nil
+	}
+	for _, member := range removed {
+		args := studiomembers.AuditArgs(actorID, u.ID.String(), studiomembers.ActionUserDeleted, member.Role)
+		if err := tx.RawQuery(studiomembers.AuditSQL, args...).Exec(); err != nil {
+			return errors.Wrap(err, "error auditing the Studio membership removal")
+		}
+	}
+	return nil
+}
+
+// guardLastStudioAdmin refuses to delete the user who is the project's last
+// Studio admin, with the members API's rule and its ErrLastAdmin.
+func (u *User) guardLastStudioAdmin(tx *pop.Connection) error {
+	var verdict struct {
+		TargetIsAdmin bool `db:"target_is_admin"`
+		AdminCount    int  `db:"admin_count"`
+	}
+	query, args := studiomembers.LastAdminQuery(u.ID.String())
+	if err := tx.RawQuery(query, args...).First(&verdict); err != nil {
+		return errors.Wrap(err, "error checking for the last Studio admin")
+	}
+	if err := studiomembers.CheckLastAdmin(verdict.TargetIsAdmin, verdict.AdminCount); err != nil {
+		return fmt.Errorf("cannot delete user %s: %w", u.ID, err)
+	}
+	return nil
+}
+
+// SoftDeleteUser performs a soft deletion on the user by obfuscating and
+// clearing certain fields. `actorID` is recorded as the actor of the Studio
+// membership removal it audits; a blank one records none.
+func (u *User) SoftDeleteUser(tx *storage.Connection, actorID string) error {
+	// A soft-deleted user can no longer sign in, so its Studio role grants
+	// nobody. First, so a refusal for the last Studio admin leaves the user as
+	// it found them.
+	if err := u.deleteStudioMembership(tx.Connection, actorID); err != nil {
+		return err
+	}
+
 	u.Email = storage.NullString(obfuscateEmail(u, u.GetEmail()))
 	u.Phone = storage.NullString(obfuscatePhone(u, u.GetPhone()))
 	u.EmailChange = obfuscateEmail(u, u.EmailChange)

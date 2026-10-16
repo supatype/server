@@ -114,7 +114,7 @@ func goFilesByDir(root string) (map[string][]string, error) {
 func skipPath(path string) bool {
 	for _, seg := range strings.Split(filepath.ToSlash(path), "/") {
 		switch seg {
-		case "vendor", "node_modules", "testdata", "tools":
+		case "vendor", "third_party", "node_modules", "testdata", "tools":
 			return true
 		}
 	}

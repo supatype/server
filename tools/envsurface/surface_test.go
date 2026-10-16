@@ -110,6 +110,7 @@ func TestSkipPath(t *testing.T) {
 		"tools/envsurface/surface.go": true,
 		"internal/mytools/x.go":       false, // contains "tools/" as a substring only
 		"a/node_modules/b.go":         true,
+		"third_party/envy/envy.go":    true,
 	} {
 		if got := skipPath(path); got != want {
 			t.Errorf("%s: want %v, got %v", path, want, got)

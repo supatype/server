@@ -1,6 +1,7 @@
 package studioauth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -25,7 +27,6 @@ func membershipConfig(role string) Config {
 		ServiceRoleKey: "service-role-key",
 		AnonKey:        "anon-key",
 		AdminRoles:     DefaultAdminRoles,
-		Mode:           "standalone",
 		StudioRole:     func(string) (string, bool) { return role, role != "" },
 	}
 }
@@ -93,38 +94,6 @@ func TestVerifyDistinguishesUnauthenticatedFromRefused(t *testing.T) {
 	}
 }
 
-// Dev bypass answers without a token at all, and says so in the identity it
-// reports, so nobody mistakes it for a real session.
-func TestVerifyUnderDevBypass(t *testing.T) {
-	c := membershipConfig("admin")
-	c.Mode = "dev"
-	c.OpenDev = true
-	c.PublicURLs = []string{"http://localhost:9999"}
-
-	rec := httptest.NewRecorder()
-	VerifyHandler(c)(rec, studioRequest(http.MethodGet, "/studio/auth/verify", ""))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
-	}
-
-	var body struct {
-		Allowed    bool   `json:"allowed"`
-		Role       string `json:"role"`
-		Sub        string `json:"sub"`
-		Mode       string `json:"mode"`
-		CanElevate bool   `json:"canElevate"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if !body.Allowed || body.Role != "dev-bypass" || body.Sub != "dev-bypass" {
-		t.Errorf("body = %+v", body)
-	}
-	if body.Mode != ModeElevated || !body.CanElevate {
-		t.Errorf("mode = %q, canElevate = %v, want the bypass to be elevated", body.Mode, body.CanElevate)
-	}
-}
-
 // A caller admitted by the legacy claim path has no membership row, so no
 // permission set. The legacy answer is full access, because that claim only ever
 // meant "is an admin".
@@ -184,22 +153,6 @@ func TestRequireAdmin(t *testing.T) {
 		if reached != tc.wantReached {
 			t.Errorf("%s: reached = %v, want %v", name, reached, tc.wantReached)
 		}
-	}
-}
-
-// Dev bypass lets everything through without a token, which is the point and
-// also why DevBypass is so hard to switch on.
-func TestRequireAdminUnderDevBypass(t *testing.T) {
-	c := membershipConfig("admin")
-	c.Mode = "dev"
-	c.OpenDev = true
-
-	var reached bool
-	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
-	RequireAdmin(c, next).ServeHTTP(httptest.NewRecorder(), studioRequest(http.MethodGet, "/studio/x", ""))
-
-	if !reached {
-		t.Error("the bypass did not let the request through")
 	}
 }
 
@@ -267,8 +220,8 @@ func TestProxyRefusesElevationWithNoServiceRoleKey(t *testing.T) {
 	}
 }
 
-// Acting as the caller leaves their own token in place — PostgREST assumes their
-// role and their own policies apply — and sends the anon key, which carries no
+// Acting as the caller leaves their own token in place (PostgREST assumes their
+// role and their own policies apply) and sends the anon key, which carries no
 // privilege, so a gateway that requires one still sees one.
 func TestActingAsTheCallerDoesNotReElevate(t *testing.T) {
 	c := membershipConfig("editor")
@@ -313,39 +266,26 @@ func TestActingAsTheCallerWithNoAnonKey(t *testing.T) {
 	}
 }
 
-// Under dev bypass everything is elevated and nothing is verified, which is
-// what makes it a local-only switch.
-func TestProxyUnderDevBypass(t *testing.T) {
-	c := membershipConfig("admin")
-	c.Mode = "dev"
-	c.OpenDev = true
+// A request with no path is not a valid request-target, so it becomes the root
+// rather than being forwarded as nothing. Admission reads the routed path, which
+// chi supplies under a mount, so the request is admitted on that and only the
+// forwarded URL is empty.
+func TestAnEmptyPathBecomesTheRoot(t *testing.T) {
+	c := membershipConfig("editor")
+	token := bearer(t, jwt.MapClaims{"sub": "user-1", "role": "authenticated"})
 
 	next := &proxyUpstream{}
+	req := studioRequest(http.MethodGet, "/rest/v1/posts", token)
+	rctx := chi.NewRouteContext()
+	rctx.RoutePath = "/rest/v1/posts"
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req.URL.Path = ""
 	rec := httptest.NewRecorder()
-	ProxyHandler(next, c).ServeHTTP(rec, studioRequest(http.MethodGet, "/rest/v1/posts", ""))
+	ProxyHandler(next, c).ServeHTTP(rec, req)
 
 	if !next.reached {
-		t.Fatal("the request did not reach the upstream")
+		t.Fatalf("the request was not admitted: %d %s", rec.Code, rec.Body.String())
 	}
-	if next.auth != "Bearer "+c.ServiceRoleKey {
-		t.Errorf("authorization = %q, want the service role key", next.auth)
-	}
-	if got := rec.Header().Get(ActingModeHeader); got != ModeElevated {
-		t.Errorf("acting mode header = %q", got)
-	}
-}
-
-// A request with no path is not a valid request-target, so it becomes the root
-// rather than being forwarded as nothing.
-func TestAnEmptyPathBecomesTheRoot(t *testing.T) {
-	c := membershipConfig("admin")
-	c.Mode = "dev"
-	c.OpenDev = true
-
-	next := &proxyUpstream{}
-	req := studioRequest(http.MethodGet, "/rest/v1/posts", "")
-	req.URL.Path = ""
-	ProxyHandler(next, c).ServeHTTP(httptest.NewRecorder(), req)
 
 	if next.path != "/" {
 		t.Errorf("path = %q, want /", next.path)
@@ -472,35 +412,6 @@ func TestReadAdminConfigFileWithNoWorkingDirectory(t *testing.T) {
 
 	if _, err := ReadAdminConfigFile("admin-config.json"); err == nil {
 		t.Error("want an error")
-	}
-}
-
-// Every address a deployment answers on has to be local before the bypass will
-// open Studio, and these are the forms a local one takes.
-func TestLocallyAddressed(t *testing.T) {
-	for name, tc := range map[string]struct {
-		urls []string
-		want bool
-	}{
-		"nothing configured":      {nil, true},
-		"an empty entry":          {[]string{"", "   "}, true},
-		"localhost":               {[]string{"http://localhost:9999"}, true},
-		"loopback v4":             {[]string{"http://127.0.0.1:9999"}, true},
-		"loopback v6":             {[]string{"http://[::1]:9999"}, true},
-		"a .localhost name":       {[]string{"http://api.localhost:9999"}, true},
-		"loopback v6 with a path": {[]string{"http://[::1]:9999/studio"}, true},
-		"a bare v6 loopback":      {[]string{"::1"}, true},
-		"a .local name":           {[]string{"http://box.local"}, true},
-		"lvh.me":                  {[]string{"http://lvh.me:9999"}, true},
-		"a subdomain of lvh.me":   {[]string{"http://api.lvh.me:9999"}, true},
-		"the docker host":         {[]string{"http://host.docker.internal:9999"}, true},
-		"no scheme":               {[]string{"localhost:9999"}, true},
-		"a public address":        {[]string{"https://api.example.com"}, false},
-		"one public among local":  {[]string{"http://localhost:9999", "https://api.example.com"}, false},
-	} {
-		if got := locallyAddressed(tc.urls); got != tc.want {
-			t.Errorf("%s: got %v, want %v", name, got, tc.want)
-		}
 	}
 }
 

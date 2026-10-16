@@ -18,6 +18,7 @@ import (
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/models"
 	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/studiomembers"
 )
 
 type AdminTestSuite struct {
@@ -104,6 +105,51 @@ func (ts *AdminTestSuite) TestAdminUsers_Pagination() {
 	for _, user := range data["users"].([]interface{}) {
 		assert.NotEmpty(ts.T(), user)
 	}
+}
+
+// Studio reads a user's provider from the list response, so a list that
+// answered `identities: null` showed every user as having none.
+func (ts *AdminTestSuite) TestAdminUsers_IncludesIdentities() {
+	withGithub, err := models.NewUser("", "github@example.com", "test", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.API.db.Create(withGithub))
+	_, err = ts.API.createNewIdentity(ts.API.db, withGithub, "github", map[string]interface{}{
+		"sub":   "gh-1",
+		"email": "github@example.com",
+	})
+	require.NoError(ts.T(), err)
+
+	without, err := models.NewUser("", "none@example.com", "test", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.API.db.Create(without))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ts.token))
+	ts.API.handler.ServeHTTP(w, req)
+	require.Equal(ts.T(), http.StatusOK, w.Code)
+
+	var body struct {
+		Users []struct {
+			Email      string             `json:"email"`
+			Identities *[]models.Identity `json:"identities"`
+		} `json:"users"`
+	}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&body))
+	require.Len(ts.T(), body.Users, 2)
+
+	providers := map[string][]string{}
+	for _, u := range body.Users {
+		require.NotNil(ts.T(), u.Identities, "identities for %s must be a list, not null", u.Email)
+		providers[u.Email] = []string{}
+		for _, identity := range *u.Identities {
+			providers[u.Email] = append(providers[u.Email], identity.Provider)
+		}
+	}
+	assert.Equal(ts.T(), map[string][]string{
+		"github@example.com": {"github"},
+		"none@example.com":   {},
+	}, providers)
 }
 
 // TestAdminUsers tests API /admin/users route
@@ -621,6 +667,288 @@ func (ts *AdminTestSuite) TestAdminUserDelete() {
 				_, err = models.FindUserByEmailAndAudience(ts.API.db, signupParams.Email, ts.Config.JWT.Aud)
 			}
 			require.Equal(ts.T(), c.expected.err, err)
+		})
+	}
+}
+
+// studioTables are the engine's `_supatype` tables a user delete touches, as
+// the engine creates them.
+var studioTables = []struct{ name, ddl string }{
+	{"_supatype.studio_members", `CREATE TABLE _supatype.studio_members (
+		id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		user_id          UUID UNIQUE,
+		platform_user_id UUID UNIQUE,
+		role             TEXT NOT NULL,
+		created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		CONSTRAINT studio_members_one_identity
+			CHECK (num_nonnulls(user_id, platform_user_id) = 1)
+	)`},
+	{"_supatype.studio_audit", `CREATE TABLE _supatype.studio_audit (
+		id         BIGSERIAL PRIMARY KEY,
+		actor_id   UUID,
+		target_id  UUID,
+		action     TEXT NOT NULL,
+		role       TEXT,
+		detail     JSONB,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`},
+}
+
+// withStudioMembersTable creates the engine's `_supatype.studio_members` and
+// `_supatype.studio_audit` for the length of a test, each unless the database
+// already has it.
+func (ts *AdminTestSuite) withStudioMembersTable() {
+	var schema struct {
+		Present bool `db:"present"`
+	}
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`SELECT to_regnamespace('_supatype') IS NOT NULL AS present`).First(&schema))
+	if !schema.Present {
+		require.NoError(ts.T(), ts.API.db.RawQuery(`CREATE SCHEMA _supatype`).Exec())
+		ts.T().Cleanup(func() {
+			require.NoError(ts.T(), ts.API.db.RawQuery(`DROP SCHEMA _supatype`).Exec())
+		})
+	}
+	for _, table := range studioTables {
+		var row struct {
+			Present bool `db:"present"`
+		}
+		require.NoError(ts.T(), ts.API.db.RawQuery(
+			`SELECT to_regclass(?) IS NOT NULL AS present`, table.name).First(&row))
+		if row.Present {
+			continue
+		}
+		require.NoError(ts.T(), ts.API.db.RawQuery(table.ddl).Exec())
+		name := table.name
+		ts.T().Cleanup(func() {
+			require.NoError(ts.T(), ts.API.db.RawQuery(`DROP TABLE `+name).Exec())
+		})
+	}
+}
+
+func (ts *AdminTestSuite) studioMemberCount(userID uuid.UUID) int {
+	var row struct {
+		N int `db:"n"`
+	}
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`SELECT count(*) AS n FROM _supatype.studio_members WHERE user_id = ?`, userID).First(&row))
+	return row.N
+}
+
+// addStudioMember gives a new project user a Studio role and returns them.
+func (ts *AdminTestSuite) addStudioMember(email, role string) *models.User {
+	u, err := models.NewUser("", email, "test", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.API.db.Create(u))
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`INSERT INTO _supatype.studio_members (user_id, role) VALUES (?, ?)`, u.ID, role).Exec())
+	return u
+}
+
+// studioAuditFor returns the membership audit rows about `target`, each as
+// "action:role".
+func (ts *AdminTestSuite) studioAuditFor(target uuid.UUID) []string {
+	var rows []struct {
+		Entry string `db:"entry"`
+	}
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`SELECT action || ':' || COALESCE(role, '') AS entry
+		   FROM _supatype.studio_audit WHERE target_id = ? ORDER BY id`, target).All(&rows))
+	entries := make([]string, 0, len(rows))
+	for _, r := range rows {
+		entries = append(entries, r.Entry)
+	}
+	return entries
+}
+
+func (ts *AdminTestSuite) deleteUserRequest(u *models.User, soft bool) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	ts.API.handler.ServeHTTP(w, ts.newDeleteUserRequest(u, soft, ts.token))
+	return w
+}
+
+// newDeleteUserRequest builds DELETE /admin/users/{id} for `u`, sent with
+// `token`.
+func (ts *AdminTestSuite) newDeleteUserRequest(u *models.User, soft bool, token string) *http.Request {
+	var buffer bytes.Buffer
+	require.NoError(ts.T(), json.NewEncoder(&buffer).Encode(map[string]interface{}{"should_soft_delete": soft}))
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/admin/users/%s", u.ID), &buffer)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	return req
+}
+
+// adminTokenFor signs an admin-role token whose `sub` is `sub`, as a signed-in
+// admin's is.
+func (ts *AdminTestSuite) adminTokenFor(sub string) string {
+	claims := &AccessTokenClaims{Role: "supatype_admin"}
+	claims.Subject = sub
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(ts.Config.JWT.Secret))
+	require.NoError(ts.T(), err)
+	return token
+}
+
+// studioAuditActorsFor returns the actor of each membership audit row about
+// `target`, "" for a row with none.
+func (ts *AdminTestSuite) studioAuditActorsFor(target uuid.UUID) []string {
+	var rows []struct {
+		Actor string `db:"actor"`
+	}
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`SELECT COALESCE(actor_id::text, '') AS actor
+		   FROM _supatype.studio_audit WHERE target_id = ? ORDER BY id`, target).All(&rows))
+	actors := make([]string, 0, len(rows))
+	for _, r := range rows {
+		actors = append(actors, r.Actor)
+	}
+	return actors
+}
+
+// holdStudioAdminRows locks every admin membership in a transaction of its own
+// and returns its release, so concurrent deletes queue behind it.
+func (ts *AdminTestSuite) holdStudioAdminRows() func() {
+	blocker, err := ts.API.db.Connection.NewTransaction()
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), blocker.RawQuery(
+		`SELECT 1 FROM _supatype.studio_members WHERE role = 'admin' FOR UPDATE`).Exec())
+	return func() { _ = blocker.TX.Rollback() }
+}
+
+// waitForLockWaiters waits until `n` sessions in this database are blocked on
+// a lock.
+func (ts *AdminTestSuite) waitForLockWaiters(n int) {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var row struct {
+			Waiting int `db:"waiting"`
+		}
+		require.NoError(ts.T(), ts.API.db.RawQuery(`
+			SELECT count(*) AS waiting FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock'`).First(&row))
+		if row.Waiting >= n {
+			return
+		}
+		require.False(ts.T(), time.Now().After(deadline),
+			"only %d of %d deletes reached the lock", row.Waiting, n)
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A deleted user kept its Studio membership, so the members list showed a
+// grant for nobody, and a soft-deleted user's id still carried a role. The
+// removal is audited in the members API's audit shape, so the trail says why
+// the grant went.
+func (ts *AdminTestSuite) TestAdminUserDeleteRemovesStudioMembership() {
+	ts.withStudioMembersTable()
+	ts.addStudioMember("other-admin@example.com", "admin")
+
+	for _, soft := range []bool{false, true} {
+		ts.Run(fmt.Sprintf("soft=%v", soft), func() {
+			u := ts.addStudioMember(fmt.Sprintf("member-%v@example.com", soft), "admin")
+			require.Equal(ts.T(), 1, ts.studioMemberCount(u.ID))
+
+			w := ts.deleteUserRequest(u, soft)
+			require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+
+			assert.Equal(ts.T(), 0, ts.studioMemberCount(u.ID))
+			assert.Equal(ts.T(), []string{"user_deleted:admin"}, ts.studioAuditFor(u.ID))
+		})
+	}
+}
+
+// Deleting the project's only Studio admin would leave nobody able to grant
+// access, which the members API already refuses for a revoke. Deleting the
+// user is the same revoke by another route, so it is refused the same way and
+// leaves the user and the grant in place.
+func (ts *AdminTestSuite) TestAdminUserDeleteRefusesTheLastStudioAdmin() {
+	ts.withStudioMembersTable()
+	editor := ts.addStudioMember("editor@example.com", "editor")
+	admin := ts.addStudioMember("only-admin@example.com", "admin")
+
+	for _, soft := range []bool{false, true} {
+		ts.Run(fmt.Sprintf("soft=%v", soft), func() {
+			w := ts.deleteUserRequest(admin, soft)
+			require.Equal(ts.T(), http.StatusConflict, w.Code, w.Body.String())
+
+			var body struct {
+				ErrorCode string `json:"error_code"`
+				Message   string `json:"msg"`
+			}
+			require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&body))
+			assert.Equal(ts.T(), "conflict", body.ErrorCode)
+			assert.Equal(ts.T(), fmt.Sprintf("cannot delete user %s: %s", admin.ID, studiomembers.ErrLastAdmin), body.Message)
+
+			reloaded, err := models.FindUserByID(ts.API.db, admin.ID)
+			require.NoError(ts.T(), err, "the refused delete leaves the user")
+			assert.Nil(ts.T(), reloaded.DeletedAt, "and does not soft delete them either")
+			assert.Equal(ts.T(), 1, ts.studioMemberCount(admin.ID))
+			assert.Empty(ts.T(), ts.studioAuditFor(admin.ID))
+		})
+	}
+
+	// A member who is not the last admin is still deleted.
+	w := ts.deleteUserRequest(editor, false)
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(ts.T(), []string{"user_deleted:editor"}, ts.studioAuditFor(editor.ID))
+}
+
+// Two deletes of the last two Studio admins at once both read "two admins"
+// unless the guard locks what it counts, and the project is left with nobody
+// able to grant access. Both deletes are held at the admin rows until each has
+// started, so neither commits before the other reaches the guard. Exactly one
+// may win; the other sees it and is refused.
+func (ts *AdminTestSuite) TestAdminUserDeleteConcurrentLastTwoStudioAdmins() {
+	ts.withStudioMembersTable()
+	first := ts.addStudioMember("first-admin@example.com", "admin")
+	second := ts.addStudioMember("second-admin@example.com", "admin")
+
+	requests := []*http.Request{
+		ts.newDeleteUserRequest(first, false, ts.token),
+		ts.newDeleteUserRequest(second, true, ts.token),
+	}
+	release := ts.holdStudioAdminRows()
+	codes := make(chan int, len(requests))
+	for _, req := range requests {
+		go func() {
+			w := httptest.NewRecorder()
+			ts.API.handler.ServeHTTP(w, req)
+			codes <- w.Code
+		}()
+	}
+	ts.waitForLockWaiters(len(requests))
+	release()
+
+	got := []int{<-codes, <-codes}
+	assert.ElementsMatch(ts.T(), []int{http.StatusOK, http.StatusConflict}, got)
+
+	var row struct {
+		Admins int `db:"admins"`
+	}
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`SELECT count(*) AS admins FROM _supatype.studio_members WHERE role = 'admin'`).First(&row))
+	assert.Equal(ts.T(), 1, row.Admins, "one Studio admin is left")
+}
+
+// The membership a user delete removes is audited with the admin who asked for
+// it, as the members API records its actor. A service-role call carries no
+// user, so its row has no actor.
+func (ts *AdminTestSuite) TestAdminUserDeleteAuditsTheCallingAdmin() {
+	ts.withStudioMembersTable()
+	caller := ts.addStudioMember("caller-admin@example.com", "admin")
+
+	for _, soft := range []bool{false, true} {
+		ts.Run(fmt.Sprintf("soft=%v", soft), func() {
+			signedIn := ts.addStudioMember(fmt.Sprintf("by-admin-%v@example.com", soft), "editor")
+			w := httptest.NewRecorder()
+			ts.API.handler.ServeHTTP(w, ts.newDeleteUserRequest(signedIn, soft, ts.adminTokenFor(caller.ID.String())))
+			require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+			assert.Equal(ts.T(), []string{caller.ID.String()}, ts.studioAuditActorsFor(signedIn.ID))
+
+			byService := ts.addStudioMember(fmt.Sprintf("by-service-%v@example.com", soft), "editor")
+			w = httptest.NewRecorder()
+			ts.API.handler.ServeHTTP(w, ts.newDeleteUserRequest(byService, soft, ts.adminTokenFor("")))
+			require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+			assert.Equal(ts.T(), []string{""}, ts.studioAuditActorsFor(byService.ID))
 		})
 	}
 }

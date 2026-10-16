@@ -11,13 +11,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// writeTimeout bounds membership mutations. Longer than a lookup — these run from
-// a settings screen, not on the request path — but still bounded so a wedged
-// database returns an error rather than hanging the UI.
+// writeTimeout bounds membership mutations. Longer than a lookup, since these
+// run from a settings screen and not on the request path, but still bounded so
+// a wedged database returns an error rather than hanging the UI.
 const writeTimeout = 10 * time.Second
 
 // ErrLastAdmin is returned when a change would leave the project with no admin.
-var ErrLastAdmin = errors.New("this is the last Studio admin — promote someone else first")
+var ErrLastAdmin = errors.New("this is the last Studio admin; promote someone else to admin first")
 
 // ErrUnknownUser is returned when the target has no row in auth.users.
 var ErrUnknownUser = errors.New("no such user in this project")
@@ -73,8 +73,8 @@ func (s Store) List(ctx context.Context) ([]Member, error) {
 // SetRole grants or updates Studio access for one of the project's own users.
 //
 // `actingUserID` is the caller. Two rules protect the project from its own
-// admins: nobody may change their own role — self-demotion is a footgun and
-// self-promotion is the escalation this whole design exists to prevent — and the
+// admins. Nobody may change their own role: self-demotion is a footgun and
+// self-promotion is the escalation this whole design exists to prevent. And the
 // last admin cannot be demoted, because there would then be nobody able to grant
 // access to anyone.
 func (s Store) SetRole(ctx context.Context, actingUserID, targetUserID, role string) error {
@@ -229,18 +229,8 @@ func (s Store) Audit(ctx context.Context, actorID, targetID, action, role string
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
 
-	var actor, roleArg any
-	if strings.TrimSpace(actorID) != "" {
-		actor = actorID
-	}
-	if strings.TrimSpace(role) != "" {
-		roleArg = role
-	}
-
-	if _, err := pool.Exec(writeCtx, `
-		INSERT INTO _supatype.studio_audit (actor_id, target_id, action, role)
-		VALUES ($1::uuid, $2::uuid, $3, $4)`,
-		actor, targetID, action, roleArg); err != nil {
+	if _, err := pool.Exec(writeCtx, AuditSQL,
+		AuditArgs(actorID, targetID, action, role)...); err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"actor":  actorID,
 			"target": targetID,
@@ -250,27 +240,79 @@ func (s Store) Audit(ctx context.Context, actorID, targetID, action, role string
 	}
 }
 
-// guardLastAdmin refuses a change that would leave nobody able to grant access.
+// ActionRevoke is the audit action for a membership an admin removed.
+const ActionRevoke = "revoke"
+
+// ActionUserDeleted is the audit action for a membership removed because its
+// user was deleted. Its role is the role the user held, so the trail says what
+// went with them.
+const ActionUserDeleted = "user_deleted"
+
+// AuditSQL writes one membership change, taking AuditArgs. Exported with
+// AuditArgs so a writer on another driver, such as the auth server deleting a
+// user, records exactly the row Audit does.
+const AuditSQL = `
+	INSERT INTO _supatype.studio_audit (actor_id, target_id, action, role)
+	VALUES ($1::uuid, $2::uuid, $3, $4)`
+
+// AuditArgs are AuditSQL's arguments. A blank actor or role is recorded as
+// NULL.
+func AuditArgs(actorID, targetID, action, role string) []any {
+	return []any{nullIfBlank(actorID), targetID, action, nullIfBlank(role)}
+}
+
+func nullIfBlank(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
+}
+
+// LastAdminQuery asks, in one row, whether `targetUserID` holds an admin
+// membership (`target_is_admin`) and how many admin memberships there are
+// (`admin_count`). With CheckLastAdmin it is the last-admin guard, exported so
+// a caller on another driver, such as the auth server deleting a user, applies
+// the members API's rule rather than a copy of it.
 //
-// One query rather than two: both read the same table inside the same
-// transaction, so asking twice bought nothing but a second round trip and a
-// second failure to handle.
+// It locks every admin membership it counts (FOR UPDATE) until the caller's
+// transaction ends, so run it in the transaction that makes the change. Read
+// without the lock, two transactions removing or demoting the last two admins
+// each counted two and both went ahead. Locked, the second waits for the first
+// and then counts what the first left; Postgres re-checks a waited-for row, so a
+// deleted or demoted admin drops out of the count. The rows are locked in id
+// order, so every guard takes them in the same order and two guards cannot
+// deadlock each other.
+func LastAdminQuery(targetUserID string) (string, []any) {
+	return `
+		SELECT COALESCE(bool_or(user_id = $1::uuid OR platform_user_id = $1::uuid), false)
+		         AS target_is_admin,
+		       count(*) AS admin_count
+		  FROM (SELECT user_id, platform_user_id
+		          FROM _supatype.studio_members
+		         WHERE role = $2
+		         ORDER BY id
+		           FOR UPDATE) AS admins`,
+		[]any{targetUserID, RoleAdmin}
+}
+
+// CheckLastAdmin is the guard's verdict on LastAdminQuery's row: ErrLastAdmin
+// when removing the target would leave nobody able to grant access.
+func CheckLastAdmin(targetIsAdmin bool, adminCount int) error {
+	if targetIsAdmin && adminCount <= 1 {
+		return ErrLastAdmin
+	}
+	return nil
+}
+
+// guardLastAdmin refuses a change that would leave nobody able to grant access.
 func guardLastAdmin(ctx context.Context, tx pgx.Tx, targetUserID string) error {
 	var (
 		targetIsAdmin bool
 		adminCount    int
 	)
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM _supatype.studio_members
-			 WHERE role = $2
-			   AND (user_id = $1::uuid OR platform_user_id = $1::uuid)),
-		       (SELECT count(*) FROM _supatype.studio_members WHERE role = $2)`,
-		targetUserID, RoleAdmin).Scan(&targetIsAdmin, &adminCount); err != nil {
+	query, args := LastAdminQuery(targetUserID)
+	if err := tx.QueryRow(ctx, query, args...).Scan(&targetIsAdmin, &adminCount); err != nil {
 		return err
 	}
-	if targetIsAdmin && adminCount <= 1 {
-		return ErrLastAdmin
-	}
-	return nil
+	return CheckLastAdmin(targetIsAdmin, adminCount)
 }

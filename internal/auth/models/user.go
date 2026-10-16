@@ -779,8 +779,14 @@ func FindUsersInAudience(tx *storage.Connection, aud string, pageParams *Paginat
 	} else {
 		err = q.All(&users)
 	}
+	if err != nil {
+		return nil, err
+	}
 
-	return users, err
+	if err := loadIdentitiesForUsers(tx, users); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 // IsDuplicatedEmail returns whether a user exists with a matching email and

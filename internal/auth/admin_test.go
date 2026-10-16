@@ -106,6 +106,51 @@ func (ts *AdminTestSuite) TestAdminUsers_Pagination() {
 	}
 }
 
+// Studio reads a user's provider from the list response, so a list that
+// answered `identities: null` showed every user as having none.
+func (ts *AdminTestSuite) TestAdminUsers_IncludesIdentities() {
+	withGithub, err := models.NewUser("", "github@example.com", "test", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.API.db.Create(withGithub))
+	_, err = ts.API.createNewIdentity(ts.API.db, withGithub, "github", map[string]interface{}{
+		"sub":   "gh-1",
+		"email": "github@example.com",
+	})
+	require.NoError(ts.T(), err)
+
+	without, err := models.NewUser("", "none@example.com", "test", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), ts.API.db.Create(without))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ts.token))
+	ts.API.handler.ServeHTTP(w, req)
+	require.Equal(ts.T(), http.StatusOK, w.Code)
+
+	var body struct {
+		Users []struct {
+			Email      string             `json:"email"`
+			Identities *[]models.Identity `json:"identities"`
+		} `json:"users"`
+	}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&body))
+	require.Len(ts.T(), body.Users, 2)
+
+	providers := map[string][]string{}
+	for _, u := range body.Users {
+		require.NotNil(ts.T(), u.Identities, "identities for %s must be a list, not null", u.Email)
+		providers[u.Email] = []string{}
+		for _, identity := range *u.Identities {
+			providers[u.Email] = append(providers[u.Email], identity.Provider)
+		}
+	}
+	assert.Equal(ts.T(), map[string][]string{
+		"github@example.com": {"github"},
+		"none@example.com":   {},
+	}, providers)
+}
+
 // TestAdminUsers tests API /admin/users route
 func (ts *AdminTestSuite) TestAdminUsers_SortAsc() {
 	u, err := models.NewUser("", "test1@example.com", "test", ts.Config.JWT.Aud, nil)

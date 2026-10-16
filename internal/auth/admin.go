@@ -16,6 +16,7 @@ import (
 	"github.com/supatype/server/internal/auth/provider"
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/observability"
+	"github.com/supatype/server/internal/studiomembers"
 	"github.com/supatype/server/internal/utilities"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -518,6 +519,7 @@ func (a *API) adminUserDelete(w http.ResponseWriter, r *http.Request) error {
 	user := getUser(ctx)
 	config := a.config
 	adminUser := getAdminUser(ctx)
+	studioActor := studioAuditActor(getClaims(ctx))
 	db := a.db.WithContext(ctx)
 
 	// ShouldSoftDelete defaults to false
@@ -544,8 +546,8 @@ func (a *API) adminUserDelete(w http.ResponseWriter, r *http.Request) error {
 				// user has been soft deleted already
 				return nil
 			}
-			if terr := user.SoftDeleteUser(tx); terr != nil {
-				return apierrors.NewInternalServerError("Error soft deleting user").WithInternalError(terr)
+			if terr := user.SoftDeleteUser(tx, studioActor); terr != nil {
+				return userDeleteError(terr, "Error soft deleting user")
 			}
 
 			if terr := user.SoftDeleteUserIdentities(tx); terr != nil {
@@ -561,8 +563,8 @@ func (a *API) adminUserDelete(w http.ResponseWriter, r *http.Request) error {
 				return apierrors.NewInternalServerError("Error deleting user's sessions").WithInternalError(terr)
 			}
 		} else {
-			if terr := tx.Destroy(user); terr != nil {
-				return apierrors.NewInternalServerError("Database error deleting user").WithInternalError(terr)
+			if terr := user.DestroyBy(tx, studioActor); terr != nil {
+				return userDeleteError(terr, "Database error deleting user")
 			}
 		}
 
@@ -573,6 +575,31 @@ func (a *API) adminUserDelete(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	return sendJSON(w, http.StatusOK, map[string]interface{}{})
+}
+
+// studioAuditActor is the actor a user delete records on the studio_audit row
+// for the Studio membership it removes: the caller's JWT `sub` when it is a
+// user id, as the members API records its actor. A service-role key, or any
+// other admin token with no user behind it, has no such `sub`, so the row's
+// actor stays NULL, as it does for the CLI's delete, which has no caller.
+func studioAuditActor(claims *AccessTokenClaims) string {
+	if claims == nil {
+		return ""
+	}
+	if _, err := uuid.FromString(claims.Subject); err != nil {
+		return ""
+	}
+	return claims.Subject
+}
+
+// userDeleteError answers a failed user delete: 409 with the members API's
+// message when the user is the project's last Studio admin, so the caller
+// learns to promote another admin first, and a 500 for anything else.
+func userDeleteError(err error, internalMessage string) error {
+	if errors.Is(err, studiomembers.ErrLastAdmin) {
+		return apierrors.NewConflictError("%s", err.Error())
+	}
+	return apierrors.NewInternalServerError("%s", internalMessage).WithInternalError(err)
 }
 
 func (a *API) adminUserDeleteFactor(w http.ResponseWriter, r *http.Request) error {

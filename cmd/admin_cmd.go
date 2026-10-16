@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/gofrs/uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -114,18 +116,29 @@ func adminDeleteUser(config *conf.GlobalConfiguration, args []string) {
 	}
 	defer db.Close()
 
-	user, err := models.FindUserByEmailAndAudience(db, args[0], getAudience(config))
-	if err != nil {
-		userID := uuid.Must(uuid.FromString(args[0]))
-		user, err = models.FindUserByID(db, userID)
-		if err != nil {
-			logrus.Fatalf("Error finding user (%s): %+v", userID, err)
-		}
-	}
-
-	if err = db.Destroy(user); err != nil {
+	if err := deleteUser(db, getAudience(config), args[0]); err != nil {
 		logrus.Fatalf("Error removing user (%s): %+v", args[0], err)
 	}
 
 	logrus.Infof("Removed user: %s", args[0])
+}
+
+// deleteUser removes the user `emailOrID` names, an email in `aud` or a user
+// id. Like the admin API, it refuses the project's last Studio admin.
+func deleteUser(db *storage.Connection, aud, emailOrID string) error {
+	user, err := models.FindUserByEmailAndAudience(db, emailOrID, aud)
+	if err != nil {
+		userID, perr := uuid.FromString(emailOrID)
+		if perr != nil {
+			return fmt.Errorf("no user has the email %q, and it is not a user id", emailOrID)
+		}
+		if user, err = models.FindUserByID(db, userID); err != nil {
+			return fmt.Errorf("finding user %s: %w", userID, err)
+		}
+	}
+	// In a transaction, so the Studio membership check, its removal, its audit
+	// row and the delete stand or fall together.
+	return db.Transaction(func(tx *storage.Connection) error {
+		return tx.Destroy(user)
+	})
 }

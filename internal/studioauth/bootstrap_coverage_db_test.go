@@ -214,7 +214,7 @@ func TestTheSchemaTagDistinguishesCallers(t *testing.T) {
 	}
 }
 
-// A project that has never been pushed is a 404 — there is nothing to render —
+// A project that has never been pushed is a 404, as there is nothing to render,
 // and a database that cannot be reached is a 503, which is a different problem
 // with a different fix.
 func TestSchemaWithNothingToRead(t *testing.T) {
@@ -346,29 +346,6 @@ func TestSessionWithNoSchema(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `"access"`) {
 		t.Error("access was reported with no schema to derive it from")
-	}
-}
-
-// ─── Dev bypass ───────────────────────────────────────────────────────────────
-
-// Under the bypass both endpoints answer with no token, as the service role.
-func TestTheBootstrapEndpointsUnderDevBypass(t *testing.T) {
-	c := bootstrapConfig(t, schemaWithAMaskedColumn, "admin")
-	c.Mode = "dev"
-	c.OpenDev = true
-
-	for name, handler := range map[string]http.HandlerFunc{
-		"schema":  SchemaHandler(c),
-		"session": SessionHandler(c),
-	} {
-		rec := httptest.NewRecorder()
-		handler(rec, studioRequest(http.MethodGet, "/studio/"+name, ""))
-		if rec.Code != http.StatusOK {
-			t.Errorf("%s: status = %d (%s)", name, rec.Code, rec.Body.String())
-		}
-		if !strings.Contains(rec.Body.String(), "dev-bypass") {
-			t.Errorf("%s: the bypass identity was not reported: %s", name, rec.Body.String())
-		}
 	}
 }
 

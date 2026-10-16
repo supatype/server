@@ -65,15 +65,6 @@ func TestVerifyBearerToken_nonAdminDenied(t *testing.T) {
 	}
 }
 
-func TestDevBypass_requiresBothSwitches(t *testing.T) {
-	if (Config{Mode: "dev"}).DevBypass() {
-		t.Fatal("expected false without the open-dev switch")
-	}
-	if !(Config{Mode: "dev", OpenDev: true}).DevBypass() {
-		t.Fatal("expected true with both switches set")
-	}
-}
-
 // Studio capability comes from `_supatype.studio_members`, not from claims: the
 // claim path let a developer grant admin UI access by assigning an app role.
 func TestResolveAccessPrefersMembershipOverClaims(t *testing.T) {

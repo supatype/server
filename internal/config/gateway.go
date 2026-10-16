@@ -296,10 +296,6 @@ type Config struct {
 
 	// ── Studio ───────────────────────────────────────────────────────────────
 
-	// StudioOpenDev opens Studio without authentication. Guarded further by dev
-	// mode and a locally addressed deployment; see internal/studioauth.
-	StudioOpenDev SwitchBool `envconfig:"STUDIO_OPEN_DEV"`
-
 	// StudioAdminRoles overrides the roles treated as Studio admins,
 	// comma-separated.
 	StudioAdminRoles string `envconfig:"STUDIO_ADMIN_ROLES"`
@@ -309,14 +305,6 @@ type Config struct {
 	// LogLevel is the logrus level for the auth service's own logger. The outer
 	// access log has its own level in OuterLogLevel.
 	LogLevel string `envconfig:"LOG_LEVEL"`
-
-	// PublicURLs are every address this deployment answers on.
-	//
-	// Not read from the environment: the values live in the auth service's
-	// configuration, and the bootstrap joins the two. Studio's open-dev bypass
-	// refuses unless all of them are local, so what it reads should be visible
-	// where it is wired rather than guessed at from a variable name.
-	PublicURLs []string `ignored:"true"`
 }
 
 // Load parses Config from environment variables (SUPATYPE_* prefix).

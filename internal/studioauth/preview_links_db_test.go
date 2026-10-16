@@ -766,36 +766,11 @@ func TestRoleSeesDraftsWithoutAPublishingConfig(t *testing.T) {
 	}
 }
 
-func TestRoleSeesDraftsUnderTheDevBypass(t *testing.T) {
-	// The bypass has no membership row and no role, and it exists to open Studio completely on a
-	// locally addressed deployment. Withholding drafts from it would be a strange half-measure.
-	c := Config{
-		Mode:            "dev",
-		OpenDev:         true,
-		PublicURLs:      []string{"http://localhost:8000"},
-		AdminConfigPath: writeAdminConfig(t, previewConfig(`["admin"]`, true)),
-	}
-	if !c.DevBypass() {
-		t.Fatal("the test config does not actually engage the dev bypass")
-	}
-	if !roleSeesDrafts("", c) {
-		t.Error("the dev bypass was refused drafts")
-	}
-}
-
-func TestPreviewMinterUnderTheDevBypass(t *testing.T) {
-	c := Config{
-		Mode:       "dev",
-		OpenDev:    true,
-		PublicURLs: []string{"http://127.0.0.1:8000"},
-	}
-	role, sub, ok := requirePreviewMinter(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", nil),
-		c, PreviewScopeProject, PublishingSettings{AllowProjectScope: true})
-	if !ok {
-		t.Fatal("the dev bypass was refused")
-	}
-	if role != "dev-bypass" || sub != "" {
-		t.Errorf("role, sub = %q, %q; want dev-bypass and no subject", role, sub)
+// A caller with no membership row has no role, and a role-less caller sees no drafts.
+func TestRoleSeesDraftsRefusesARolelessCaller(t *testing.T) {
+	c := Config{AdminConfigPath: writeAdminConfig(t, previewConfig(`["admin"]`, true))}
+	if roleSeesDrafts("", c) {
+		t.Error("a caller with no Studio role was shown drafts")
 	}
 }
 
@@ -805,13 +780,7 @@ func TestPreviewMinterUnderTheDevBypass(t *testing.T) {
 func poollessResources() *data.Resources { return &data.Resources{} }
 
 func TestPreviewEndpointsWhenTheDatabaseIsConfiguredButUnreachable(t *testing.T) {
-	c := Config{
-		Mode:            "dev",
-		OpenDev:         true,
-		PublicURLs:      []string{"http://localhost:8000"},
-		Resources:       poollessResources(),
-		AdminConfigPath: writeAdminConfig(t, previewConfig(`["admin"]`, true)),
-	}
+	c := previewCallerConfig(t, poollessResources(), previewConfig(`["admin"]`, true))
 
 	if _, err := previewEpoch(context.Background(), c); err == nil {
 		t.Error("previewEpoch reported success with no pool behind it")
@@ -820,20 +789,15 @@ func TestPreviewEndpointsWhenTheDatabaseIsConfiguredButUnreachable(t *testing.T)
 		t.Error("previewPool handed back a pool it does not have")
 	}
 
-	code, body := previewCall(PreviewAPI(c), "", http.MethodPost, "/admin/preview-links/revoke", "")
+	code, body := previewCall(PreviewAPI(c), previewAdminSub, http.MethodPost, "/admin/preview-links/revoke", "")
 	if code != http.StatusServiceUnavailable {
 		t.Errorf("revoke all: status = %d, want 503: %s", code, body)
 	}
 }
 
 func TestRevokeEverythingWithoutADatabaseAtAll(t *testing.T) {
-	c := Config{
-		Mode:            "dev",
-		OpenDev:         true,
-		PublicURLs:      []string{"http://localhost:8000"},
-		AdminConfigPath: writeAdminConfig(t, previewConfig(`["admin"]`, true)),
-	}
-	code, body := previewCall(PreviewAPI(c), "", http.MethodPost, "/admin/preview-links/revoke", "")
+	c := previewCallerConfig(t, nil, previewConfig(`["admin"]`, true))
+	code, body := previewCall(PreviewAPI(c), previewAdminSub, http.MethodPost, "/admin/preview-links/revoke", "")
 	if code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503: %s", code, body)
 	}

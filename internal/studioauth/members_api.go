@@ -125,10 +125,6 @@ func requireMemberAdmin(
 	c Config,
 	mutating bool,
 ) (string, bool) {
-	if c.DevBypass() {
-		return "", true
-	}
-
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
 		status := http.StatusForbidden

@@ -22,7 +22,7 @@ import (
 // queries rather than the SQL runner, so a viewer's views work and nobody with
 // schema view can run arbitrary SQL. The control plane carries the same
 // catalogue and pins the same hash.
-const studioMetadataSHA256 = "561408b196b0e13152a43b6a1091f0cf68e137cf96521c9d38d1f126ec05ecec"
+const studioMetadataSHA256 = "4341cd6df2367377f8621182ece7dc8840b5430ca259ed0a69aaff670cadc685"
 
 func TestMetadataCatalogueIsTheSharedDocument(t *testing.T) {
 	raw, err := os.ReadFile("studio_metadata.json")
@@ -94,9 +94,52 @@ func TestLedgerAndSettingsQueriesAnswer(t *testing.T) {
 		{`{"name":"migrations_audited","params":{}}`, `"audited":true`},
 		{`{"name":"migrations","params":{}}`, `"pushed_by":"ada"`},
 		{`{"name":"migrations_legacy","params":{}}`, `"pushed_by":null`},
+		// A history from before the status column reads as applied.
+		{`{"name":"migrations","params":{}}`, `"status":"applied"`},
+		{`{"name":"schema_push_status","params":{}}`, `"status":"applied"`},
 		{`{"name":"migration_sql","params":{"id":"1"}}`, `"sql_up":"CREATE TABLE x ();"`},
 		{`{"name":"seeds","params":{}}`, `"file":"seed.ts"`},
 		{`{"name":"database_settings","params":{}}`, `"max_connections":`},
+	}
+	for _, c := range cases {
+		rec := postMetadata(t, pools, c.body, serviceKey)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), c.want) {
+			t.Fatalf("%s: %d %s, want %s", c.body, rec.Code, rec.Body.String(), c.want)
+		}
+	}
+}
+
+// A push the engine refused is recorded as `refused`, with what it would have
+// dropped and the command that applies it. Migration History lists it with its
+// status, and the schema push notice reads the newest row, which is it.
+func TestARefusedPushIsReadWithItsRefusal(t *testing.T) {
+	pools := ledgerPools(t)
+	pool, err := pools()
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	refused := `ALTER TABLE _supatype.migrations ADD COLUMN status text NOT NULL DEFAULT 'applied',
+	  ADD COLUMN error_message text, ADD COLUMN refusal jsonb, ADD COLUMN superseded_at timestamptz;
+	INSERT INTO _supatype.migrations (name, hash, engine_version, status, error_message, refusal, applied_at)
+	VALUES ('refused_1', 'h2', '0.8.0', 'refused', '1 destructive operation(s) detected. Use --force to proceed.',
+	  '{"reason":"destructive","operations":["drop_column tags.name"],"hints":["supatype push --yes"]}', now() + interval '1 minute')`
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := tx.Exec(ctx, refused); err != nil {
+		t.Fatalf("refused row: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	cases := []struct{ body, want string }{
+		{`{"name":"migrations","params":{}}`, `"status":"refused"`},
+		{`{"name":"migrations","params":{}}`, `"operations":["drop_column tags.name"]`},
+		{`{"name":"schema_push_status","params":{}}`, `"status":"refused"`},
+		{`{"name":"schema_push_status","params":{}}`, `"hints":["supatype push --yes"]`},
+		{`{"name":"schema_push_status","params":{}}`, `"superseded_at":null`},
 	}
 	for _, c := range cases {
 		rec := postMetadata(t, pools, c.body, serviceKey)

@@ -3,7 +3,6 @@ package studiobootstrap
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"time"
 
 	"github.com/supatype/server/internal/data"
@@ -19,7 +18,7 @@ import (
 //
 // It matters here because a masked-field header is computed before the query runs. For a
 // rule that does not read the row, "masked" is a property of the whole result set. For one
-// that does, the header can only say "may be masked in some rows" — and a client that
+// that does, the header can only say "may be masked in some rows", and a client that
 // treated that as exact would hide values the caller was entitled to see.
 func IsRowDependent(raw json.RawMessage) bool {
 	if len(raw) == 0 {
@@ -85,17 +84,12 @@ type FieldMask struct {
 // identityScopeTTL: it is consulted per request and only changes on a schema push.
 const fieldScopeTTL = 30 * time.Second
 
-var fieldScope struct {
-	sync.Mutex
-	tables   map[string][]FieldMask
-	loadedAt time.Time
-	loaded   bool
-}
+var fieldScope = classification[map[string][]FieldMask]{ttl: fieldScopeTTL}
 
 // MaskedFields returns, per table, the columns carrying a read restriction.
 //
 // Derived from the AST, so it costs no database work per request and no second
-// implementation of the rules — the *enforcement* of these restrictions is the security
+// implementation of the rules. The *enforcement* of these restrictions is the security
 // labels and the planner rewrite, which this only describes.
 //
 // Caller-independent by design. It says which columns are restricted and whether the
@@ -105,35 +99,10 @@ var fieldScope struct {
 // gives for free.
 //
 // The second result is false when the classification could not be read. Callers then send
-// no header at all — an absent header means "not stated", whereas a wrong one would be
+// no header at all: an absent header means "not stated", whereas a wrong one would be
 // taken as fact.
 func MaskedFields(ctx context.Context, resources *data.Resources) (map[string][]FieldMask, bool) {
-	fieldScope.Lock()
-	defer fieldScope.Unlock()
-
-	if fieldScope.loaded && time.Since(fieldScope.loadedAt) < fieldScopeTTL {
-		return fieldScope.tables, true
-	}
-
-	snapshot, err := LoadSnapshot(ctx, resources)
-	if err != nil {
-		// Keep serving a previous answer rather than flapping on a transient blip; the
-		// TTL still bounds how old it can be.
-		if fieldScope.loaded {
-			return fieldScope.tables, true
-		}
-		return nil, false
-	}
-
-	tables, err := maskedFieldsFromAST(snapshot.AST)
-	if err != nil {
-		return nil, false
-	}
-
-	fieldScope.tables = tables
-	fieldScope.loadedAt = time.Now()
-	fieldScope.loaded = true
-	return tables, true
+	return fieldScope.get(ctx, resources, maskedFieldsFromAST)
 }
 
 // maskedFieldsFromAST is the pure half: snapshot bytes in, classification out. Split out so
@@ -159,7 +128,7 @@ func maskedFieldsFromAST(raw []byte) (map[string][]FieldMask, error) {
 				continue
 			}
 			if isPublicRule(rules.Read) {
-				// Labelled, but readable by everyone — noise in a header about masking.
+				// Labelled, but readable by everyone: noise in a header about masking.
 				continue
 			}
 			masks = append(masks, FieldMask{

@@ -7,8 +7,8 @@
 // policy`: Postgres checks the returned row against the read rule as it is inserted, before
 // anything has made the row visible to its author. Nothing in that message says what to do
 // instead, and the database cannot add a hint to a refusal it raises itself, so the gateway
-// adds one here: create the record with `supatype.create_record`, which inserts without
-// reading back and writes the first draft.
+// adds one here: create the record with `supatype.create_record`, or several at once with
+// `supatype.create_records`, which insert without reading back and write the first draft.
 //
 // Advisory only, as the masked-fields header is. The refusal and its status are PostgREST's;
 // this adds a `hint` to the body when PostgREST sent none, and changes nothing else.
@@ -25,8 +25,9 @@ import (
 
 // Hint is what a refused insert into a drafts model is told.
 const Hint = "This model keeps drafts: a new record starts unpublished, and asking for it back " +
-	"is refused when the read rule hides unpublished records. Create records with " +
-	"supatype.create_record (the Supatype client's insert does this for you)."
+	"is refused when the read rule hides unpublished records. Create a record with " +
+	"supatype.create_record, or several at once with supatype.create_records (the Supatype " +
+	"client's insert does this for you)."
 
 // rlsRefusal is the start of Postgres's message for a row its policies refuse on write.
 const rlsRefusal = "new row violates row-level security policy"

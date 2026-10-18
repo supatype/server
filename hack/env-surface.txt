@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 645 names
+# total: 647 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -134,6 +134,10 @@ SUPATYPE_DB_MIGRATIONS_PATH
     struct internal/conf.GlobalConfiguration
 SUPATYPE_DB_NAMESPACE
     struct internal/conf.GlobalConfiguration
+SUPATYPE_DB_POOLER_URL
+    struct internal/config.Config
+SUPATYPE_DB_PUBLIC_URL
+    struct internal/config.Config
 SUPATYPE_DB_SCHEMA
     struct internal/config.Config
 SUPATYPE_DENO_FUNCTIONS_DIR

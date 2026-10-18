@@ -101,6 +101,7 @@ var serviceRoleRules = []proxyRule{
 	{http.MethodGet, "/admin/v1/config/rest", true, false, false},
 	{http.MethodPatch, "/admin/v1/config/rest", true, false, false},
 	{http.MethodPost, "/admin/v1/database/credentials/first-view", true, false, false},
+	{http.MethodGet, "/admin/v1/database/connection", true, false, false},
 	{http.MethodPost, "/internal/v0hooks/send-email", true, false, false},
 	{http.MethodGet, "/some/route/added/later", true, false, false},
 	{http.MethodGet, "/", true, false, false},

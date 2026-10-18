@@ -33,8 +33,11 @@ func TestTheContainerEnvironmentWinsOverTheProjectDotEnv(t *testing.T) {
 	dotenv := "SUPATYPE_MAILER_AUTOCONFIRM=true\nSUPATYPE_SITE_URL=http://from-dotenv\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte(dotenv), 0o600))
 
-	exe, err := filepath.Abs(os.Args[0])
+	// os.Executable rather than os.Args[0]: argv[0] is whatever the caller chose
+	// to pass, while this is the binary that is actually running.
+	exe, err := os.Executable()
 	require.NoError(t, err)
+	// #nosec G204 -- the command is this test binary itself, re-executed, and every argument is a constant.
 	child := exec.Command(exe, "-test.run=^TestTheContainerEnvironmentWinsOverTheProjectDotEnv$", "-test.count=1")
 	child.Dir = dir
 	child.Env = append(withoutKeys(os.Environ(), "SUPATYPE_"),

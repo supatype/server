@@ -1,4 +1,4 @@
-# Public self-host only — NOT used by supatype-cloud Pulumi (see publish-ghcr.yml).
+# Public self-host only, not used by the cloud repository's Pulumi (see publish-ghcr.yml).
 name: Publish to Docker Hub (public supatype/server)
 
 on:

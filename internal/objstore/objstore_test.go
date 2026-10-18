@@ -673,7 +673,7 @@ func TestRemoveObjects(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 
-	var deleted []listItem
+	var deleted []removedItem
 	if err := json.Unmarshal(rec.Body.Bytes(), &deleted); err != nil {
 		t.Fatal(err)
 	}
@@ -1161,8 +1161,8 @@ var tlsState = tls.ConnectionState{}
 
 // failing swaps one seam for the duration of a test.
 //
-// Every one of these is a real condition — a full disk, a revoked permission, a
-// directory removed under a running server — that cannot be arranged the same
+// Every one of these is a real condition (a full disk, a revoked permission, a
+// directory removed under a running server) that cannot be arranged the same
 // way on Windows and Linux.
 func failing[T any](t *testing.T, seam *T, replacement T) {
 	t.Helper()
@@ -1481,8 +1481,8 @@ func TestASidecarThatCannotBeEncoded(t *testing.T) {
 	}
 }
 
-// A buckets.json that cannot be read at all — as opposed to one that is not
-// there — is reported.
+// A buckets.json that cannot be read at all, as opposed to one that is not
+// there, is reported.
 func TestABucketsFileThatCannotBeRead(t *testing.T) {
 	s := &store{root: t.TempDir(), mu: &sync.RWMutex{}}
 	failing(t, &readFile, func(string) ([]byte, error) { return nil, errDisk })

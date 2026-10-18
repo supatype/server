@@ -67,8 +67,8 @@ func TestARefusedInsertIntoADraftsTableNamesCreateRecord(t *testing.T) {
 	}
 }
 
-func TestTheHintNamesCreateRecordAndTheClient(t *testing.T) {
-	for _, phrase := range []string{"keeps drafts", "supatype.create_record", "client"} {
+func TestTheHintNamesBothCreateFunctionsAndTheClient(t *testing.T) {
+	for _, phrase := range []string{"keeps drafts", "supatype.create_record,", "supatype.create_records", "client"} {
 		if !strings.Contains(Hint, phrase) {
 			t.Errorf("the hint does not say %q", phrase)
 		}

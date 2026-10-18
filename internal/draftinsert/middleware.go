@@ -131,11 +131,9 @@ func withHint(body []byte) []byte {
 	if code != "42501" || !strings.HasPrefix(message, rlsRefusal) || hasHint(refusal["hint"]) {
 		return body
 	}
+	// Neither marshal can fail: a string, and a map of values that were valid JSON a moment ago.
 	refusal["hint"], _ = json.Marshal(Hint)
-	out, err := json.Marshal(refusal)
-	if err != nil {
-		return body
-	}
+	out, _ := json.Marshal(refusal)
 	return out
 }
 

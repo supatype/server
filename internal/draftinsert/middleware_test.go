@@ -139,3 +139,38 @@ func TestAnUnknownClassificationAddsNothing(t *testing.T) {
 		t.Fatalf("body = %q, want nothing claimed when the schema could not be read", rr.Body.String())
 	}
 }
+
+func TestARefusalThatIsNotJSONIsPassedOnAsItCame(t *testing.T) {
+	asked := 0
+	page := "<html>403 Forbidden</html>"
+	rr := serve(Middleware(drafts(&asked), answering(http.StatusForbidden, page)), http.MethodPost, "/posts")
+	if rr.Code != http.StatusForbidden || rr.Body.String() != page {
+		t.Fatalf("got %d %q, want the page unchanged", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAStreamedResponseIsFlushedThrough(t *testing.T) {
+	asked := 0
+	streaming := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`[]`))
+		w.(http.Flusher).Flush()
+	})
+	rr := serve(Middleware(drafts(&asked), streaming), http.MethodPost, "/posts")
+	if !rr.Flushed {
+		t.Fatal("a flush on a response that is not held did not reach the client")
+	}
+}
+
+func TestAnEncodedRefusalIsNotHeld(t *testing.T) {
+	asked := 0
+	encoded := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("compressed"))
+	})
+	rr := serve(Middleware(drafts(&asked), encoded), http.MethodPost, "/posts")
+	if rr.Body.String() != "compressed" || asked != 0 {
+		t.Fatalf("got %q after %d lookups, want the encoded body passed through unread", rr.Body.String(), asked)
+	}
+}

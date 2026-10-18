@@ -80,3 +80,23 @@ func editorInsert(t *testing.T, secret string) *http.Request {
 	req.Header.Set("Prefer", "return=representation")
 	return req
 }
+
+// A refused insert into a table not known to keep drafts is passed on exactly as it came: here
+// there is no schema to read at all, or (when the live test above ran first, since the
+// classification is memoised per process) one in which only `posts` keeps drafts.
+func TestRestMountLeavesARefusalAloneOnATableNotKnownToKeepDrafts(t *testing.T) {
+	const refused = `{"code":"42501","details":null,"hint":null,"message":"new row violates row-level security policy for table \"comments\""}`
+	postgrest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(refused))
+	}))
+	t.Cleanup(postgrest.Close)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/rest/v1/comments", strings.NewReader(`{"body":"x"}`))
+	liveMux(postgrest.URL, nil).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden || rr.Body.String() != refused {
+		t.Fatalf("got %d %q, want PostgREST's refusal unchanged", rr.Code, rr.Body.String())
+	}
+}

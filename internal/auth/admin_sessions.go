@@ -27,6 +27,19 @@ type adminSession struct {
 // out, most recently used first, for Studio's Users view.
 func (a *API) adminSessions(w http.ResponseWriter, r *http.Request) error {
 	sessions, err := models.FindActiveSessions(a.db.WithContext(r.Context()), time.Now())
+	return sendAdminSessions(w, sessions, err)
+}
+
+// adminUserSessions serves GET /admin/users/{user_id}/sessions: the sessions of that user that
+// have not run out, most recently used first, in the same shape as GET /admin/sessions.
+func (a *API) adminUserSessions(w http.ResponseWriter, r *http.Request) error {
+	ctx := r.Context()
+	sessions, err := models.FindActiveSessionsForUser(a.db.WithContext(ctx), getUser(ctx).ID, time.Now())
+	return sendAdminSessions(w, sessions, err)
+}
+
+// sendAdminSessions answers {"sessions": [...]} with the sessions found, or the error finding them.
+func sendAdminSessions(w http.ResponseWriter, sessions []*models.Session, err error) error {
 	if err != nil {
 		return apierrors.NewInternalServerError("Database error finding sessions").WithInternalError(err)
 	}

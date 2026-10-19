@@ -343,6 +343,7 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 							r.Put("/", api.adminUserUpdateFactor)
 						})
 					})
+					r.Get("/sessions", api.adminUserSessions)
 
 					r.Get("/", api.adminUserGet)
 					r.Put("/", api.adminUserUpdate)

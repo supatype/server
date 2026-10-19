@@ -8,10 +8,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,16 +41,17 @@ type ObjectMeta struct {
 // supatype repo (packages/storage), field for field, because @supatype/client
 // checks every entry against that shape. A value this store does not have is
 // null, never left out, and size and mimetype are lifted out of metadata as the
-// service lifts them. testdata/node-list-entry.json pins it.
+// service lifts them. A folder is an entry too, null in every field but the
+// bucket and its name. testdata/node-list-entry.json pins both shapes.
 type listItem struct {
-	ID             string         `json:"id"`
+	ID             *string        `json:"id"`
 	BucketID       string         `json:"bucket_id"`
 	Name           string         `json:"name"`
 	Owner          *string        `json:"owner"`
 	Metadata       map[string]any `json:"metadata"`
-	CreatedAt      string         `json:"created_at"`
-	UpdatedAt      string         `json:"updated_at"`
-	LastAccessedAt string         `json:"last_accessed_at"`
+	CreatedAt      *string        `json:"created_at"`
+	UpdatedAt      *string        `json:"updated_at"`
+	LastAccessedAt *string        `json:"last_accessed_at"`
 	Size           *int64         `json:"size"`
 	Mimetype       *string        `json:"mimetype"`
 }
@@ -67,24 +71,30 @@ func orNull(s string) *string {
 	return &s
 }
 
+// metaToListItem is a file's list entry. Its id and timestamps are always sent, even empty, as a
+// file entry in the contract never has them null.
 func metaToListItem(m ObjectMeta) listItem {
 	metadata := map[string]any{"size": m.Size}
 	if m.ContentType != "" {
 		metadata["mimetype"] = m.ContentType
 	}
-	size := m.Size
 	return listItem{
-		ID:             m.ID,
+		ID:             &m.ID,
 		BucketID:       m.BucketID,
 		Name:           m.Name,
 		Owner:          orNull(m.Owner),
 		Metadata:       metadata,
-		CreatedAt:      m.CreatedAt,
-		UpdatedAt:      m.UpdatedAt,
-		LastAccessedAt: m.LastAccessedAt,
-		Size:           &size,
+		CreatedAt:      &m.CreatedAt,
+		UpdatedAt:      &m.UpdatedAt,
+		LastAccessedAt: &m.LastAccessedAt,
+		Size:           &m.Size,
 		Mimetype:       orNull(m.ContentType),
 	}
+}
+
+// folderItem is a subfolder's list entry: the bucket and the folder's name, and null for the rest.
+func folderItem(bucket, name string) listItem {
+	return listItem{BucketID: bucket, Name: name}
 }
 
 // sidecarlessMeta stands in for the sidecar of a file written without one. The
@@ -391,86 +401,135 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 
 // ─── List objects ─────────────────────────────────────────────────────────────
 
+// listRequest is the body of a list: the folder, the text a name must contain, and the page.
+// A limit or offset that is absent, zero or negative is the default: 100 entries from the first.
+type listRequest struct {
+	Prefix string `json:"prefix"`
+	Search string `json:"search"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
 // listObjects: POST /object/list/{bucket}
-// Requires a valid JWT. Body: { prefix?, limit?, offset? }
+// Requires a valid JWT. Body: { prefix?, limit?, offset?, search? }
+// Answers the folder's direct children as the storage service does: one entry per subfolder, then
+// the files, each named relative to the folder. X-Total-Count is how many matched the search
+// before the page was cut.
 func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
-	var body struct {
-		Prefix *string `json:"prefix"`
-		Limit  *int    `json:"limit"`
-		Offset *int    `json:"offset"`
-	}
+	var body listRequest
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	prefix := ""
-	if body.Prefix != nil {
-		prefix = *body.Prefix
-	}
-	limit := 100
-	if body.Limit != nil && *body.Limit > 0 {
-		limit = *body.Limit
-	}
-	offset := 0
-	if body.Offset != nil && *body.Offset > 0 {
-		offset = *body.Offset
-	}
-
-	bucketDir, err := s.bucketDir(bucket)
+	dir, folder, err := s.listFolder(bucket, body.Prefix)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	searchDir := bucketDir
-	if prefix != "" {
-		cleanPrefix, err := cleanObjectPath(prefix, true)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		searchDir = filepath.Join(bucketDir, cleanPrefix)
+	items := matchingItems(s.folderChildren(bucket, dir, folder), body.Search)
+
+	w.Header().Set("X-Total-Count", strconv.Itoa(len(items)))
+	w.Header().Set("Access-Control-Expose-Headers", "X-Total-Count")
+	utilities.WriteJSON(w, http.StatusOK, pageOf(items, body.Limit, body.Offset))
+}
+
+// listFolder is the directory a list prefix names and the folder's object path ("" for the
+// bucket root), with the slashes around the prefix stripped.
+func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error) {
+	bucketDir, err := s.bucketDir(bucket)
+	if err != nil {
+		return "", "", err
 	}
+	rel, err := cleanObjectPath(strings.Trim(prefix, "/"), true)
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(bucketDir, rel), filepath.ToSlash(rel), nil
+}
 
-	var results []ObjectMeta
-	_ = filepath.Walk(searchDir, func(path string, info os.FileInfo, err error) error { // #nosec G703 -- searchDir is under storageRoot after bucket/prefix validation above.
-		if err != nil || info.IsDir() {
+// folderChildren is the folder's direct children: an entry for each subfolder with an object
+// somewhere below it, then one for each file, each group in byte order by name. A folder that is
+// not there, or is a file, has none, and the sidecar tree is never listed.
+func (s *store) folderChildren(bucket, dir, folder string) []listItem {
+	if folder == ".meta" || strings.HasPrefix(folder, ".meta/") {
+		return []listItem{}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []listItem{}
+	}
+	var folders, files []listItem
+	for _, e := range entries {
+		switch {
+		case folder == "" && e.Name() == ".meta":
+			// The sidecar tree, not a folder of objects.
+		case e.IsDir():
+			if holdsAnObject(filepath.Join(dir, e.Name())) {
+				folders = append(folders, folderItem(bucket, e.Name()))
+			}
+		default:
+			// A file removed since the directory was read has no info and is no longer a child.
+			if info, err := e.Info(); err == nil {
+				files = append(files, s.fileItem(bucket, folder, info))
+			}
+		}
+	}
+	return append(append(make([]listItem, 0, len(folders)+len(files)), folders...), files...)
+}
+
+// holdsAnObject reports whether a file lies anywhere below dir, so an empty tree is not a folder.
+func holdsAnObject(dir string) bool {
+	found := false
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error { // #nosec G703 -- dir is a child of the folder listFolder validated under the storage root.
+		if err != nil || d.IsDir() {
 			return nil
 		}
-		// Skip .meta sidecar files.
-		rel, _ := filepath.Rel(bucketDir, path)
-		if strings.HasPrefix(rel, ".meta"+string(os.PathSeparator)) || rel == ".meta" {
-			return nil
-		}
-
-		objPath := filepath.ToSlash(rel)
-		if meta, err := s.loadObjectMeta(bucket, objPath); err == nil {
-			results = append(results, *meta)
-		} else {
-			results = append(results, sidecarlessMeta(bucket, objPath, info))
-		}
-		return nil
+		found = true
+		return fs.SkipAll
 	})
+	return found
+}
 
-	if results == nil {
-		results = []ObjectMeta{}
+// fileItem is the list entry of a file directly in the folder, named by its own name.
+func (s *store) fileItem(bucket, folder string, info os.FileInfo) listItem {
+	objPath := path.Join(folder, info.Name())
+	meta, err := s.loadObjectMeta(bucket, objPath)
+	if err != nil {
+		fallback := sidecarlessMeta(bucket, objPath, info)
+		meta = &fallback
 	}
+	item := metaToListItem(*meta)
+	item.Name = info.Name()
+	return item
+}
 
-	// Apply pagination.
-	if offset < len(results) {
-		results = results[offset:]
-	} else {
-		results = []ObjectMeta{}
+// matchingItems is the items whose name contains search, ignoring case; all of them when search
+// is empty. The text is matched literally.
+func matchingItems(items []listItem, search string) []listItem {
+	if search == "" {
+		return items
 	}
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
+	needle := strings.ToLower(search)
+	kept := make([]listItem, 0, len(items))
+	for _, item := range items {
+		if strings.Contains(strings.ToLower(item.Name), needle) {
+			kept = append(kept, item)
+		}
 	}
+	return kept
+}
 
-	// Convert to wire format (metadata nested under "metadata" key).
-	items := make([]listItem, len(results))
-	for i, r := range results {
-		items[i] = metaToListItem(r)
+// pageOf is `limit` items from `offset`, with the defaults listRequest describes.
+func pageOf(items []listItem, limit, offset int) []listItem {
+	if limit <= 0 {
+		limit = 100
 	}
-	utilities.WriteJSON(w, http.StatusOK, items)
+	offset = max(offset, 0)
+	if offset >= len(items) {
+		return []listItem{}
+	}
+	items = items[offset:]
+	return items[:min(limit, len(items))]
 }
 
 // ─── Signed URLs ──────────────────────────────────────────────────────────────

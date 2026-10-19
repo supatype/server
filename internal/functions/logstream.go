@@ -17,7 +17,7 @@ import (
 //
 // # Why a relay and not a store
 //
-// `RecentLogs` on the local Deno manager answers `GET /{name}/logs`, and it only exists when this
+// `FunctionLogs` on the local Deno manager answers `GET /{name}/logs`, and it only exists when this
 // server supervises Deno itself. In Compose and on cloud the functions run in a separate worker
 // container, so that source is nil and the route returns nothing: the read API was there and
 // nothing wrote to it. That was the whole of the F13 gap.

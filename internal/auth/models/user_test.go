@@ -108,7 +108,7 @@ func (ts *UserTestSuite) TestFindUserByEmailAndAudience() {
 func (ts *UserTestSuite) TestFindUsersInAudience() {
 	u := ts.createUser()
 
-	n, err := FindUsersInAudience(ts.db, u.Aud, nil, nil, "")
+	n, err := FindUsersInAudience(ts.db, u.Aud, nil, nil, UserFilters{})
 	require.NoError(ts.T(), err)
 	require.Len(ts.T(), n, 1)
 
@@ -116,7 +116,7 @@ func (ts *UserTestSuite) TestFindUsersInAudience() {
 		Page:    1,
 		PerPage: 50,
 	}
-	n, err = FindUsersInAudience(ts.db, u.Aud, &p, nil, "")
+	n, err = FindUsersInAudience(ts.db, u.Aud, &p, nil, UserFilters{})
 	require.NoError(ts.T(), err)
 	require.Len(ts.T(), n, 1)
 	assert.Equal(ts.T(), uint64(1), p.Count)
@@ -126,7 +126,7 @@ func (ts *UserTestSuite) TestFindUsersInAudience() {
 			{Name: "created_at", Dir: Descending},
 		},
 	}
-	n, err = FindUsersInAudience(ts.db, u.Aud, nil, sp, "")
+	n, err = FindUsersInAudience(ts.db, u.Aud, nil, sp, UserFilters{})
 	require.NoError(ts.T(), err)
 	require.Len(ts.T(), n, 1)
 }

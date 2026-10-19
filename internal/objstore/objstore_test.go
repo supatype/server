@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -722,46 +724,152 @@ func TestRemoveObjectsRefusals(t *testing.T) {
 
 // ─── Listing ──────────────────────────────────────────────────────────────────
 
+// listNames lists the avatars bucket with `body` and answers the entry names in order, a folder
+// written with a trailing "/" so a test can tell it from a file, and the X-Total-Count header.
+func listNames(t *testing.T, handler http.Handler, body string) ([]string, string) {
+	t.Helper()
+	rec := do(t, handler, http.MethodPost, "/object/list/avatars", userToken(t), strings.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		name, _ := e["name"].(string)
+		if e["id"] == nil {
+			name += "/"
+		}
+		names = append(names, name)
+	}
+	return names, rec.Header().Get("X-Total-Count")
+}
+
+// assertListNames fails unless listing with `body` answers `want` and counts `total`.
+func assertListNames(t *testing.T, handler http.Handler, body string, total int, want ...string) {
+	t.Helper()
+	got, count := listNames(t, handler, body)
+	if !slices.Equal(got, append([]string{}, want...)) {
+		t.Errorf("%s: names = %q, want %q", body, got, want)
+	}
+	if count != strconv.Itoa(total) {
+		t.Errorf("%s: X-Total-Count = %q, want %d", body, count, total)
+	}
+}
+
+// A list is one folder's direct children, as the storage service answers it: a folder entry for
+// each subfolder, then the files, each named relative to the folder. It used to be every object
+// below the folder under its full path, so the storage browser could not walk a tree.
 func TestListObjects(t *testing.T) {
 	handler, _ := newStore(t)
 	makeBucket(t, handler, "avatars", true)
 	upload(t, handler, "avatars", "a.png", "one")
 	upload(t, handler, "avatars", "users/1/b.png", "two")
 
-	rec := do(t, handler, http.MethodPost, "/object/list/avatars", userToken(t), strings.NewReader(`{}`))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	items := listEntries(t, handler, "avatars")
+	if len(items) != 2 || items[0]["name"] != "users" || items[1]["name"] != "a.png" {
+		t.Fatalf("items = %v, want the users folder then a.png, and no sidecars", items)
 	}
-
-	var items []listItem
-	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
-		t.Fatal(err)
+	if items[0]["id"] != nil || items[0]["metadata"] != nil {
+		t.Errorf("folder = %v, want no id and no metadata", items[0])
 	}
-	if len(items) != 2 {
-		t.Fatalf("items = %+v, want both objects and no sidecars", items)
-	}
-	for _, item := range items {
-		if item.Metadata["mimetype"] == nil || item.Metadata["size"] == nil {
-			t.Errorf("%s: metadata = %v, want size and mimetype nested", item.Name, item.Metadata)
-		}
+	metadata, _ := items[1]["metadata"].(map[string]any)
+	if metadata["mimetype"] == nil || metadata["size"] == nil {
+		t.Errorf("a.png: metadata = %v, want size and mimetype nested", items[1]["metadata"])
 	}
 }
 
-// A prefix narrows the listing to one directory, which is how the storage
-// browser walks a tree.
+// A prefix names a folder, which is how the storage browser walks a tree. Slashes around it do not
+// matter, and the names stay relative to the folder.
 func TestListObjectsUnderAPrefix(t *testing.T) {
 	handler, _ := newStore(t)
 	makeBucket(t, handler, "avatars", true)
 	upload(t, handler, "avatars", "a.png", "one")
 	upload(t, handler, "avatars", "users/1/b.png", "two")
+	upload(t, handler, "avatars", "users/c.png", "three")
 
-	rec := do(t, handler, http.MethodPost, "/object/list/avatars", userToken(t), strings.NewReader(`{"prefix":"users"}`))
-	var items []listItem
-	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
-		t.Fatal(err)
+	assertListNames(t, handler, `{"prefix":"users"}`, 2, "1/", "c.png")
+	assertListNames(t, handler, `{"prefix":"/users/1/"}`, 1, "b.png")
+	assertListNames(t, handler, `{"prefix":""}`, 2, "users/", "a.png")
+}
+
+// A nested file is not a child of the root; its folder is. A folder with no object anywhere below
+// it is not listed, and neither is the sidecar tree.
+func TestListObjectsDirectChildrenOnly(t *testing.T) {
+	handler, root := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	upload(t, handler, "avatars", "a.png", "one")
+	upload(t, handler, "avatars", "users/1/b.png", "two")
+	upload(t, handler, "avatars", "docs/readme.md", "three")
+	for _, dir := range []string{"empty", filepath.Join("hollow", "inner")} {
+		if err := os.MkdirAll(filepath.Join(root, "avatars", dir), 0o750); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if len(items) != 1 || items[0].Name != "users/1/b.png" {
-		t.Errorf("items = %+v", items)
+
+	assertListNames(t, handler, `{}`, 3, "docs/", "users/", "a.png")
+}
+
+// Folders come first, then files, each sorted by name in byte order, so capitals sort first.
+func TestListObjectsOrder(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	for _, p := range []string{"b.png", "a/x", "Z.png", "B/x"} {
+		upload(t, handler, "avatars", p, "x")
+	}
+
+	assertListNames(t, handler, `{}`, 4, "B/", "a/", "Z.png", "b.png")
+}
+
+// search keeps the entries whose name contains it, ignoring case, folders and files alike. Its
+// characters are literal: _ is not a wildcard.
+func TestListObjectsSearch(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	for _, p := range []string{"Photos/x.png", "photo.png", "notes.txt", "a_b.txt", "axb.txt", "photography/deep/y.png"} {
+		upload(t, handler, "avatars", p, "x")
+	}
+
+	assertListNames(t, handler, `{"search":"PHOTO"}`, 3, "Photos/", "photography/", "photo.png")
+	assertListNames(t, handler, `{"search":"A_B"}`, 1, "a_b.txt")
+	assertListNames(t, handler, `{"search":"x.png"}`, 0)
+	assertListNames(t, handler, `{"search":"photo","limit":1,"offset":1}`, 3, "photography/")
+}
+
+// limit and offset page over folders and files together, and the count is of everything that
+// matched, not of the page.
+func TestListObjectsPagesAcrossFoldersAndFiles(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	for _, p := range []string{"f1/x", "f2/x", "f3/x", "a.png", "b.png", "c.png"} {
+		upload(t, handler, "avatars", p, "x")
+	}
+
+	assertListNames(t, handler, `{"limit":2,"offset":2}`, 6, "f3/", "a.png")
+	assertListNames(t, handler, `{"limit":2}`, 6, "f1/", "f2/")
+	assertListNames(t, handler, `{"offset":5}`, 6, "c.png")
+}
+
+// A folder that is not there, or a prefix that names a file, lists nothing rather than failing.
+func TestListingAFolderThatDoesNotExist(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	upload(t, handler, "avatars", "a.png", "one")
+
+	assertListNames(t, handler, `{"prefix":"nope"}`, 0)
+	assertListNames(t, handler, `{"prefix":"a.png"}`, 0)
+}
+
+// The count is a header, so a browser reads it only when the answer exposes it.
+func TestListTotalIsExposedCrossOrigin(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+
+	rec := do(t, handler, http.MethodPost, "/object/list/avatars", userToken(t), strings.NewReader(`{}`))
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "X-Total-Count") {
+		t.Errorf("Access-Control-Expose-Headers = %q, want X-Total-Count", got)
 	}
 }
 
@@ -818,10 +926,10 @@ func TestAnObjectWithNoSidecarGetsAStableID(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
 			t.Fatal(err)
 		}
-		if len(items) != 1 {
+		if len(items) != 1 || items[0].ID == nil {
 			t.Fatalf("items = %+v", items)
 		}
-		return items[0].ID
+		return *items[0].ID
 	}
 
 	first, second := ids(), ids()

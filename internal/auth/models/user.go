@@ -761,16 +761,65 @@ func findUserWithLegacyRefreshToken(tx *storage.Connection, token string, forUpd
 	return user, refreshToken, session, nil
 }
 
-// FindUsersInAudience finds users with the matching audience.
-func FindUsersInAudience(tx *storage.Connection, aud string, pageParams *Pagination, sortParams *SortParams, filter string) ([]*User, error) {
-	users := []*User{}
-	q := tx.Q().Where("instance_id = ? and aud = ?", uuid.Nil, aud)
+// likePatternEscaper makes the LIKE wildcards in a search literal, escaping the escape character first.
+var likePatternEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-	if filter != "" {
-		lf := "%" + filter + "%"
-		// we must specify the collation in order to get case insensitive search for the JSON column
-		q = q.Where("(email LIKE ? OR raw_user_meta_data->>'full_name' ILIKE ?)", lf, lf)
+// escapeLikePattern is `s` as a LIKE pattern that matches only `s` itself, for `ESCAPE '\'`.
+func escapeLikePattern(s string) string {
+	return likePatternEscaper.Replace(s)
+}
+
+// UserFilters narrows the users FindUsersInAudience lists. Every filter that is set must hold;
+// an empty string or a nil pointer leaves that filter out.
+type UserFilters struct {
+	// Search is text the email, full_name or name contains, ignoring case.
+	Search string
+	// Role is the exact users.role.
+	Role string
+	// Banned is whether the user is banned right now.
+	Banned *bool
+	// Confirmed is whether the user has confirmed an email or a phone.
+	Confirmed *bool
+	// Provider is a provider the user has an identity from.
+	Provider string
+}
+
+// apply adds a WHERE clause to `q` for every filter that is set.
+func (f UserFilters) apply(q *pop.Query) *pop.Query {
+	if f.Search != "" {
+		lf := "%" + escapeLikePattern(f.Search) + "%"
+		// Case insensitive on every column: an email stored with capitals, by SQL or an import, is
+		// still found. `name` is where OAuth providers put the display name; `full_name` is ours.
+		q = q.Where(`(email ILIKE ? ESCAPE '\' OR raw_user_meta_data->>'full_name' ILIKE ? ESCAPE '\' OR raw_user_meta_data->>'name' ILIKE ? ESCAPE '\')`, lf, lf, lf)
 	}
+	if f.Role != "" {
+		q = q.Where("role = ?", f.Role)
+	}
+	q = whereEither(q, f.Banned, "(banned_until IS NOT NULL AND banned_until > now())")
+	q = whereEither(q, f.Confirmed, "(email_confirmed_at IS NOT NULL OR phone_confirmed_at IS NOT NULL)")
+	if f.Provider != "" {
+		identities := (&pop.Model{Value: Identity{}}).TableName()
+		q = q.Where("EXISTS (SELECT 1 FROM "+identities+" i WHERE i.user_id = users.id AND i.provider = ?)", f.Provider)
+	}
+	return q
+}
+
+// whereEither adds `cond` to `q` when `want` is true and its negation when false; nil adds nothing.
+// `cond` must not yield NULL, so that NOT picks out exactly the rows it does not hold for.
+func whereEither(q *pop.Query, want *bool, cond string) *pop.Query {
+	if want == nil {
+		return q
+	}
+	if *want {
+		return q.Where(cond)
+	}
+	return q.Where("NOT " + cond)
+}
+
+// FindUsersInAudience finds users with the matching audience that pass every filter set.
+func FindUsersInAudience(tx *storage.Connection, aud string, pageParams *Pagination, sortParams *SortParams, filters UserFilters) ([]*User, error) {
+	users := []*User{}
+	q := filters.apply(tx.Q().Where("instance_id = ? and aud = ?", uuid.Nil, aud))
 
 	if sortParams != nil && len(sortParams.Fields) > 0 {
 		for _, field := range sortParams.Fields {

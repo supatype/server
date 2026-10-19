@@ -3,10 +3,12 @@ package functions
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -128,7 +130,7 @@ func TestListFunctionsWithNoDirectory(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	// The same shape as a directory that does exist. This asserted a bare `[]`, so the route
-	// answered one shape when the project had functions and another when it had none — and the
+	// answered one shape when the project had functions and another when it had none, and the
 	// second is the case least likely to be exercised before release.
 	if strings.TrimSpace(rec.Body.String()) != `{"data":[]}` {
 		t.Errorf("body = %q, want an empty list in the usual envelope", rec.Body.String())
@@ -334,7 +336,7 @@ func TestDeletingAKeyThatIsNotThere(t *testing.T) {
 // withName builds a request carrying a function name as chi would.
 //
 // Tested at the resolver rather than through the router, because most of what
-// this refuses is not something a URL path can even express — which is exactly
+// this refuses is not something a URL path can even express, and that is exactly
 // why the check must not rely on the router having refused it first.
 func withName(name string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/env", nil)
@@ -476,15 +478,80 @@ func TestReadEnvFileUnderAMissingDirectory(t *testing.T) {
 // stubLogs is a worker that has these lines and nothing else.
 type stubLogs []deno.LogLine
 
-func (s stubLogs) RecentLogs(time.Time, int) []deno.LogLine { return s }
+// FunctionLogs is the newest n of the lines `function` wrote, oldest first, as the manager answers.
+func (s stubLogs) FunctionLogs(function string, _ time.Time, n int) []deno.LogLine {
+	var mine []deno.LogLine
+	for _, l := range s {
+		if l.Function == function {
+			mine = append(mine, l)
+		}
+	}
+	return mine[max(0, len(mine)-n):]
+}
+
+// logMessages is the messages of a GET /{name}/logs answer, in order.
+func logMessages(t *testing.T, handler http.Handler, path string) []string {
+	t.Helper()
+	rec := call(t, handler, http.MethodGet, path, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data []logEntry `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	messages := make([]string, 0, len(body.Data))
+	for _, e := range body.Data {
+		messages = append(messages, e.Message)
+	}
+	return messages
+}
+
+// A function's logs are its own lines: not another function's, and not Deno's own output, which
+// names no function and so cannot be said to be this one's.
+func TestLogsAreOnlyThatFunctions(t *testing.T) {
+	at := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	source := stubLogs{
+		{Timestamp: at, Level: "info", Message: "hello 1", Function: "hello"},
+		{Timestamp: at, Level: "info", Message: "other 1", Function: "other"},
+		{Timestamp: at, Level: "error", Message: "error: Uncaught TypeError"},
+		{Timestamp: at, Level: "info", Message: "hello 2", Function: "hello"},
+	}
+	handler := Handler(&config.Config{Mode: "standalone", ServiceRoleKey: serviceKey}, t.TempDir(), source)
+
+	if got := logMessages(t, handler, "/hello/logs"); !slices.Equal(got, []string{"hello 1", "hello 2"}) {
+		t.Errorf("hello's logs = %v", got)
+	}
+	if got := logMessages(t, handler, "/other/logs"); !slices.Equal(got, []string{"other 1"}) {
+		t.Errorf("other's logs = %v", got)
+	}
+}
+
+// At most 500 lines, and the newest of the function's own: a busy neighbour does not use them up.
+func TestLogsKeepTheFunctionsNewest500(t *testing.T) {
+	var source stubLogs
+	for i := 0; i < 600; i++ {
+		source = append(source,
+			deno.LogLine{Level: "info", Message: fmt.Sprintf("hello %d", i), Function: "hello"},
+			deno.LogLine{Level: "info", Message: "noise", Function: "other"})
+	}
+	handler := Handler(&config.Config{Mode: "standalone", ServiceRoleKey: serviceKey}, t.TempDir(), source)
+
+	got := logMessages(t, handler, "/hello/logs")
+	if len(got) != 500 || got[0] != "hello 100" || got[499] != "hello 599" {
+		t.Fatalf("got %d lines from %q to %q, want hello 100 to hello 599", len(got), got[0], got[len(got)-1])
+	}
+}
 
 // The worker's lines are relayed with their level and a parseable timestamp,
 // which is what `supatype dev` renders.
 func TestLogsAreRelayedFromTheWorker(t *testing.T) {
 	at := time.Date(2026, 8, 28, 12, 0, 0, 500, time.UTC)
 	source := stubLogs{
-		{Timestamp: at, Level: "info", Message: "listening"},
-		{Timestamp: at.Add(time.Second), Level: "error", Message: "boom"},
+		{Timestamp: at, Level: "info", Message: "listening", Function: "hello"},
+		{Timestamp: at.Add(time.Second), Level: "error", Message: "boom", Function: "hello"},
 	}
 	handler := Handler(&config.Config{Mode: "standalone", ServiceRoleKey: serviceKey}, t.TempDir(), source)
 
@@ -538,7 +605,7 @@ func TestAFailedWriteIsReported(t *testing.T) {
 }
 
 // Every endpoint that reads a file reports a file it cannot read, rather than
-// treating it as empty — which for a set would silently wipe it.
+// treating it as empty: for a set, that would silently wipe it.
 func TestEveryEndpointReportsAnUnreadableFile(t *testing.T) {
 	handler := Handler(&config.Config{Mode: "standalone", ServiceRoleKey: serviceKey}, "bad\x00dir", nil)
 

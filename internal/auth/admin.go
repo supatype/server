@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -103,6 +105,36 @@ func (a *API) getAdminParams(r *http.Request) (*AdminUserParams, error) {
 	return params, nil
 }
 
+// userFiltersFromQuery reads the GET /admin/users filters: filter, role, banned, confirmed and
+// provider. An empty value leaves that filter out.
+func userFiltersFromQuery(query url.Values) (models.UserFilters, error) {
+	filters := models.UserFilters{
+		Search:   query.Get("filter"),
+		Role:     query.Get("role"),
+		Provider: query.Get("provider"),
+	}
+	var err error
+	if filters.Banned, err = optionalBool(query, "banned"); err != nil {
+		return filters, err
+	}
+	filters.Confirmed, err = optionalBool(query, "confirmed")
+	return filters, err
+}
+
+// optionalBool is the query parameter `name` as true or false, or nil when it is absent or empty.
+// Only the words true and false are accepted.
+func optionalBool(query url.Values, name string) (*bool, error) {
+	switch value := query.Get(name); value {
+	case "":
+		return nil, nil
+	case "true", "false":
+		b := value == "true"
+		return &b, nil
+	default:
+		return nil, fmt.Errorf("%s must be true or false, got %q", name, value)
+	}
+}
+
 // adminUsers responds with a list of all users in a given audience
 func (a *API) adminUsers(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
@@ -119,9 +151,12 @@ func (a *API) adminUsers(w http.ResponseWriter, r *http.Request) error {
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Bad Sort Parameters: %v", err)
 	}
 
-	filter := r.URL.Query().Get("filter")
+	filters, err := userFiltersFromQuery(r.URL.Query())
+	if err != nil {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Bad Filter Parameters: %v", err)
+	}
 
-	users, err := models.FindUsersInAudience(db, aud, pageParams, sortParams, filter)
+	users, err := models.FindUsersInAudience(db, aud, pageParams, sortParams, filters)
 	if err != nil {
 		return apierrors.NewInternalServerError("Database error finding users").WithInternalError(err)
 	}

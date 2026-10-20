@@ -33,6 +33,9 @@ type FlowState struct {
 	OAuthClientStateID *uuid.UUID `json:"oauth_client_state_id,omitempty" db:"oauth_client_state_id"`
 	LinkingTargetID    *uuid.UUID `json:"linking_target_id,omitempty" db:"linking_target_id"`
 	EmailOptional      bool       `json:"email_optional" db:"email_optional"`
+	// Studio marks a sign-in Studio started: the callback returns to the server's own Studio
+	// address rather than to the referrer.
+	Studio bool `json:"studio" db:"studio"`
 }
 
 // FlowStateParams contains all parameters for creating a flow state
@@ -47,6 +50,7 @@ type FlowStateParams struct {
 	OAuthClientStateID   *uuid.UUID
 	LinkingTargetID      *uuid.UUID
 	EmailOptional        bool
+	Studio               bool
 }
 
 type CodeChallengeMethod int
@@ -111,6 +115,7 @@ func NewFlowState(params FlowStateParams) (*FlowState, error) {
 		AuthenticationMethod: params.AuthenticationMethod.String(),
 		UserID:               params.UserID,
 		EmailOptional:        params.EmailOptional,
+		Studio:               params.Studio,
 		OAuthClientStateID:   params.OAuthClientStateID,
 		LinkingTargetID:      params.LinkingTargetID,
 	}

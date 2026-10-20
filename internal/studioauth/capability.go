@@ -193,6 +193,29 @@ func isDataPlane(path string) bool {
 	return false
 }
 
+// serviceRoleOnlyPrefixes are the upstreams behind the proxy that admit nothing
+// but the service role: the admin API, GoTrue's user administration, storage
+// bucket management and function administration. A caller's own token is
+// refused by each of them, whatever their Studio role.
+var serviceRoleOnlyPrefixes = []string{"/admin/v1", "/auth/v1/admin", "/storage/v1/bucket", "/functions/v1/admin"}
+
+// isServiceRoleOnly reports whether a proxied request goes to an upstream that
+// admits only the service role. The self-host control plane is one, except for
+// the Realtime Inspector's routes, which mediate a caller acting as themselves.
+//
+// Acting as yourself decides whose policies filter project rows. It was also
+// sending the caller's own token to these routes, so an admin who switched had
+// every administration screen refused ("User not allowed", "Forbidden:
+// service_role required"), administration their role still held.
+func isServiceRoleOnly(method, path string) bool {
+	for _, prefix := range serviceRoleOnlyPrefixes {
+		if under(path, prefix) {
+			return true
+		}
+	}
+	return under(path, "/platform/v1") && !IsRealtimeInspectorRoute(method, path)
+}
+
 // under reports whether path is prefix or lies beneath it, on a segment
 // boundary, the way the router mounts a sub-tree. `/rest/v1x` is not under
 // `/rest/v1`. Paths are not cleaned, because the router does not clean them

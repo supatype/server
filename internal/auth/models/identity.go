@@ -32,6 +32,10 @@ func (Identity) TableName() string {
 	return tableName
 }
 
+// identitiesOldestFirst orders a user's identities by when they were linked,
+// the id breaking a tie, so the first is the same on every read.
+const identitiesOldestFirst = "created_at asc, id asc"
+
 // GetEmail returns the user's email as a string
 func (i *Identity) GetEmail() string {
 	return string(i.Email)
@@ -86,10 +90,12 @@ func FindIdentityByIdAndProvider(tx *storage.Connection, providerId, provider st
 	return identity, nil
 }
 
-// FindIdentitiesByUserID returns all identities associated to a user ID.
+// FindIdentitiesByUserID returns all identities associated to a user ID, oldest
+// first, so a caller that falls back to the first suitable one picks the same
+// identity whatever order the rows are stored in.
 func FindIdentitiesByUserID(tx *storage.Connection, userID uuid.UUID) ([]*Identity, error) {
 	identities := []*Identity{}
-	if err := tx.Q().Where("user_id = ?", userID).All(&identities); err != nil {
+	if err := tx.Q().Where("user_id = ?", userID).Order(identitiesOldestFirst).All(&identities); err != nil {
 		if errors.Cause(err) == sql.ErrNoRows {
 			return identities, nil
 		}
@@ -117,7 +123,7 @@ func loadIdentitiesForUsers(tx *storage.Connection, users []*User) error {
 	// One array parameter rather than IN (?, ?, ...): a page of any size binds
 	// one value, never nearing Postgres's limit on bind parameters.
 	identities := []Identity{}
-	if err := tx.Q().Where("user_id = ANY(?::uuid[])", ids).Order("created_at asc").All(&identities); err != nil {
+	if err := tx.Q().Where("user_id = ANY(?::uuid[])", ids).Order(identitiesOldestFirst).All(&identities); err != nil {
 		return errors.Wrap(err, "error finding identities")
 	}
 	for _, identity := range identities {
@@ -127,12 +133,14 @@ func loadIdentitiesForUsers(tx *storage.Connection, users []*User) error {
 	return nil
 }
 
-// FindProvidersByUser returns all providers associated to a user
+// FindProvidersByUser returns all providers associated to a user, oldest
+// identity first. The first is recorded as the user's primary provider, so the
+// order must not depend on where the rows happen to sit in the table.
 func FindProvidersByUser(tx *storage.Connection, user *User) ([]string, error) {
 	identities := []Identity{}
 	providerExists := map[string]bool{}
 	providers := make([]string, 0)
-	if err := tx.Q().Select("provider").Where("user_id = ?", user.ID).All(&identities); err != nil {
+	if err := tx.Q().Select("provider").Where("user_id = ?", user.ID).Order(identitiesOldestFirst).All(&identities); err != nil {
 		if errors.Cause(err) == sql.ErrNoRows {
 			return providers, nil
 		}

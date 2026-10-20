@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +37,6 @@ func (a *API) ExternalProviderRedirect(w http.ResponseWriter, r *http.Request) e
 func (a *API) GetExternalProviderRedirectURL(w http.ResponseWriter, r *http.Request, linkingTargetUser *models.User) (string, error) {
 	ctx := r.Context()
 	db := a.db.WithContext(ctx)
-	config := a.config
 
 	query := r.URL.Query()
 	providerType := query.Get("provider")
@@ -60,7 +60,10 @@ func (a *API) GetExternalProviderRedirectURL(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	redirectURL := utilities.GetReferrer(r, config)
+	redirectURL, studio, err := a.flowReturn(r, query)
+	if err != nil {
+		return "", err
+	}
 	log := observability.GetLogEntry(r).Entry
 	log.WithField("provider", providerType).Info("Redirecting to external provider")
 	if err := validatePKCEParams(codeChallengeMethod, codeChallenge); err != nil {
@@ -104,6 +107,7 @@ func (a *API) GetExternalProviderRedirectURL(w http.ResponseWriter, r *http.Requ
 		Referrer:             redirectURL,
 		OAuthClientStateID:   oauthClientStateID,
 		EmailOptional:        pConfig.EmailOptional,
+		Studio:               studio,
 	}
 
 	if linkingTargetUser != nil {
@@ -875,9 +879,40 @@ func getErrorQueryString(err error, errorID string, log logrus.FieldLogger, q ur
 	return &q
 }
 
+// flowReturn decides where the callback for this sign-in sends the browser, and whether Studio
+// started it (studio=1).
+//
+// A Studio sign-in keeps no address from the request: the callback derives Studio's address from
+// configuration (utilities.StudioURL), so neither redirect_to nor the Referer can move it. Any other
+// sign-in keeps the validated redirect_to or Referer, as before. The flag is removed from the query
+// either way, so it is not forwarded to the provider.
+func (a *API) flowReturn(r *http.Request, query url.Values) (referrer string, studio bool, err error) {
+	studio = isStudioSignIn(query.Get("studio"))
+	query.Del("studio")
+	if !studio {
+		return utilities.GetReferrer(r, a.config), false, nil
+	}
+	if _, err := utilities.StudioURL(a.config.API.ExternalURL); err != nil {
+		return "", true, apierrors.NewInternalServerError("Studio sign-in is unavailable: the API external URL is not usable").WithInternalError(err)
+	}
+	return "", true, nil
+}
+
+func isStudioSignIn(value string) bool {
+	on, err := strconv.ParseBool(value)
+	return err == nil && on
+}
+
 func (a *API) getExternalRedirectURL(r *http.Request) string {
 	ctx := r.Context()
 	config := a.config
+	if flowState := getFlowState(ctx); flowState != nil && flowState.Studio {
+		// Checked when the flow started, so this only fails if the configuration changed since.
+		if studio, err := utilities.StudioURL(config.API.ExternalURL); err == nil {
+			return studio
+		}
+		return config.SiteURL
+	}
 	if config.External.RedirectURL != "" {
 		return config.External.RedirectURL
 	}

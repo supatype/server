@@ -54,7 +54,8 @@ BEGIN
             'db_role',      db_role,
             'session_user', session_user::text,
             'jwt_sub',      subject,
-            'via_api',      coalesce(current_setting('supatype.membership_api', true), '') = 'on'
+            'via_api',      coalesce(current_setting('supatype.membership_api', true), '') = 'on',
+            'source',       nullif(current_setting('supatype.membership_api', true), '')
         )
     );
     RETURN NULL;
@@ -311,6 +312,34 @@ func TestListFlagsAChangeMadeOutsideStudio(t *testing.T) {
 	}
 	if changedOutside(t, ctx, store, plainUsr) {
 		t.Error("a change through Studio did not clear the flag")
+	}
+}
+
+// The CLI's admin commands and the engine's first-push seed are trusted ways
+// to change membership, marked `cli` and `seed`; any other mark, or none, is a
+// change made around Studio and stays flagged.
+func TestListTrustsTheCLIAndTheSeed(t *testing.T) {
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+		VALUES ('`+adminA+`', 'admin'), ('`+plainUsr+`', 'editor')`)
+	pool := installMembershipTrigger(t, ctx, store)
+	promote := `UPDATE _supatype.studio_members SET role = 'admin' WHERE user_id = '` + plainUsr + `'`
+	demote := `UPDATE _supatype.studio_members SET role = 'viewer' WHERE user_id = '` + plainUsr + `'`
+
+	for _, step := range []struct {
+		source  string
+		stmt    string
+		flagged bool
+	}{
+		{"cli", promote, false},
+		{"", demote, true},
+		{"seed", promote, false},
+		{"anything-else", demote, true},
+	} {
+		settings := map[string]string{"supatype.membership_api": step.source}
+		asProbe(t, ctx, pool, settings, step.stmt)
+		if got := changedOutside(t, ctx, store, plainUsr); got != step.flagged {
+			t.Errorf("source %q: flagged = %v, want %v", step.source, got, step.flagged)
+		}
 	}
 }
 

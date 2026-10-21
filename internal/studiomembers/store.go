@@ -76,11 +76,15 @@ func (s Store) List(ctx context.Context) ([]Member, error) {
 }
 
 // outsideChangesSQL is, for every member the audit trigger has seen change,
-// whether its newest change was made outside the membership API.
+// whether its newest change was made outside every trusted path: this API
+// (`on`), the CLI's admin commands (`cli`) or the engine's first-push seed
+// (`seed`), as the trigger records them in `source`. A row from before the
+// trigger recorded a source falls back to `via_api`.
 const outsideChangesSQL = `
 	SELECT DISTINCT ON (target_id)
 	       target_id::text,
-	       NOT COALESCE((detail ->> 'via_api')::boolean, false)
+	       NOT COALESCE(detail ->> 'source' IN ('on', 'cli', 'seed'),
+	                    (detail ->> 'via_api')::boolean, false)
 	  FROM _supatype.studio_audit
 	 WHERE action = 'membership_changed_in_db' AND target_id IS NOT NULL
 	 ORDER BY target_id, id DESC`

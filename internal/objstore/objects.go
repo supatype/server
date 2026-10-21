@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/studioctx"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -602,21 +603,16 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	objPath := urlPath(r)
 
-	var body struct {
-		ExpiresIn int64 `json:"expiresIn"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	expiresIn, err := signingExpiry(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
-	}
-	if body.ExpiresIn <= 0 {
-		body.ExpiresIn = 3600
 	}
 
 	token := s.signToken(signedPayload{
 		B:   bucket,
 		P:   objPath,
-		Exp: time.Now().Unix() + body.ExpiresIn,
+		Exp: time.Now().Unix() + expiresIn,
 	})
 
 	// Build the full signed URL (includes /storage/v1 since callers strip that prefix before us).
@@ -628,6 +624,40 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 		scheme, r.Host, bucket, objPath, token)
 
 	utilities.WriteJSON(w, http.StatusOK, map[string]string{"signedURL": signedURL})
+}
+
+// defaultSignedURLSeconds is the life of a signed URL that names none.
+const defaultSignedURLSeconds = 3600
+
+// signingExpiry reads `expiresIn` from a signing body by its exact name,
+// defaulting a missing or non-positive one to an hour. Struct decoding would
+// match any casing with the last key winning, so `{"expiresIn":60,
+// "expiresin":31536000}` signed for a year; a key that only case-folds to
+// `expiresIn` is refused instead. A request the Studio proxy forwards is
+// capped at studioctx.MaxSignedURLSeconds here too.
+func signingExpiry(r *http.Request) (int64, error) {
+	var fields map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
+		return 0, err
+	}
+	for name := range fields {
+		if name != "expiresIn" && strings.EqualFold(name, "expiresIn") {
+			return 0, fmt.Errorf("key %q is not expiresIn", name)
+		}
+	}
+	var expiresIn int64
+	if raw, ok := fields["expiresIn"]; ok {
+		if err := json.Unmarshal(raw, &expiresIn); err != nil {
+			return 0, err
+		}
+	}
+	if expiresIn <= 0 {
+		expiresIn = defaultSignedURLSeconds
+	}
+	if studioctx.IsProxied(r.Context()) {
+		expiresIn = min(expiresIn, studioctx.MaxSignedURLSeconds)
+	}
+	return expiresIn, nil
 }
 
 // serveSignedURL: GET /object/sign/{bucket}/*?token=...

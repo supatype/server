@@ -34,7 +34,7 @@ const twoModels = `{
 }`
 
 // Filtering happens on the server. Sending the whole schema and hiding parts in
-// the browser tells every caller which tables exist — information the access rules
+// the browser tells every caller which tables exist, information the access rules
 // said they should not have.
 func TestModelsWithNoReachableOperationAreOmitted(t *testing.T) {
 	models, err := FilterForCaller(snapshotWith(t, twoModels), reader)
@@ -72,7 +72,7 @@ func TestPerOperationVerdicts(t *testing.T) {
 	if access["delete"] != VerdictDeny {
 		t.Errorf("delete: got %q", access["delete"])
 	}
-	// Never declared, so denied — an operation with no rule must not read as
+	// Never declared, so denied: an operation with no rule must not read as
 	// permission just because it was omitted.
 	if access["create"] != VerdictDeny {
 		t.Errorf("create: got %q", access["create"])
@@ -107,5 +107,28 @@ func TestEveryOperationIsReported(t *testing.T) {
 func TestMalformedASTIsAnError(t *testing.T) {
 	if _, err := FilterForCaller(snapshotWith(t, `not json`), admin); err == nil {
 		t.Fatal("expected an error rather than an empty schema")
+	}
+}
+
+// A Studio user acting as Studio is not limited by the app's row rules: their
+// Studio role decides (owner decision 2026-10-21). Every model is theirs to see,
+// and every operation settled as allowed; the proxy and the Studio role decide
+// writes, and field rules are answered separately, for the caller.
+func TestACallerActingAsStudioReachesEveryModel(t *testing.T) {
+	studio := reader
+	studio.AsStudio = true
+	models, err := FilterForCaller(snapshotWith(t, twoModels), studio)
+	if err != nil {
+		t.Fatalf("filter: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("acting as Studio should reach both models, got %+v", models)
+	}
+	for _, m := range models {
+		for op, v := range m.Access {
+			if v != VerdictAllow {
+				t.Errorf("%s %s = %q, want allow", m.Table, op, v)
+			}
+		}
 	}
 }

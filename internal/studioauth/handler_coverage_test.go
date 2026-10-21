@@ -23,6 +23,7 @@ import (
 // adminConfig admits any verified caller whose membership row says this role.
 func membershipConfig(role string) Config {
 	return Config{
+		Audit:          &fakeAuditor{},
 		JWTSecret:      testSecret,
 		ServiceRoleKey: "service-role-key",
 		AnonKey:        "anon-key",
@@ -210,7 +211,9 @@ func TestProxyRefusesElevationWithNoServiceRoleKey(t *testing.T) {
 
 	next := &proxyUpstream{}
 	rec := httptest.NewRecorder()
-	ProxyHandler(next, c).ServeHTTP(rec, studioRequest(http.MethodGet, "/rest/v1/posts", token))
+	req := studioRequest(http.MethodGet, "/rest/v1/posts", token)
+	req.Header.Set(ActingModeHeader, ModeElevated)
+	ProxyHandler(next, c).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503 (%s)", rec.Code, rec.Body.String())
@@ -230,6 +233,7 @@ func TestActingAsTheCallerDoesNotReElevate(t *testing.T) {
 	next := &proxyUpstream{}
 	rec := httptest.NewRecorder()
 	req := studioRequest(http.MethodGet, "/rest/v1/posts", token)
+	req.Header.Set(ActingModeHeader, ModeSelf)
 	ProxyHandler(next, c).ServeHTTP(rec, req)
 
 	if !next.reached {
@@ -258,6 +262,7 @@ func TestActingAsTheCallerWithNoAnonKey(t *testing.T) {
 
 	next := &proxyUpstream{}
 	req := studioRequest(http.MethodGet, "/rest/v1/posts", token)
+	req.Header.Set(ActingModeHeader, ModeSelf)
 	req.Header.Set("apikey", "something-the-caller-sent")
 	ProxyHandler(next, c).ServeHTTP(httptest.NewRecorder(), req)
 

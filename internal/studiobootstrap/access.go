@@ -42,6 +42,9 @@ type Caller struct {
 	AppRole string
 	// Claims is the token's claim set, for `Claim<>` operands.
 	Claims map[string]any
+	// AsStudio is a caller acting as Studio: the app's row rules do not limit
+	// them, their Studio role does. Field rules still apply to them.
+	AsStudio bool
 }
 
 // rule is the on-the-wire shape of an access rule in the AST snapshot.

@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/modelhooks"
+	"github.com/supatype/server/internal/studioctx"
 )
 
 // The gateway's routes, as data.
@@ -47,6 +48,10 @@ type Route struct {
 	// Log is written at info when the route is mounted, to keep the startup
 	// output the operators read unchanged.
 	Log string
+	// DataPlane marks a public data-plane route. A request reaching it with a
+	// reserved `supatype_` claim, other than through the Studio proxy, is
+	// refused (studioctx.RefuseForgedClaim).
+	DataPlane bool
 }
 
 // Routes is the table, in mount order.
@@ -167,23 +172,26 @@ func Routes() []Route {
 			Log:     "mux: hook callback mounted at " + modelhooks.PreviousPathPrefix,
 		},
 		{
-			Pattern: "/rest/v1",
-			Verb:    MountAll,
-			Strip:   true,
-			Build:   buildREST,
-			Log:     "mux: PostgREST proxy mounted at /rest/v1",
+			Pattern:   "/rest/v1",
+			Verb:      MountAll,
+			Strip:     true,
+			Build:     buildREST,
+			DataPlane: true,
+			Log:       "mux: PostgREST proxy mounted at /rest/v1",
 		},
 		{
-			Pattern: "/graphql/v1",
-			Verb:    MountAll,
-			Build:   buildGraphQL,
-			Log:     "mux: GraphQL proxy mounted at /graphql/v1",
+			Pattern:   "/graphql/v1",
+			Verb:      MountAll,
+			Build:     buildGraphQL,
+			DataPlane: true,
+			Log:       "mux: GraphQL proxy mounted at /graphql/v1",
 		},
 		{
-			Pattern: "/storage/v1",
-			Verb:    MountAll,
-			Strip:   true,
-			Build:   buildStorage,
+			Pattern:   "/storage/v1",
+			Verb:      MountAll,
+			Strip:     true,
+			Build:     buildStorage,
+			DataPlane: true,
 		},
 		{
 			Pattern: "/functions/v1/admin",
@@ -198,8 +206,9 @@ func Routes() []Route {
 			When: func(d *Deps) bool {
 				return d.Config.DenoFunctionsDir != "" || strings.TrimSpace(d.Config.FunctionsWorkerURL) != ""
 			},
-			Build: buildFunctions,
-			Log:   "mux: Functions invocation proxy mounted at /functions/v1",
+			Build:     buildFunctions,
+			DataPlane: true,
+			Log:       "mux: Functions invocation proxy mounted at /functions/v1",
 		},
 		{
 			Pattern: "/platform/v1",
@@ -215,8 +224,9 @@ func Routes() []Route {
 			When: func(d *Deps) bool {
 				return d.Baseline.RealtimeEnabled || strings.TrimSpace(d.Config.RealtimeURL) != ""
 			},
-			Build: buildRealtime,
-			Log:   "mux: Realtime invocation proxy mounted at /realtime/v1",
+			Build:     buildRealtime,
+			DataPlane: true,
+			Log:       "mux: Realtime invocation proxy mounted at /realtime/v1",
 		},
 		{
 			Pattern: "/_vite/*",
@@ -255,6 +265,9 @@ func attach(r chi.Router, route Route, d *Deps) {
 	handler := route.Build(d)
 	if handler == nil {
 		return
+	}
+	if route.DataPlane {
+		handler = studioctx.RefuseForgedClaim(handler)
 	}
 	if route.Strip {
 		handler = http.StripPrefix(strings.TrimSuffix(route.Pattern, "/*"), handler)

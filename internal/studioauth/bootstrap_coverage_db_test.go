@@ -302,8 +302,9 @@ func TestSessionHandler(t *testing.T) {
 	}
 }
 
-// A role that cannot elevate acts as itself, and is told so rather than shown
-// an elevated banner it cannot use.
+// A role that cannot elevate is told so rather than shown an elevated banner it
+// cannot use. Unasked, it acts as Studio (owner decision 2026-10-21); a role
+// that may elevate acts elevated.
 func TestSessionReportsWhetherTheCallerMayElevate(t *testing.T) {
 	for role, wantElevated := range map[string]bool{"admin": true, "editor": false} {
 		c := bootstrapConfig(t, schemaWithAMaskedColumn, role)
@@ -324,7 +325,7 @@ func TestSessionReportsWhetherTheCallerMayElevate(t *testing.T) {
 		if body.CanElevate != wantElevated {
 			t.Errorf("%s: canElevate = %v, want %v", role, body.CanElevate, wantElevated)
 		}
-		wantMode := ModeSelf
+		wantMode := ModeStudio
 		if wantElevated {
 			wantMode = ModeElevated
 		}

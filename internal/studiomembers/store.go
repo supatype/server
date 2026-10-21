@@ -77,17 +77,41 @@ func (s Store) List(ctx context.Context) ([]Member, error) {
 
 // outsideChangesSQL is, for every member the audit trigger has seen change,
 // whether its newest change was made outside every trusted path: this API
-// (`on`), the CLI's admin commands (`cli`) or the engine's first-push seed
-// (`seed`), as the trigger records them in `source`. A row from before the
-// trigger recorded a source falls back to `via_api`.
+// (`on`), the CLI's admin commands (`cli`) or the engine's one membership seed
+// (`seed`), as the trigger records them in `source`. Anyone with SQL access can
+// set the seed's mark, so it is trusted only on a row the seed itself wrote:
+// one no newer than the last row recorded with the seed ($1, NULL when there is
+// no seed on record). A row from before the trigger recorded a source falls
+// back to `via_api`.
 const outsideChangesSQL = `
 	SELECT DISTINCT ON (target_id)
 	       target_id::text,
-	       NOT COALESCE(detail ->> 'source' IN ('on', 'cli', 'seed'),
+	       NOT COALESCE(detail ->> 'source' IN ('on', 'cli')
+	                    OR (detail ->> 'source' = 'seed' AND id <= $1::bigint),
 	                    (detail ->> 'via_api')::boolean, false)
 	  FROM _supatype.studio_audit
 	 WHERE action = 'membership_changed_in_db' AND target_id IS NOT NULL
 	 ORDER BY target_id, id DESC`
+
+// seedRecordedSQL reports whether the engine's seed record exists, which a
+// database pushed before the record existed does not have.
+const seedRecordedSQL = `SELECT to_regclass('_supatype.studio_seed') IS NOT NULL`
+
+// seedAuditBoundSQL is the last audit row the seed wrote, NULL when it ran
+// before the record kept one or carried nobody forward.
+const seedAuditBoundSQL = `SELECT (SELECT audit_through FROM _supatype.studio_seed WHERE id = 1)`
+
+// seedAuditBound is the last audit row the seed's mark is trusted on, nil
+// when there is none.
+func seedAuditBound(ctx context.Context, pool *pgxpool.Pool) (*int64, error) {
+	var recorded bool
+	if err := pool.QueryRow(ctx, seedRecordedSQL).Scan(&recorded); err != nil || !recorded {
+		return nil, err
+	}
+	var bound *int64
+	err := pool.QueryRow(ctx, seedAuditBoundSQL).Scan(&bound)
+	return bound, err
+}
 
 // markChangedOutsideStudio sets ChangedOutsideStudio from the audit trail.
 //
@@ -95,7 +119,11 @@ const outsideChangesSQL = `
 // existed, or an audit table someone dropped) leaves every flag false and is
 // logged, rather than taking the members list down with it.
 func markChangedOutsideStudio(ctx context.Context, pool *pgxpool.Pool, members []Member) {
-	rows, err := pool.Query(ctx, outsideChangesSQL)
+	bound, err := seedAuditBound(ctx, pool)
+	var rows pgx.Rows
+	if err == nil {
+		rows, err = pool.Query(ctx, outsideChangesSQL, bound)
+	}
 	if err == nil {
 		var outside map[string]bool
 		outside, err = collectOutsideChanges(rows)

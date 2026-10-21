@@ -315,32 +315,74 @@ func TestListFlagsAChangeMadeOutsideStudio(t *testing.T) {
 	}
 }
 
-// The CLI's admin commands and the engine's first-push seed are trusted ways
-// to change membership, marked `cli` and `seed`; any other mark, or none, is a
-// change made around Studio and stays flagged.
-func TestListTrustsTheCLIAndTheSeed(t *testing.T) {
-	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
-		VALUES ('`+adminA+`', 'admin'), ('`+plainUsr+`', 'editor')`)
-	pool := installMembershipTrigger(t, ctx, store)
-	promote := `UPDATE _supatype.studio_members SET role = 'admin' WHERE user_id = '` + plainUsr + `'`
-	demote := `UPDATE _supatype.studio_members SET role = 'viewer' WHERE user_id = '` + plainUsr + `'`
+const (
+	promoteUsr = `UPDATE _supatype.studio_members SET role = 'admin' WHERE user_id = '` + plainUsr + `'`
+	demoteUsr  = `UPDATE _supatype.studio_members SET role = 'viewer' WHERE user_id = '` + plainUsr + `'`
+)
 
-	for _, step := range []struct {
-		source  string
-		stmt    string
-		flagged bool
-	}{
-		{"cli", promote, false},
-		{"", demote, true},
-		{"seed", promote, false},
-		{"anything-else", demote, true},
-	} {
-		settings := map[string]string{"supatype.membership_api": step.source}
-		asProbe(t, ctx, pool, settings, step.stmt)
+// membershipStep is one change to plainUsr's grant, the mark it was made
+// under, and whether the members list should flag it.
+type membershipStep struct {
+	source  string
+	stmt    string
+	flagged bool
+}
+
+func checkSteps(t *testing.T, ctx context.Context, store Store, pool *pgxpool.Pool, steps []membershipStep) {
+	t.Helper()
+	for _, step := range steps {
+		asProbe(t, ctx, pool, map[string]string{"supatype.membership_api": step.source}, step.stmt)
 		if got := changedOutside(t, ctx, store, plainUsr); got != step.flagged {
 			t.Errorf("source %q: flagged = %v, want %v", step.source, got, step.flagged)
 		}
 	}
+}
+
+// The CLI's admin commands are a trusted way to change membership, marked
+// `cli`; any other mark, or none, is a change made around Studio and stays
+// flagged.
+func TestListTrustsTheCLI(t *testing.T) {
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+		VALUES ('`+adminA+`', 'admin'), ('`+plainUsr+`', 'editor')`)
+	pool := installMembershipTrigger(t, ctx, store)
+	checkSteps(t, ctx, store, pool, []membershipStep{
+		{"cli", promoteUsr, false},
+		{"", demoteUsr, true},
+		{"anything-else", promoteUsr, true},
+	})
+}
+
+// studioSeedSQL is the engine's record of its one membership seed
+// (`create_studio_seed_table_sql` in supatype-schema-engine's
+// src/state/migration_history.rs), holding the newest audit row as the last
+// the seed wrote.
+const studioSeedSQL = `
+CREATE TABLE IF NOT EXISTS _supatype.studio_seed (
+    id            INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    seeded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    audit_through BIGINT
+);
+INSERT INTO _supatype.studio_seed (audit_through) SELECT max(id) FROM _supatype.studio_audit`
+
+// The seed's mark is trusted only on a row the seed wrote: anyone with SQL can
+// set it, so a mark with no seed on record, or on a row after the seed's, is a
+// change made around Studio.
+func TestListTrustsOnlyTheSeedsOwnRows(t *testing.T) {
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+		VALUES ('`+adminA+`', 'admin'), ('`+plainUsr+`', 'editor')`)
+	pool := installMembershipTrigger(t, ctx, store)
+	checkSteps(t, ctx, store, pool, []membershipStep{{"seed", promoteUsr, true}})
+
+	if _, err := pool.Exec(ctx, studioSeedSQL); err != nil {
+		t.Fatalf("record the seed: %v", err)
+	}
+	if changedOutside(t, ctx, store, plainUsr) {
+		t.Error("the seed's own row was flagged")
+	}
+	checkSteps(t, ctx, store, pool, []membershipStep{
+		{"seed", demoteUsr, true},
+		{"cli", promoteUsr, false},
+	})
 }
 
 func changedOutside(t *testing.T, ctx context.Context, store Store, userID string) bool {

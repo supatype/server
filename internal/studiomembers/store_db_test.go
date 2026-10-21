@@ -47,6 +47,7 @@ func setupMembership(t *testing.T, seed string) (context.Context, Store) {
 		`CREATE SCHEMA IF NOT EXISTS auth`,
 		`DROP TABLE IF EXISTS _supatype.studio_members`,
 		`DROP TABLE IF EXISTS _supatype.studio_audit`,
+		`DROP TABLE IF EXISTS _supatype.studio_seed`,
 		`DROP TABLE IF EXISTS auth.users`,
 		`CREATE TABLE auth.users (id UUID PRIMARY KEY, email TEXT)`,
 		`CREATE TABLE _supatype.studio_members (

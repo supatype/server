@@ -247,16 +247,19 @@ const RoleAdmin = "admin"
 //
 // Body is whatever summary the caller chose to keep: a bounded excerpt or a
 // "sha256:<hex>" digest. It is stored as given. Status is the upstream status,
-// zero until it is known; AuditElevatedStatus fills it in afterwards.
+// zero until it is known; AuditElevatedStatus fills it in afterwards. Statement
+// is the SQL a SQL editor request ran, bounded by the caller, so a membership
+// change made there is attributable.
 type ElevatedRequest struct {
-	Actor  string `json:"-"`
-	Role   string `json:"role"`
-	Mode   string `json:"mode"`
-	Method string `json:"method"`
-	Path   string `json:"path"`
-	Query  string `json:"query,omitempty"`
-	Body   string `json:"body,omitempty"`
-	Status int    `json:"status,omitempty"`
+	Actor     string `json:"-"`
+	Role      string `json:"role"`
+	Mode      string `json:"mode"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Query     string `json:"query,omitempty"`
+	Body      string `json:"body,omitempty"`
+	Statement string `json:"statement,omitempty"`
+	Status    int    `json:"status,omitempty"`
 }
 
 // AuditRef is a handle to one recorded elevated request, for recording its

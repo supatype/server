@@ -44,7 +44,13 @@ func sendThroughProxy(t *testing.T, p proxied, audit *fakeAuditor) (*bodyUpstrea
 	if p.mode != "" {
 		req.Header.Set(ActingModeHeader, p.mode)
 	}
-	cfg := membershipConfig(p.role)
+	return forwardThroughProxy(req, p.role, audit)
+}
+
+// forwardThroughProxy sends a request built by the test through the proxy as
+// role, with audit.
+func forwardThroughProxy(req *http.Request, role string, audit *fakeAuditor) (*bodyUpstream, *httptest.ResponseRecorder) {
+	cfg := membershipConfig(role)
 	cfg.Audit = audit
 	next := &bodyUpstream{status: http.StatusCreated}
 	rec := httptest.NewRecorder()

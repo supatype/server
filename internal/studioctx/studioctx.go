@@ -19,6 +19,11 @@ import (
 // Claim is the claim a request acting as Studio carries to PostgREST.
 const Claim = "supatype_studio"
 
+// MaxSignedURLSeconds is the longest a signed URL made through the Studio
+// proxy lives. The proxy caps the request it forwards, and a store reached in
+// process caps it again from the context, so neither depends on the other.
+const MaxSignedURLSeconds = 3600
+
 // reservedPrefix is the claim namespace Supatype keeps for itself.
 const reservedPrefix = "supatype_"
 

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -241,14 +240,8 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Normalise content type: strip parameters (e.g. "image/jpeg; charset=…").
-	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	if mt, _, err := mime.ParseMediaType(contentType); err == nil {
-		contentType = mt
-	}
+	// Keep the parsed media type only, never the header as written.
+	contentType := storedContentType(r.Header.Get("Content-Type"))
 
 	if err := mkdirAll(filepath.Dir(filePath), 0o700); err != nil { // #nosec G703 -- filePath is built from validated bucket and object paths under storageRoot.
 		writeError(w, http.StatusInternalServerError, "failed to create directory")

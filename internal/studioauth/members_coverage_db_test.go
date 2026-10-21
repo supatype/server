@@ -62,8 +62,8 @@ func membersConfig(t *testing.T, callerRole string) Config {
 			CONSTRAINT studio_members_one_identity
 				CHECK (num_nonnulls(user_id, platform_user_id) = 1))`,
 		`CREATE TABLE _supatype.studio_audit (
-			id BIGSERIAL PRIMARY KEY, actor_id UUID, target_id UUID NOT NULL,
-			action TEXT NOT NULL, role TEXT,
+			id BIGSERIAL PRIMARY KEY, actor_id UUID, target_id UUID,
+			action TEXT NOT NULL, role TEXT, detail JSONB,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`INSERT INTO auth.users (id, email) VALUES
 			('` + memberAdmin + `', 'admin@example.com'),
@@ -85,6 +85,9 @@ func membersConfig(t *testing.T, callerRole string) Config {
 	c := membershipConfig(callerRole)
 	c.Resources = resources
 	c.Members = studiomembers.NewStore(resources)
+	// Audit through the real store: membershipConfig's in-memory auditor would
+	// keep these database tests from ever seeing an audit row.
+	c.Audit = nil
 	return c
 }
 
@@ -311,13 +314,6 @@ func TestOnlyWritesAreAudited(t *testing.T) {
 	}
 	if got := countElevated(); got != 0 {
 		t.Errorf("reads produced %d audit rows, want none", got)
-	}
-
-	// The audit table this path writes carries a detail column and no target.
-	if _, err := pool.Exec(context.Background(), `ALTER TABLE _supatype.studio_audit
-		ADD COLUMN IF NOT EXISTS detail JSONB,
-		ALTER COLUMN target_id DROP NOT NULL`); err != nil {
-		t.Fatal(err)
 	}
 
 	ProxyHandler(next, c).ServeHTTP(httptest.NewRecorder(),

@@ -3,6 +3,7 @@ package studiomembers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/supatype/server/internal/data"
@@ -46,10 +47,13 @@ func TestEveryMethodWithoutADatabase(t *testing.T) {
 		t.Errorf("Revoke: %v", err)
 	}
 
-	// The audit writes report through the log rather than to the caller: a
-	// missing trail must not stop a compromised admin being revoked.
+	// A membership audit reports through the log rather than to the caller: a
+	// missing trail must not stop a compromised admin being revoked. An
+	// elevated request's audit is returned, so the proxy can refuse it.
 	store.Audit(ctx, adminA, plainUsr, "grant", "editor")
-	store.AuditElevated(ctx, adminA, "GET", "/studio/x")
+	if _, err := store.AuditElevated(ctx, ElevatedRequest{Actor: adminA, Method: "GET", Path: "/studio/x"}); !errors.Is(err, data.ErrNoDatabase) {
+		t.Errorf("AuditElevated: %v", err)
+	}
 }
 
 // A target nobody named is not a user, on either mutation.
@@ -127,9 +131,11 @@ func TestNothingWorksOnAClosedPool(t *testing.T) {
 		t.Error("Lookup: a closed pool granted access")
 	}
 
-	// And the audit writes report through the log rather than panicking.
+	// And the audit writes report rather than panicking.
 	store.Audit(ctx, adminA, plainUsr, "grant", "editor")
-	store.AuditElevated(ctx, adminA, "GET", "/studio/x")
+	if _, err := store.AuditElevated(ctx, ElevatedRequest{Actor: adminA, Method: "GET", Path: "/studio/x"}); err == nil {
+		t.Error("AuditElevated: want an error")
+	}
 }
 
 // ─── The audit trail ──────────────────────────────────────────────────────────
@@ -138,19 +144,13 @@ func TestNothingWorksOnAClosedPool(t *testing.T) {
 // point of making elevation visible.
 func TestAuditElevatedRecordsTheRequest(t *testing.T) {
 	ctx, store := setupMembership(t, "")
+	pool := adminPool(t, store)
 
-	// The audit table this package writes carries a detail column.
-	pool, err := store.pool()
-	if err != nil {
+	if _, err := store.AuditElevated(ctx, ElevatedRequest{
+		Actor: adminA, Role: "editor", Mode: "studio", Method: "POST", Path: "/rest/v1/posts",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `ALTER TABLE _supatype.studio_audit
-		ADD COLUMN IF NOT EXISTS detail JSONB,
-		ALTER COLUMN target_id DROP NOT NULL`); err != nil {
-		t.Fatal(err)
-	}
-
-	store.AuditElevated(ctx, adminA, "POST", "/studio/v1/sql")
 
 	var action, detail string
 	if err := pool.QueryRow(ctx,
@@ -161,26 +161,24 @@ func TestAuditElevatedRecordsTheRequest(t *testing.T) {
 	if action != "elevated_request" {
 		t.Errorf("action = %q", action)
 	}
-	if detail == "" || detail == "null" {
-		t.Errorf("detail = %q, want the method and path", detail)
+	// Who did it, on whose authority and to what: an editor's write through
+	// Studio is attributable.
+	for _, want := range []string{`"role": "editor"`, `"mode": "studio"`, `"method": "POST"`, `"path": "/rest/v1/posts"`} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail = %s, want it to carry %s", detail, want)
+		}
 	}
 }
 
-// An elevation with no signed-in actor — the dev bypass — is still recorded,
+// An elevation with no signed-in actor (the dev bypass) is still recorded,
 // with the actor left null rather than an empty string that is not a uuid.
 func TestAuditElevatedWithNoActor(t *testing.T) {
 	ctx, store := setupMembership(t, "")
-	pool, err := store.pool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `ALTER TABLE _supatype.studio_audit
-		ADD COLUMN IF NOT EXISTS detail JSONB,
-		ALTER COLUMN target_id DROP NOT NULL`); err != nil {
-		t.Fatal(err)
-	}
+	pool := adminPool(t, store)
 
-	store.AuditElevated(ctx, "  ", "GET", "/studio/v1/schema")
+	if _, err := store.AuditElevated(ctx, ElevatedRequest{Actor: "  ", Method: "GET", Path: "/studio/v1/schema"}); err != nil {
+		t.Fatal(err)
+	}
 
 	var count int
 	if err := pool.QueryRow(ctx,
@@ -214,14 +212,18 @@ func TestAuditWithNoActorOrRole(t *testing.T) {
 	}
 }
 
-// A missing audit table is noisy rather than fatal. Refusing to revoke a
-// compromised admin because the trail is broken would be the worse failure.
+// A missing audit table is noisy rather than fatal for a membership change.
+// Refusing to revoke a compromised admin because the trail is broken would be
+// the worse failure. An elevated request is the other way round: its error is
+// returned, so the proxy can refuse an elevation it cannot account for.
 func TestAuditingWithNoAuditTable(t *testing.T) {
 	ctx, store := setupMembership(t, "")
 	dropTables(t, ctx, store, "_supatype.studio_audit")
 
 	store.Audit(ctx, adminA, plainUsr, "grant", "editor")
-	store.AuditElevated(ctx, adminA, "GET", "/studio/x")
+	if _, err := store.AuditElevated(ctx, ElevatedRequest{Actor: adminA, Method: "GET", Path: "/studio/x"}); err == nil {
+		t.Error("AuditElevated: want an error")
+	}
 
 	// And the mutation it accompanies still works.
 	if err := store.SetRole(ctx, adminA, plainUsr, "editor"); err != nil {

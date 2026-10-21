@@ -220,10 +220,7 @@ func requirePreviewMinter(
 		}
 		// The elevated roles, read from the same capability set every other
 		// Studio decision uses rather than from a list of role names kept here.
-		perms := legacyAdminPermissions()
-		if result.Permissions != nil {
-			perms = *result.Permissions
-		}
+		perms := permissionsOf(result)
 		if !perms.SchemaView {
 			utilities.WriteJSON(w, http.StatusForbidden, errorBody(
 				"Studio role \""+result.Role+"\" cannot mint a project-wide preview link. "+

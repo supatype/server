@@ -2,6 +2,9 @@ package restcache
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,7 @@ import (
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/studioctx"
 )
 
 // The cache had no test that ran a request through it. What it does with one is
@@ -343,7 +347,7 @@ func TestACorruptEntryIsABypass(t *testing.T) {
 }
 
 // A config that cannot be read means the cache cannot know what is allowed, so
-// it does nothing at all — and says nothing, because the caller's request was
+// it does nothing at all, and says nothing, because the caller's request was
 // not refused, it was simply not cached.
 func TestAnUnreadableConfigCachesNothingQuietly(t *testing.T) {
 	cache := keyspacetest.New()
@@ -605,7 +609,7 @@ func TestEligibilityIsReadFromTheTenantKeyspaceAndEntriesGoInTheProjectOne(t *te
 
 	rec := serve(d, &upstream{}, request("/posts", "max-age=30"))
 	if got := rec.Header().Get(statusHeader); got != "MISS" {
-		t.Fatalf("status = %q, want MISS — the tenant config was published, so the cache is offered", got)
+		t.Fatalf("status = %q, want MISS: the tenant config was published, so the cache is offered", got)
 	}
 
 	if keys := project.Keys(); len(keys) == 0 {
@@ -638,8 +642,8 @@ func TestTheTierStillDecidesWhenTheKeyspacesAreSplit(t *testing.T) {
 	}
 }
 
-// Nil Tenants is the single-keyspace deployment — self-host, dev, and cloud
-// before the split — and must behave exactly as it did before the field existed.
+// Nil Tenants is the single-keyspace deployment (self-host, dev, and cloud
+// before the split), and must behave exactly as it did before the field existed.
 func TestNilTenantsFallsBackToTheCacheClient(t *testing.T) {
 	enabled := true
 	one := keyspacetest.New().WithTenant("proj-1", &keyspace.TenantConfig{RestCacheEnabled: &enabled})
@@ -666,7 +670,7 @@ func publicRequest(token string) *http.Request {
 }
 
 // The stored allowlist is what an operator chose. The declaration is what the schema allows them
-// to choose from, and a push can lower it without touching the allowlist — so it is consulted on
+// to choose from, and a push can lower it without touching the allowlist, so it is consulted on
 // every request rather than only when the allowlist is written.
 func TestATableTheSchemaStoppedDeclaringIsNoLongerServedFromCache(t *testing.T) {
 	cache, next := keyspacetest.New(), &upstream{}
@@ -680,7 +684,7 @@ func TestATableTheSchemaStoppedDeclaringIsNoLongerServedFromCache(t *testing.T) 
 		t.Fatalf("nothing was cached to begin with: %v", cache.Keys())
 	}
 
-	// The push that drops the model's cache block. The allowlist still says enabled — that is the
+	// The push that drops the model's cache block. The allowlist still says enabled; that is the
 	// whole point: nothing wrote to it.
 	d.Declared = func(*http.Request) map[string]proxy.TableCache { return nil }
 
@@ -698,8 +702,8 @@ func TestATableTheSchemaStoppedDeclaringIsNoLongerServedFromCache(t *testing.T) 
 }
 
 // A deployment that never wired the ceiling is not one where everything is permitted. It is the
-// same reading as a manifest with no declaration, and the alternative — nil meaning "no
-// constraint" — would make forgetting to wire it the way to disable the rule.
+// same reading as a manifest with no declaration, and the alternative (nil meaning "no
+// constraint") would make forgetting to wire it the way to disable the rule.
 func TestNoDeclarationSourceAtAllPermitsNothing(t *testing.T) {
 	cache, next := keyspacetest.New(), &upstream{}
 	d := deps(cache, staticStore{cfg: cachingConfig(false)})
@@ -794,5 +798,48 @@ func TestAPublicEntryNeedsBothTheAllowlistAndTheDeclaration(t *testing.T) {
 				t.Fatalf("entry shared across callers = %v, want %v", shared, tc.wantShared)
 			}
 		})
+	}
+}
+
+// Nothing that arrives through the Studio proxy is cached. A request acting as
+// Studio reads every row past the app's rules, and its identity key would be the
+// caller's own `authenticated:<sub>`, so caching it would serve those rows to the
+// same user's app later, and a public entry would serve them to everyone.
+//
+// The proxy says so through the request context, not the token: the cache does
+// not parse claims to guess, so a token spelled to slip past a parser (the
+// look-alike `ſupatype_studio`, U+017F, which case-insensitive JSON decoding
+// folds onto the real name) changes nothing either way.
+func TestNothingFromTheStudioProxyIsCached(t *testing.T) {
+	signed := func(claims string) string {
+		head := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+		body := base64.RawURLEncoding.EncodeToString([]byte(claims))
+		mac := hmac.New(sha256.New, []byte("secret"))
+		_, _ = mac.Write([]byte(head + "." + body))
+		return head + "." + body + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	}
+	for name, claims := range map[string]string{
+		"studio claim":     `{"sub":"u1","role":"authenticated","supatype_studio":"write"}`,
+		"look-alike claim": `{"sub":"u1","role":"authenticated","ſupatype_studio":"write"}`,
+		"no claim at all":  `{"sub":"u1","role":"authenticated"}`,
+	} {
+		assertNeverCached(t, name, "Bearer "+signed(claims))
+	}
+}
+
+func assertNeverCached(t *testing.T, name, authorization string) {
+	t.Helper()
+	cache, next := keyspacetest.New(), &upstream{}
+	d := deps(cache, staticStore{cfg: cachingConfig(true)})
+	for _, directive := range []string{"max-age=30", "max-age=30, public", "max-age=30"} {
+		req := request("/posts", directive)
+		req = req.WithContext(studioctx.WithProxied(req.Context()))
+		req.Header.Set("Authorization", authorization)
+		if got := serve(d, next, req).Header().Get(statusHeader); got == "HIT" || got == "MISS" {
+			t.Errorf("%s %q: a Studio request went through the cache (%s)", name, directive, got)
+		}
+	}
+	if next.calls != 3 || len(cache.Keys()) != 0 {
+		t.Errorf("%s: upstream calls %d, keys %v: want every request upstream and nothing kept", name, next.calls, cache.Keys())
 	}
 }

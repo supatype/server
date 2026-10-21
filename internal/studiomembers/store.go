@@ -2,12 +2,14 @@ package studiomembers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
 )
 
@@ -34,6 +36,11 @@ type Member struct {
 	// deployment, so self-host lists them read-only rather than pretending
 	// otherwise.
 	PlatformAccount bool `json:"platformAccount"`
+	// ChangedOutsideStudio marks a grant whose latest change was made in the
+	// database directly rather than through the membership API: a developer
+	// with database access promoting someone, say. The membership audit
+	// trigger records every change; this is its newest verdict for the row.
+	ChangedOutsideStudio bool `json:"changedOutsideStudio"`
 }
 
 // List returns every Studio membership for this project, project users first.
@@ -56,18 +63,61 @@ func (s Store) List(ctx context.Context) ([]Member, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	members := make([]Member, 0)
-	for rows.Next() {
+	members, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Member, error) {
 		var m Member
-		if err := rows.Scan(&m.UserID, &m.Email, &m.Role, &m.CreatedAt, &m.UpdatedAt,
-			&m.PlatformAccount); err != nil {
+		err := row.Scan(&m.UserID, &m.Email, &m.Role, &m.CreatedAt, &m.UpdatedAt, &m.PlatformAccount)
+		return m, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	markChangedOutsideStudio(ctx, pool, members)
+	return members, nil
+}
+
+// outsideChangesSQL is, for every member the audit trigger has seen change,
+// whether its newest change was made outside the membership API.
+const outsideChangesSQL = `
+	SELECT DISTINCT ON (target_id)
+	       target_id::text,
+	       NOT COALESCE((detail ->> 'via_api')::boolean, false)
+	  FROM _supatype.studio_audit
+	 WHERE action = 'membership_changed_in_db' AND target_id IS NOT NULL
+	 ORDER BY target_id, id DESC`
+
+// markChangedOutsideStudio sets ChangedOutsideStudio from the audit trail.
+//
+// Advisory, so a trail it cannot read (a project pushed before the trigger
+// existed, or an audit table someone dropped) leaves every flag false and is
+// logged, rather than taking the members list down with it.
+func markChangedOutsideStudio(ctx context.Context, pool *pgxpool.Pool, members []Member) {
+	rows, err := pool.Query(ctx, outsideChangesSQL)
+	if err == nil {
+		var outside map[string]bool
+		outside, err = collectOutsideChanges(rows)
+		for i := range members {
+			members[i].ChangedOutsideStudio = outside[members[i].UserID]
+		}
+	}
+	if err != nil {
+		logrus.WithError(err).Warn("studiomembers: could not read membership changes made outside Studio")
+	}
+}
+
+func collectOutsideChanges(rows pgx.Rows) (map[string]bool, error) {
+	defer rows.Close()
+	outside := make(map[string]bool)
+	for rows.Next() {
+		var (
+			target  string
+			changed bool
+		)
+		if err := rows.Scan(&target, &changed); err != nil {
 			return nil, err
 		}
-		members = append(members, m)
+		outside[target] = changed
 	}
-	return members, rows.Err()
+	return outside, rows.Err()
 }
 
 // SetRole grants or updates Studio access for one of the project's own users.
@@ -92,12 +142,7 @@ func (s Store) SetRole(ctx context.Context, actingUserID, targetUserID, role str
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
-	pool, err := s.pool()
-	if err != nil {
-		return err
-	}
-
-	tx, err := pool.Begin(ctx)
+	tx, err := s.beginMembershipChange(ctx)
 	if err != nil {
 		return err
 	}
@@ -146,12 +191,7 @@ func (s Store) Revoke(ctx context.Context, actingUserID, targetUserID string) er
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
-	pool, err := s.pool()
-	if err != nil {
-		return err
-	}
-
-	tx, err := pool.Begin(ctx)
+	tx, err := s.beginMembershipChange(ctx)
 	if err != nil {
 		return err
 	}
@@ -172,42 +212,128 @@ func (s Store) Revoke(ctx context.Context, actingUserID, targetUserID string) er
 	return tx.Commit(ctx)
 }
 
+// beginMembershipChange opens the transaction a membership change runs in,
+// flagged as coming through this API. The membership audit trigger records
+// every change to studio_members with that flag, so a change made around the
+// API, by a developer with database access, shows up as one. The setting is
+// transaction-local and ends with the transaction.
+func (s Store) beginMembershipChange(ctx context.Context) (pgx.Tx, error) {
+	pool, err := s.pool()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('supatype.membership_api', 'on', true)`); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, fmt.Errorf("mark membership change: %w", err)
+	}
+	return tx, nil
+}
+
 // RoleAdmin is the role that may grant and revoke access. Duplicated from
 // studioauth rather than imported, because studioauth depends on this package's
 // lookup and the cycle would be worse than the constant.
 const RoleAdmin = "admin"
 
-// AuditElevated records a request that bypassed RLS with the service role.
+// ElevatedRequest is one request that skipped the app's row rules: who made it,
+// with which Studio role, in which acting mode, and what it reached.
+//
+// Body is whatever summary the caller chose to keep: a bounded excerpt or a
+// "sha256:<hex>" digest. It is stored as given. Status is the upstream status,
+// zero until it is known; AuditElevatedStatus fills it in afterwards.
+type ElevatedRequest struct {
+	Actor  string `json:"-"`
+	Role   string `json:"role"`
+	Mode   string `json:"mode"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Query  string `json:"query,omitempty"`
+	Body   string `json:"body,omitempty"`
+	Status int    `json:"status,omitempty"`
+}
+
+// AuditRef is a handle to one recorded elevated request, for recording its
+// upstream status once that is known. The zero value refers to nothing.
+type AuditRef struct {
+	id int64
+}
+
+// AuditElevated records a request that skipped the app's row rules, as the
+// service role or acting as Studio, and returns a handle to the row.
 //
 // No target: the record is about what the actor did, not about someone else. The
-// method and path go in `detail` so the trail says *what* was reached, which is
-// the whole point of making elevation visible.
-func (s Store) AuditElevated(ctx context.Context, actorID, method, path string) {
+// request's shape goes in `detail` so the trail says *what* was reached and on
+// whose authority, which is the whole point of making it visible. Unlike Audit,
+// a failure is returned as well as logged: an elevation nobody can account for
+// is one the caller refuses.
+func (s Store) AuditElevated(ctx context.Context, r ElevatedRequest) (AuditRef, error) {
+	ref, err := s.insertElevated(ctx, r)
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"actor":  r.Actor,
+			"role":   r.Role,
+			"method": r.Method,
+			"path":   r.Path,
+		}).Error("studiomembers: elevated request not audited")
+	}
+	return ref, err
+}
+
+func (s Store) insertElevated(ctx context.Context, r ElevatedRequest) (AuditRef, error) {
 	pool, err := s.pool()
 	if err != nil {
-		logrus.WithError(err).Error("studiomembers: elevated request not audited")
-		return
+		return AuditRef{}, err
+	}
+	detail, err := json.Marshal(r)
+	if err != nil {
+		return AuditRef{}, fmt.Errorf("encode elevated request: %w", err)
 	}
 
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
 
-	var actor any
-	if strings.TrimSpace(actorID) != "" {
-		actor = actorID
-	}
-	detail := fmt.Sprintf(`{"method":%q,"path":%q}`, method, path)
-
-	if _, err := pool.Exec(writeCtx, `
+	var ref AuditRef
+	if err := pool.QueryRow(writeCtx, `
 		INSERT INTO _supatype.studio_audit (actor_id, target_id, action, detail)
-		VALUES ($1::uuid, NULL, 'elevated_request', $2::jsonb)`,
-		actor, detail); err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
-			"actor":  actorID,
-			"method": method,
-			"path":   path,
-		}).Error("studiomembers: elevated request not audited")
+		VALUES ($1::uuid, NULL, 'elevated_request', $2::jsonb)
+		RETURNING id`,
+		nullIfBlank(r.Actor), string(detail)).Scan(&ref.id); err != nil {
+		return AuditRef{}, err
 	}
+	return ref, nil
+}
+
+// AuditElevatedStatus records the upstream status on the row AuditElevated
+// wrote. A zero ref is a request that was never recorded, so there is nothing
+// to update and no error.
+func (s Store) AuditElevatedStatus(ctx context.Context, ref AuditRef, status int) error {
+	if ref == (AuditRef{}) {
+		return nil
+	}
+	pool, err := s.pool()
+	if err != nil {
+		return err
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+
+	tag, err := pool.Exec(writeCtx, `
+		UPDATE _supatype.studio_audit
+		   SET detail = COALESCE(detail, '{}'::jsonb) || jsonb_build_object('status', $2::int)
+		 WHERE id = $1`,
+		ref.id, status)
+	if err == nil && tag.RowsAffected() != 1 {
+		err = fmt.Errorf("elevated request audit row %d not found", ref.id)
+	}
+	if err != nil {
+		logrus.WithError(err).WithField("status", status).
+			Error("studiomembers: elevated request status not audited")
+	}
+	return err
 }
 
 // Audit records a membership change in `_supatype.studio_audit`.

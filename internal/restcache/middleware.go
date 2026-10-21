@@ -13,6 +13,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/studioctx"
 )
 
 // statusHeader tells the caller what the cache did: HIT, MISS, or BYPASS when
@@ -51,7 +52,7 @@ type Deps struct {
 	// not touch the allowlist, and without this every read after it would still be served from a
 	// cache the schema no longer permits.
 	//
-	// Nil, or a nil return, is "nothing may be cached" — the same reading cacheceiling.Narrow
+	// Nil, or a nil return, is "nothing may be cached", the same reading cacheceiling.Narrow
 	// takes on the write path. Treating an absent declaration as permission would make an old
 	// manifest an open door, and would let the two paths disagree about the same project.
 	Declared func(*http.Request) map[string]proxy.TableCache
@@ -117,8 +118,13 @@ func Middleware(d Deps, next http.Handler) http.Handler {
 // The second result is false when it may not. The third says the caller asked
 // for caching and should be told it did not happen, which is not the same as a
 // request that never wanted it.
+//
+// Nothing the Studio proxy forwards is cached. A request acting as Studio reads
+// past the app's row rules under the caller's own identity key, so an entry
+// would later serve those rows to their app. The proxy marks the request context
+// rather than the cache inferring Studio from the token.
 func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
-	if !cacheableMethod(req.Method) {
+	if !cacheableMethod(req.Method) || studioctx.IsProxied(req.Context()) {
 		return plan{}, false, false
 	}
 
@@ -150,7 +156,7 @@ func (d Deps) planFor(req *http.Request) (p plan, cacheable, bypassed bool) {
 		// the caller was not refused, the request simply went uncached, while
 		// the operator reading the report is the one who needs to see that it
 		// keeps happening.
-		logrus.WithError(err).Warn("restcache: api config read failed — bypass")
+		logrus.WithError(err).Warn("restcache: api config read failed, bypassed")
 		bypass(ReasonConfigUnreadable)
 		return plan{}, false, false
 	}
@@ -216,12 +222,12 @@ func (d Deps) publicScope(req *http.Request, table string, tableAllowsPublic boo
 		return false
 	}
 	if !tableAllowsPublic {
-		logrus.WithField("table", table).Debug("restcache: public flag ignored — allow_public false")
+		logrus.WithField("table", table).Debug("restcache: public flag ignored: allow_public is false")
 		return false
 	}
 	if !d.publicScopeSafe(req.Context(), table) {
 		logrus.WithField("table", table).
-			Warn("restcache: allow_public ignored — this table's read rule depends on the caller, " +
+			Warn("restcache: allow_public ignored: this table's read rule depends on the caller, " +
 				"so a shared cache entry would serve one caller's rows to another")
 		return false
 	}
@@ -243,8 +249,8 @@ func (d Deps) publicScopeSafe(ctx context.Context, table string) bool {
 	}
 	identityDependent, known := tables[table]
 	if !known {
-		// A table the schema does not describe — a view, or something created
-		// outside the schema. Its rules are unknown, so it does not get shared
+		// A table the schema does not describe (a view, or something created
+		// outside the schema). Its rules are unknown, so it does not get shared
 		// caching.
 		return false
 	}
@@ -333,7 +339,7 @@ func tryServeHit(ctx context.Context, vk keyspace.Client, w http.ResponseWriter,
 	}
 	entry, err := DecodeEntry(raw)
 	if err != nil {
-		logrus.WithError(err).Warn("restcache: corrupt cache entry — bypass")
+		logrus.WithError(err).Warn("restcache: corrupt cache entry, bypassed")
 		return false, false
 	}
 	age := int(time.Since(entry.CachedAt).Seconds())

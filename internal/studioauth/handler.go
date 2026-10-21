@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sirupsen/logrus"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
+	"github.com/supatype/server/internal/studioctx"
 	"github.com/supatype/server/internal/studiomembers"
 	"github.com/supatype/server/internal/utilities"
 )
@@ -27,6 +28,9 @@ type Config struct {
 	// resources, so a deployment with no database still yields a usable value
 	// whose every call reports that and denies.
 	Members studiomembers.Store
+	// Audit records requests that skip the app's row rules. Nil records them
+	// through Members.
+	Audit ElevatedAuditor
 	// StudioRole resolves a verified user id to their Studio role from
 	// `_supatype.studio_members`. Studio capability deliberately does not come
 	// from a JWT claim: `app_metadata` is the developer's namespace for their own
@@ -111,12 +115,12 @@ func verifyOKResponse(result Result, c Config, req *http.Request) map[string]int
 // roleSeesDrafts answers whether this caller sees other people's unpublished work.
 //
 // **Studio needs telling, because row level security cannot tell it.** Studio's
-// data plane goes through the proxy with the service role, which bypasses
-// policies entirely. That is deliberate: Studio is an admin tool gated by its
-// own capability system rather than by each project's access rules. But it means
-// the draft-visibility setting, which the generated policies compile in, binds
-// the API and not the UI. A project that narrowed it would still see every draft
-// here.
+// data plane goes through the proxy as Studio or as the service role, and either
+// skips the app's row policies (acting_mode.go). That is deliberate: Studio is
+// an admin tool gated by its own capability system rather than by each
+// project's access rules. But it means the draft-visibility setting, which the
+// generated policies compile in, binds the API and not the UI. A project that
+// narrowed it would still see every draft here.
 //
 // So the setting is enforced in both places from **one stored answer**: the
 // policies read `_supatype.publishing_settings`, and this reads the same list out
@@ -138,11 +142,7 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		result := ResolveAccess(req, c)
 		if !result.Allowed {
-			status := http.StatusForbidden
-			if result.Message == "Authentication required" {
-				status = http.StatusUnauthorized
-			}
-			utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
+			refuseAccess(w, result)
 			return
 		}
 		next.ServeHTTP(w, req)
@@ -155,6 +155,9 @@ type admission struct {
 	actor string
 	role  string
 	perms StudioPermissions
+	// claims is the caller's verified token, which a request acting as Studio
+	// forwards with the Studio claim added.
+	claims jwt.MapClaims
 }
 
 // ProxyHandler forwards privileged API calls after admin JWT verification.
@@ -173,12 +176,16 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 
 		req2 := forwardedCopy(req)
 		mode, ok := forwardIdentity(w, req, req2, c, adm, path)
+		if !ok || !clampSignedURLExpiry(w, req2, path) {
+			return
+		}
+		audit, ok := auditForward(w, req2, c, adm, mode, path)
 		if !ok {
 			return
 		}
 
 		w.Header().Set(ActingModeHeader, mode)
-		inner.ServeHTTP(w, req2)
+		serveAudited(inner, w, req2, audit)
 	})
 }
 
@@ -187,9 +194,11 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 // Clone already deep-copies the URL. An empty path is not a valid
 // request-target, so it becomes the root. The Studio identity headers go before
 // anything else, so no path through the proxy carries a browser's own claim
-// about who it is.
+// about who it is. Its context says it came through the proxy, which is what
+// lets the data plane accept a Studio claim on it and keeps it out of the
+// response cache (studioctx).
 func forwardedCopy(req *http.Request) *http.Request {
-	req2 := req.Clone(req.Context())
+	req2 := req.Clone(studioctx.WithProxied(req.Context()))
 	if req2.URL.Path == "" {
 		req2.URL.Path = "/"
 	}
@@ -214,28 +223,23 @@ func isTokenRefresh(req *http.Request, path string) bool {
 
 // forwardIdentity puts the credentials and identity headers for one admitted
 // request on its forwarded copy, and returns the mode it acts in. It reports
-// false, having written the response, when the service role is needed and no
-// key is configured.
-//
-// A caller acting as themselves on a Realtime Inspector route is mediated: the
-// platform proxy admits only the service role, so their own token could never
-// reach the control plane, and the control plane is told who they are instead.
+// false, having written the response, when the credentials cannot be made.
 func forwardIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, adm admission, path string) (string, bool) {
 	// The metadata catalogue reads catalogs through the runner's connection, read-only:
 	// the service role reaches it, and there is nothing elevated to record.
 	if under(path, "/metadata") {
 		return ModeElevated, setServiceRole(w, req2, c)
 	}
-	if adm.mode == ModeSelf && IsRealtimeInspectorRoute(req.Method, path) {
-		if !setServiceRole(w, req2, c) {
+	switch {
+	case adm.mode == ModeSelf && IsRealtimeInspectorRoute(req.Method, path):
+		return forwardMediated(w, req, req2, c, adm)
+	case adm.mode == ModeStudio:
+		if !setStudioCredentials(w, req2, c, adm, path) {
 			return "", false
 		}
-		setStudioIdentity(req2.Header, adm)
-		req2.Header.Set(ViewerAuthorizationHeader, req.Header.Get("Authorization"))
-		recordElevatedRequest(c.Members, req, adm.actor, req2.URL.Path, ModeMediated)
-		return ModeMediated, true
+		return ModeStudio, true
 	}
-	if !setActingIdentity(w, req, req2, c, adm.mode, adm.actor) {
+	if !setActingIdentity(w, req, req2, c, adm) {
 		return "", false
 	}
 	if adm.mode == ModeElevated && under(path, "/platform/v1") {
@@ -244,13 +248,25 @@ func forwardIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, a
 	return adm.mode, true
 }
 
+// forwardMediated sends a caller acting as themselves to a Realtime Inspector
+// route. The platform proxy admits only the service role, so their own token
+// could never reach the control plane: the control plane is told who they are
+// instead, and shown their own token to judge changes as them.
+func forwardMediated(w http.ResponseWriter, req, req2 *http.Request, c Config, adm admission) (string, bool) {
+	if !setServiceRole(w, req2, c) {
+		return "", false
+	}
+	setStudioIdentity(req2.Header, adm)
+	req2.Header.Set(ViewerAuthorizationHeader, req.Header.Get("Authorization"))
+	return ModeMediated, true
+}
+
 // setServiceRole forwards a request as the service role. It reports false,
 // having written the response, when no service role key is configured.
 func setServiceRole(w http.ResponseWriter, req2 *http.Request, c Config) bool {
 	sr := strings.TrimSpace(c.ServiceRoleKey)
 	if sr == "" {
-		utilities.WriteJSON(w, http.StatusServiceUnavailable,
-			map[string]string{"error": "service role key not configured"})
+		writeError(w, http.StatusServiceUnavailable, "service role key not configured")
 		return false
 	}
 	req2.Header.Set("Authorization", "Bearer "+sr)
@@ -258,28 +274,45 @@ func setServiceRole(w http.ResponseWriter, req2 *http.Request, c Config) bool {
 	return true
 }
 
-// setActingIdentity puts the credentials for mode on the forwarded request.
-// It reports false, having written the response, when elevation is asked for
-// and no service role key is configured.
-func setActingIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, mode, actor string) bool {
-	if mode != ModeElevated {
+// setAnonKey puts the anon key in `apikey`, for gateways that require one, on a
+// request that does not act as the service role: the service role key there
+// would re-elevate it.
+func setAnonKey(req2 *http.Request, c Config) {
+	if anon := strings.TrimSpace(c.AnonKey); anon != "" {
+		req2.Header.Set("apikey", anon)
+		return
+	}
+	req2.Header.Del("apikey")
+}
+
+// setActingIdentity puts the credentials for an elevated or self request on its
+// forwarded copy. It reports false, having written the response, when
+// elevation is asked for and no service role key is configured.
+func setActingIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, adm admission) bool {
+	if adm.mode != ModeElevated {
 		// Leave the caller's own Authorization in place: PostgREST assumes their
-		// role and their own RLS policies apply. `apikey` still has to be present
-		// for gateways that require one, but it must not be the service role key,
-		// because that would re-elevate the request.
-		if anon := strings.TrimSpace(c.AnonKey); anon != "" {
-			req2.Header.Set("apikey", anon)
-		} else {
-			req2.Header.Del("apikey")
-		}
+		// role and their own RLS policies apply.
+		setAnonKey(req2, c)
 		return true
 	}
-
 	if !setServiceRole(w, req2, c) {
 		return false
 	}
-	recordElevatedRequest(c.Members, req, actor, req2.URL.Path, ModeElevated)
 	return true
+}
+
+// writeError answers a refused request with a JSON error.
+func writeError(w http.ResponseWriter, status int, message string) {
+	utilities.WriteJSON(w, status, map[string]string{"error": message})
+}
+
+// refuseAccess answers a request whose caller was not admitted.
+func refuseAccess(w http.ResponseWriter, result Result) {
+	status := http.StatusForbidden
+	if result.Message == "Authentication required" {
+		status = http.StatusUnauthorized
+	}
+	writeError(w, status, result.Message)
 }
 
 // admitProxied decides whether one request may pass the Studio proxy, and as
@@ -290,22 +323,13 @@ func setActingIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config,
 func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path string) (admission, bool) {
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
-		status := http.StatusForbidden
-		if result.Message == "Authentication required" {
-			status = http.StatusUnauthorized
-		}
-		utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
+		refuseAccess(w, result)
 		return admission{}, false
 	}
 
-	perms := legacyAdminPermissions()
-	if result.Permissions != nil {
-		perms = *result.Permissions
-	}
+	perms := permissionsOf(result)
 	if !AllowsRequest(perms, req.Method, path) {
-		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
-			"error": "Studio role \"" + result.Role + "\" cannot perform this request",
-		})
+		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false
 	}
 	return admitActingMode(w, req, result, perms, path)
@@ -323,7 +347,7 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 // yourself applies to project rows, not to administration the role holds. A
 // role that cannot elevate is not elevated by these routes either.
 func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
-	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms}
+	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms, claims: result.Claims}
 	if under(path, "/sql") || under(path, "/metadata") || under(path, "/studio-admin") {
 		return adm, true
 	}
@@ -332,34 +356,30 @@ func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, pe
 	}
 	mode, ok := resolveActingMode(req, perms)
 	if !ok {
-		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
-			"error": "Studio role \"" + result.Role + "\" cannot act with elevated access",
-		})
+		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot act in the mode it asked for")
 		return admission{}, false
 	}
 	adm.mode = mode
+	if mode == ModeStudio {
+		return admitAsStudio(w, req, adm, path)
+	}
 	return adm, true
 }
 
-// recordElevatedRequest notes that a request bypassed RLS.
-//
-// Reads are logged only: Studio polls, and an audit row per read would bury the
-// membership trail in noise. Anything that could change data gets a durable row,
-// because "who edited this outside their own policies" must survive log rotation.
-func recordElevatedRequest(members studiomembers.Store, req *http.Request, actor, path, mode string) {
-	readOnly := req.Method == http.MethodGet ||
-		req.Method == http.MethodHead ||
-		req.Method == http.MethodOptions
-
-	logrus.WithFields(logrus.Fields{
-		"actor":  actor,
-		"method": req.Method,
-		"path":   path,
-		"mode":   mode,
-	}).Info("studio: elevated request")
-
-	if readOnly {
-		return
+// admitAsStudio settles a request acting as Studio. A route with no Studio rule
+// to apply (realtime, function invocation, the Realtime Inspector) acts as the
+// caller themselves, whatever their role: a caller who asked for Studio mode
+// did not ask to be elevated, and is not elevated silently. Any other route must
+// name its resource unambiguously, since it carries more than the caller's own
+// token (isUnambiguousPath).
+func admitAsStudio(w http.ResponseWriter, req *http.Request, adm admission, path string) (admission, bool) {
+	if studioRouteFor(req.Method, path) == studioSelf {
+		adm.mode = ModeSelf
+		return adm, true
 	}
-	members.AuditElevated(req.Context(), actor, req.Method, path)
+	if !isUnambiguousPath(path) {
+		writeError(w, http.StatusForbidden, "Studio cannot act on a path with dot segments or escapes")
+		return admission{}, false
+	}
+	return adm, true
 }

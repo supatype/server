@@ -58,8 +58,8 @@ func TestMembersAPI(t *testing.T) {
 			CONSTRAINT studio_members_one_identity
 				CHECK (num_nonnulls(user_id, platform_user_id) = 1))`,
 		`CREATE TABLE _supatype.studio_audit (
-			id BIGSERIAL PRIMARY KEY, actor_id UUID, target_id UUID NOT NULL,
-			action TEXT NOT NULL, role TEXT,
+			id BIGSERIAL PRIMARY KEY, actor_id UUID, target_id UUID,
+			action TEXT NOT NULL, role TEXT, detail JSONB,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`INSERT INTO auth.users (id, email) VALUES
 			('` + apiAdmin + `', 'admin@example.com'),

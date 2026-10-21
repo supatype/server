@@ -117,8 +117,13 @@ func TestBootstrapEndpoints(t *testing.T) {
 		})
 	}
 
+	// Every call acts as the caller themselves: these cases are about the app's
+	// own rules filtering what a caller is shown. Studio mode, the default for
+	// editors and viewers since the owner decision of 2026-10-21, sets those rules
+	// aside and is covered by the Studio mode tests.
 	call := func(handler http.HandlerFunc, token, ifNoneMatch string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/studio/schema", nil)
+		req.Header.Set(ActingModeHeader, ModeSelf)
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}

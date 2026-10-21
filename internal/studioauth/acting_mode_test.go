@@ -23,15 +23,25 @@ func modeFor(t *testing.T, role, requested string) (string, bool) {
 	return resolveActingMode(req, perms)
 }
 
-// The default keeps an administrator's panel working while confining the roles a
-// project would hand to a contractor to their own RLS policies.
+// Admins and developers act elevated by default, with full access as before.
+// Editors and viewers act as Studio: their Studio role, not the app's rules,
+// decides what they may do with content (owner decision 2026-10-21).
 func TestActingModeDefaults(t *testing.T) {
-	if mode, _ := modeFor(t, "admin", ""); mode != ModeElevated {
-		t.Fatalf("admin should default to elevated, got %q", mode)
+	for role, want := range map[string]string{
+		"admin": ModeElevated, "developer": ModeElevated, "editor": ModeStudio, "viewer": ModeStudio,
+	} {
+		if mode, _ := modeFor(t, role, ""); mode != want {
+			t.Fatalf("%s should default to %s, got %q", role, want, mode)
+		}
 	}
-	for _, role := range []string{"developer", "editor"} {
-		if mode, _ := modeFor(t, role, ""); mode != ModeSelf {
-			t.Fatalf("%s should default to self, got %q", role, mode)
+}
+
+// Any role that reads content may ask to act as Studio, admins and developers
+// included.
+func TestAnyReaderMayActAsStudio(t *testing.T) {
+	for _, role := range KnownStudioRoles() {
+		if mode, ok := modeFor(t, role, ModeStudio); !ok || mode != ModeStudio {
+			t.Fatalf("%s should be able to act as studio, got (%q, %v)", role, mode, ok)
 		}
 	}
 }
@@ -48,15 +58,18 @@ func TestAnyRoleMayActAsSelf(t *testing.T) {
 }
 
 // Asking for elevation without the capability is refused rather than silently
-// downgraded: a misleadingly empty result is worse than an error.
+// downgraded: a misleadingly empty result is worse than an error. Admins and
+// developers hold elevated SQL; editors and viewers do not.
 func TestElevationRequiresTheCapability(t *testing.T) {
-	for _, role := range []string{"developer", "editor"} {
+	for _, role := range []string{"editor", "viewer"} {
 		if _, ok := modeFor(t, role, ModeElevated); ok {
 			t.Fatalf("%s must not be able to elevate", role)
 		}
 	}
-	if mode, ok := modeFor(t, "admin", ModeElevated); !ok || mode != ModeElevated {
-		t.Fatalf("admin should be able to elevate, got (%q, %v)", mode, ok)
+	for _, role := range []string{"admin", "developer"} {
+		if mode, ok := modeFor(t, role, ModeElevated); !ok || mode != ModeElevated {
+			t.Fatalf("%s should be able to elevate, got (%q, %v)", role, mode, ok)
+		}
 	}
 }
 
@@ -68,31 +81,21 @@ func TestUnknownActingModeIsRefused(t *testing.T) {
 
 // Regression: every Studio request was forwarded with the service role key, so
 // admission to the panel was the same thing as unrestricted database access.
+// Content rows now go as Studio (the caller's own identity with the Studio
+// claim), as the caller themselves when they ask, and as the service role only
+// for a role that may elevate and asks to.
 func TestProxyForwardsCallerTokenForNonElevatedRoles(t *testing.T) {
-
 	const serviceRole = "service-role-key"
-	token := signClaims(jwt.MapClaims{
-		"sub": "user-1",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
+	token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
 
 	var seenAuth, seenKey string
 	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		seenAuth = r.Header.Get("Authorization")
-		seenKey = r.Header.Get("apikey")
+		seenAuth, seenKey = r.Header.Get("Authorization"), r.Header.Get("apikey")
 	})
-
 	call := func(role, requested string) *httptest.ResponseRecorder {
-		cfg := Config{
-			JWTSecret:      testSecret,
-			ServiceRoleKey: serviceRole,
-			AnonKey:        "anon-key",
-			AdminRoles:     DefaultAdminRoles,
-			StudioRole:     func(string) (string, bool) { return role, true },
-		}
+		cfg := membershipConfig(role)
 		seenAuth, seenKey = "", ""
-		req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
+		req := studioRequest(http.MethodGet, "/rest/v1/posts", token)
 		if requested != "" {
 			req.Header.Set(ActingModeHeader, requested)
 		}
@@ -101,39 +104,33 @@ func TestProxyForwardsCallerTokenForNonElevatedRoles(t *testing.T) {
 		return rec
 	}
 
-	// A developer's request reaches PostgREST as themselves, so RLS applies.
-	rec := call("developer", "")
-	if seenAuth != "Bearer "+token {
-		t.Fatalf("expected the caller's own token, got %q", seenAuth)
-	}
-	if seenKey == serviceRole {
-		t.Fatal("apikey must not carry the service role for a non-elevated request")
-	}
-	if got := rec.Header().Get(ActingModeHeader); got != ModeSelf {
-		t.Fatalf("expected the response to report self, got %q", got)
-	}
-
-	// An admin still gets the elevated path by default.
-	rec = call("admin", "")
-	if seenAuth != "Bearer "+serviceRole {
-		t.Fatalf("expected the service role for an admin, got %q", seenAuth)
-	}
-	if got := rec.Header().Get(ActingModeHeader); got != ModeElevated {
-		t.Fatalf("expected the response to report elevated, got %q", got)
+	for _, role := range KnownStudioRoles() {
+		rec := call(role, ModeStudio)
+		if claims := studioClaims(t, seenAuth); claims["sub"] != "user-1" || seenKey == serviceRole {
+			t.Fatalf("%s: rows must go as the caller with the Studio claim, got %v (apikey %q)", role, claims, seenKey)
+		}
+		if got := rec.Header().Get(ActingModeHeader); got != ModeStudio {
+			t.Fatalf("%s: expected the response to report studio, got %q", role, got)
+		}
+		if rec = call(role, ModeSelf); seenAuth != "Bearer "+token || rec.Header().Get(ActingModeHeader) != ModeSelf {
+			t.Fatalf("%s acting as self should forward their own token, got %q", role, seenAuth)
+		}
 	}
 
-	// And an admin can choose to see what their users see.
-	rec = call("admin", ModeSelf)
-	if seenAuth != "Bearer "+token {
-		t.Fatalf("admin acting as self should forward their own token, got %q", seenAuth)
+	// By default editors and viewers go as Studio, admins and developers elevated.
+	for _, role := range []string{"editor", "viewer"} {
+		if rec := call(role, ""); rec.Header().Get(ActingModeHeader) != ModeStudio {
+			t.Fatalf("%s by default: mode %q", role, rec.Header().Get(ActingModeHeader))
+		}
+		studioClaims(t, seenAuth)
 	}
-	if got := rec.Header().Get(ActingModeHeader); got != ModeSelf {
-		t.Fatalf("expected self, got %q", got)
+	for _, role := range []string{"admin", "developer"} {
+		if rec := call(role, ""); seenAuth != "Bearer "+serviceRole || rec.Header().Get(ActingModeHeader) != ModeElevated {
+			t.Fatalf("%s by default gets the service role, got %q", role, seenAuth)
+		}
 	}
-
 	// An editor asking to elevate is refused, not quietly downgraded.
-	rec = call("editor", ModeElevated)
-	if rec.Code != http.StatusForbidden {
+	if rec := call("editor", ModeElevated); rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
 }
@@ -147,6 +144,7 @@ func TestVerifyReportsActingMode(t *testing.T) {
 
 	check := func(role, wantMode string, wantCanElevate bool) {
 		cfg := Config{
+			Audit:      &fakeAuditor{},
 			JWTSecret:  testSecret,
 			AdminRoles: DefaultAdminRoles,
 			StudioRole: func(string) (string, bool) { return role, true },
@@ -169,8 +167,9 @@ func TestVerifyReportsActingMode(t *testing.T) {
 	}
 
 	check("admin", ModeElevated, true)
-	check("developer", ModeSelf, false)
-	check("editor", ModeSelf, false)
+	check("developer", ModeElevated, true)
+	check("editor", ModeStudio, false)
+	check("viewer", ModeStudio, false)
 }
 
 // Verify reports the mode the caller's requests will act in. A mode the caller
@@ -182,12 +181,16 @@ func TestVerifyReportsTheDefaultForAModeTheCallerCannotHave(t *testing.T) {
 	for _, tc := range []struct{ role, asked, want string }{
 		{"admin", "root", ModeElevated},
 		{"admin", ModeMediated, ModeElevated},
-		{"developer", ModeElevated, ModeSelf},
-		{"developer", "root", ModeSelf},
+		{"editor", ModeElevated, ModeStudio},
+		{"viewer", "root", ModeStudio},
 		{"admin", ModeSelf, ModeSelf},
+		{"admin", ModeStudio, ModeStudio},
+		{"developer", ModeStudio, ModeStudio},
+		{"developer", ModeElevated, ModeElevated},
 	} {
 		role := tc.role
 		cfg := Config{
+			Audit:      &fakeAuditor{},
 			JWTSecret:  testSecret,
 			AdminRoles: DefaultAdminRoles,
 			StudioRole: func(string) (string, bool) { return role, true },

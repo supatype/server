@@ -12,13 +12,12 @@ import (
 
 // The Realtime Inspector through the Studio proxy.
 //
-// A developer may reach four realtime routes on the control plane and nothing
-// else there. Their own token cannot get past the platform proxy's
-// service-role check, so for those routes alone the proxy forwards them
-// mediated: the service-role key upstream, and who they are in headers the
-// control plane uses to decide what payloads they may see. Those headers are
-// only worth anything if a browser cannot write them, so every inbound copy is
-// removed before any branch.
+// A caller acting as themselves cannot get past the platform proxy's
+// service-role check with their own token, so for the inspector's routes the
+// proxy forwards them mediated: the service-role key upstream, and who they
+// are in headers the control plane uses to decide what payloads they may see.
+// Those headers are only worth anything if a browser cannot write them, so
+// every inbound copy is removed before any branch.
 
 // landing is what one proxied request looked like where it arrived.
 type landing struct {
@@ -35,6 +34,7 @@ func proxyCapturing(t *testing.T, role string, adjust ...func(*Config)) (token s
 	t.Helper()
 	token = signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
 	cfg := Config{
+		Audit:          &fakeAuditor{},
 		JWTSecret:      testSecret,
 		ServiceRoleKey: "service-role-key",
 		AnonKey:        "anon-key",
@@ -75,6 +75,8 @@ func proxyCapturing(t *testing.T, role string, adjust ...func(*Config)) (token s
 
 const inspectorChannels = "/studio/proxy/platform/v1/projects/ref/realtime/channels"
 
+// Developers reach the inspector and, since they administer the project (owner
+// decision 2026-10-21), the rest of the control plane too.
 func TestProxyAllowsRealtimeInspectorToDevelopers(t *testing.T) {
 	_, developer := proxyCapturing(t, "developer")
 	for _, c := range []struct {
@@ -86,9 +88,9 @@ func TestProxyAllowsRealtimeInspectorToDevelopers(t *testing.T) {
 		{http.MethodGet, "/platform/v1/projects/ref/realtime/stream", http.StatusOK},
 		{http.MethodPost, "/platform/v1/projects/ref/realtime/broadcast", http.StatusOK},
 		{http.MethodGet, "/platform/v1/project", http.StatusOK},
-		{http.MethodPatch, "/platform/v1/projects/ref/realtime/settings", http.StatusForbidden},
-		{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/../../schema/migrations", http.StatusForbidden},
-		{http.MethodPost, "/platform/v1/projects/ref/schema/push", http.StatusForbidden},
+		{http.MethodPatch, "/platform/v1/projects/ref/realtime/settings", http.StatusOK},
+		{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/../../schema/migrations", http.StatusOK},
+		{http.MethodPost, "/platform/v1/projects/ref/schema/push", http.StatusOK},
 	} {
 		got := developer(c.method, "/studio/proxy"+c.path, nil)
 		landedOnPlatform := got.upstream == "platform"
@@ -106,9 +108,12 @@ func TestProxyAllowsRealtimeInspectorToDevelopers(t *testing.T) {
 	}
 }
 
+// A developer who chose to act as themselves reaches the inspector mediated:
+// the service role upstream, and who they are in headers. They hold elevated
+// SQL (owner decision 2026-10-21), so the control plane is told so.
 func TestProxyMediatesTheInspectorForDevelopers(t *testing.T) {
 	token, developer := proxyCapturing(t, "developer")
-	got := developer(http.MethodGet, inspectorChannels, nil)
+	got := developer(http.MethodGet, inspectorChannels, http.Header{ActingModeHeader: {ModeSelf}})
 
 	if got.upstream != "platform" {
 		t.Fatalf("landed at %q, want the control plane", got.upstream)
@@ -118,7 +123,7 @@ func TestProxyMediatesTheInspectorForDevelopers(t *testing.T) {
 		"Apikey":                          "service-role-key",
 		"X-Supatype-Studio-Actor":         "user-1",
 		"X-Supatype-Studio-Role":          "developer",
-		"X-Supatype-Studio-Elevated":      "false",
+		"X-Supatype-Studio-Elevated":      "true",
 		"X-Supatype-Viewer-Authorization": "Bearer " + token,
 	} {
 		if v := got.header.Get(name); v != want {
@@ -133,7 +138,6 @@ func TestProxyMediatesTheInspectorForDevelopers(t *testing.T) {
 func TestProxyStripsForgedStudioIdentity(t *testing.T) {
 	forged := http.Header{
 		"X-Supatype-Studio-Role":          {"admin"},
-		"X-Supatype-Studio-Elevated":      {"true"},
 		"X-Supatype-Studio-Actor":         {"someone-else"},
 		"X-Supatype-Viewer-Authorization": {"Bearer forged"},
 	}
@@ -141,8 +145,8 @@ func TestProxyStripsForgedStudioIdentity(t *testing.T) {
 	_, developer := proxyCapturing(t, "developer")
 	got := developer(http.MethodGet, inspectorChannels, forged)
 	if got.header.Get("X-Supatype-Studio-Role") != "developer" ||
-		got.header.Get("X-Supatype-Studio-Elevated") != "false" ||
-		got.header.Get("X-Supatype-Studio-Actor") != "user-1" {
+		got.header.Get("X-Supatype-Studio-Actor") != "user-1" ||
+		got.header.Get("X-Supatype-Viewer-Authorization") == "Bearer forged" {
 		t.Errorf("forged identity reached the control plane: %v", got.header)
 	}
 
@@ -158,17 +162,22 @@ func TestProxyStripsForgedStudioIdentity(t *testing.T) {
 	}
 }
 
+// Rows never carry the control plane's identity headers, whichever mode they
+// act in.
 func TestProxyKeepsDevelopersOwnIdentityOffThePlatform(t *testing.T) {
 	token, developer := proxyCapturing(t, "developer")
-	got := developer(http.MethodGet, "/studio/proxy/rest/v1/posts", nil)
+	got := developer(http.MethodGet, "/studio/proxy/rest/v1/posts", http.Header{ActingModeHeader: {ModeSelf}})
 	if got.upstream != "rest" || got.header.Get("Authorization") != "Bearer "+token {
-		t.Fatalf("developer rows must act as themselves, got %q with %q", got.upstream, got.header.Get("Authorization"))
+		t.Fatalf("developer rows acting as self, got %q with %q", got.upstream, got.header.Get("Authorization"))
 	}
 	if got.header.Get("Apikey") != "anon-key" || got.response.Get(ActingModeHeader) != ModeSelf {
 		t.Errorf("developer rows: apikey %q mode %q", got.header.Get("Apikey"), got.response.Get(ActingModeHeader))
 	}
-	if got.header.Get("X-Supatype-Studio-Role") != "" {
-		t.Errorf("identity headers are for the control plane only")
+	for _, mode := range []string{ModeSelf, ModeStudio, ModeElevated} {
+		got = developer(http.MethodGet, "/studio/proxy/rest/v1/posts", http.Header{ActingModeHeader: {mode}})
+		if got.header.Get("X-Supatype-Studio-Role") != "" {
+			t.Errorf("%s: identity headers are for the control plane only", mode)
+		}
 	}
 }
 

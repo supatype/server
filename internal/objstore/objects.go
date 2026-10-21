@@ -309,29 +309,11 @@ func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
 // serveFile opens and streams a stored object. Content-Type is set from the
 // saved metadata. Image transform query params (?width, ?height, etc.) are
 // accepted but silently ignored, because local dev serves the raw file.
+// Public, authenticated and signed downloads all arrive here, so this is the
+// one place the stored-XSS header policy has to be applied.
 func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPath string) {
-	fileRel, err := s.objectFileRel(bucket, objPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	root, err := openRoot(s.root)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to open storage root")
-		return
-	}
-	defer func() {
-		_ = root.Close()
-	}()
-
-	f, err := root.Open(fileRel)
-	if os.IsNotExist(err) {
-		writeError(w, http.StatusNotFound, "object not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to open file")
+	f, ok := s.openObject(w, bucket, objPath)
+	if !ok {
 		return
 	}
 	defer func() {
@@ -343,19 +325,54 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		writeError(w, http.StatusInternalServerError, "failed to stat file")
 		return
 	}
+	s.applyObjectMeta(w, bucket, objPath)
 
-	// Set Content-Type from metadata (best effort).
-	if meta, err := s.loadObjectMeta(bucket, objPath); err == nil {
-		if meta.ContentType != "" {
-			w.Header().Set("Content-Type", meta.ContentType)
-		}
-		// Update last accessed time (best effort: don't fail the request if this errors).
-		meta.LastAccessedAt = time.Now().UTC().Format(time.RFC3339)
-		_ = s.saveObjectMeta(meta, bucket, objPath)
+	// http.ServeContent handles Range, ETag, and Last-Modified negotiation. The
+	// wrapper hardens the headers once ServeContent has settled the type.
+	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, info.Name(), info.ModTime(), f)
+}
+
+// openObject opens a stored object for reading, answering the request itself
+// when it cannot.
+func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.File, bool) {
+	fileRel, err := s.objectFileRel(bucket, objPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, false
 	}
+	root, err := openRoot(s.root)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to open storage root")
+		return nil, false
+	}
+	defer func() {
+		_ = root.Close()
+	}()
 
-	// http.ServeContent handles Range, ETag, and Last-Modified negotiation.
-	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+	f, err := root.Open(fileRel)
+	if os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "object not found")
+		return nil, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to open file")
+		return nil, false
+	}
+	return f, true
+}
+
+// applyObjectMeta sets Content-Type from the saved metadata and records the
+// access time. Both are best effort: neither fails the download.
+func (s *store) applyObjectMeta(w http.ResponseWriter, bucket, objPath string) {
+	meta, err := s.loadObjectMeta(bucket, objPath)
+	if err != nil {
+		return
+	}
+	if meta.ContentType != "" {
+		w.Header().Set("Content-Type", meta.ContentType)
+	}
+	meta.LastAccessedAt = time.Now().UTC().Format(time.RFC3339)
+	_ = s.saveObjectMeta(meta, bucket, objPath)
 }
 
 // ─── Remove objects ───────────────────────────────────────────────────────────

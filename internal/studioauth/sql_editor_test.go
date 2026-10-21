@@ -61,8 +61,10 @@ func TestVerifyReportsTheModeAskedFor(t *testing.T) {
 	}{
 		{"admin", "", ModeElevated},
 		{"admin", ModeSelf, ModeSelf},
-		{"developer", "", ModeSelf},
-		{"developer", ModeElevated, ModeSelf},
+		{"developer", "", ModeElevated},
+		{"developer", ModeStudio, ModeStudio},
+		{"developer", ModeElevated, ModeElevated},
+		{"editor", ModeElevated, ModeStudio},
 	}
 	for _, c := range cases {
 		token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})

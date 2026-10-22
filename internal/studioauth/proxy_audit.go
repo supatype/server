@@ -65,14 +65,14 @@ type proxyAudit struct {
 // membership trail in noise. A write gets a durable row before it is sent, and
 // fails closed: a write that cannot be recorded is refused, having written the
 // response, because an elevation nobody can account for is the thing the trail
-// exists to prevent. A request acting as the caller, or reading the metadata
-// catalogue, skips nothing and is not recorded.
+// exists to prevent. A request acting as the caller or anonymously, or
+// reading the metadata catalogue, skips nothing and is not recorded.
 func auditForward(w http.ResponseWriter, req2 *http.Request, c Config, adm admission, mode, path string) (*proxyAudit, bool) {
-	if mode == ModeSelf || under(path, "/metadata") {
+	if mode == ModeSelf || mode == ModeAnon || under(path, "/metadata") {
 		return nil, true
 	}
 	logElevated(req2, adm, mode, path)
-	if isReadOnly(req2.Method) {
+	if isReadOnly(req2.Method) || adm.readsOnly {
 		return nil, true
 	}
 	record, recordable := elevatedRecord(req2, adm, mode, path)

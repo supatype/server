@@ -38,6 +38,9 @@ type Config struct {
 	// UI access by accident. Nil keeps the legacy claim-based path, so a
 	// deployment that has not been migrated still works.
 	StudioRole StudioRoleLookup
+	// TargetRoles finds the Studio roles of the user a user administration
+	// request acts on (admin_target.go). Nil looks them up through Members.
+	TargetRoles TargetRoleLookup
 	// AdminConfigPath is the generated `admin-config.json`, relative to the
 	// working directory. `AdminRolesFromConfigFile` already reads it; the preview
 	// endpoints read the publishing block from the same file, so settings the
@@ -158,6 +161,9 @@ type admission struct {
 	// claims is the caller's verified token, which a request acting as Studio
 	// forwards with the Studio claim added.
 	claims jwt.MapClaims
+	// readsOnly says the request only reads, judged as AllowsRequest judged
+	// it: a GraphQL query sent as a POST reads (permissionMethod).
+	readsOnly bool
 }
 
 // ProxyHandler forwards privileged API calls after admin JWT verification.
@@ -238,6 +244,8 @@ func forwardIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, a
 			return "", false
 		}
 		return ModeStudio, true
+	case adm.mode == ModeAnon:
+		return ModeAnon, setAnonIdentity(w, req2, c)
 	}
 	if !setActingIdentity(w, req, req2, c, adm) {
 		return "", false
@@ -285,6 +293,20 @@ func setAnonKey(req2 *http.Request, c Config) {
 	req2.Header.Del("apikey")
 }
 
+// setAnonIdentity sends a request as an anonymous client: the anon key as both
+// the apikey and the bearer, the caller's Studio session dropped. It reports
+// false, having written the response, when no anon key is configured.
+func setAnonIdentity(w http.ResponseWriter, req2 *http.Request, c Config) bool {
+	anon := strings.TrimSpace(c.AnonKey)
+	if anon == "" {
+		writeError(w, http.StatusServiceUnavailable, "anon key not configured")
+		return false
+	}
+	req2.Header.Set("Authorization", "Bearer "+anon)
+	req2.Header.Set("apikey", anon)
+	return true
+}
+
 // setActingIdentity puts the credentials for an elevated or self request on its
 // forwarded copy. It reports false, having written the response, when
 // elevation is asked for and no service role key is configured.
@@ -328,11 +350,17 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 	}
 
 	perms := permissionsOf(result)
-	if !AllowsRequest(perms, req.Method, path) {
+	method := permissionMethod(req, path)
+	if !AllowsRequest(perms, method, path) {
 		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false
 	}
-	return admitActingMode(w, req, result, perms, path)
+	if !guardAdminAccounts(w, req, c, perms, path) {
+		return admission{}, false
+	}
+	adm, ok := admitActingMode(w, req, result, perms, path)
+	adm.readsOnly = isReadOnly(method)
+	return adm, ok
 }
 
 // admitActingMode decides how an admitted request acts. The SQL runner is
@@ -349,6 +377,12 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
 	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms, claims: result.Claims}
 	if under(path, "/sql") || under(path, "/metadata") || under(path, "/studio-admin") {
+		return adm, true
+	}
+	// Anonymous is asked for by name and means it, on every route: an
+	// administration route refuses it upstream, as it refuses any anon client.
+	if mode, _ := resolveActingMode(req, perms); mode == ModeAnon {
+		adm.mode = ModeAnon
 		return adm, true
 	}
 	if perms.ElevatedSQL && isServiceRoleOnly(req.Method, path) {

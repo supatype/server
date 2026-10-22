@@ -11,6 +11,8 @@ import (
 	"github.com/fatih/structs"
 	"github.com/go-chi/chi/v5"
 	"github.com/gofrs/uuid"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pkg/errors"
 	"github.com/sethvargo/go-password/password"
 	"github.com/supatype/server/internal/auth/apierrors"
@@ -629,10 +631,18 @@ func studioAuditActor(claims *AccessTokenClaims) string {
 
 // userDeleteError answers a failed user delete: 409 with the members API's
 // message when the user is the project's last Studio admin, so the caller
-// learns to promote another admin first, and a 500 for anything else.
+// learns to promote another admin first; 409 naming the table when rows still
+// reference the user through a foreign key that refuses the delete (a model's
+// `SupatypeAuthUserId<{ onDelete: "restrict" }>`), so the caller learns which
+// rows to delete or reassign; and a 500 for anything else.
 func userDeleteError(err error, internalMessage string) error {
 	if errors.Is(err, studiomembers.ErrLastAdmin) {
 		return apierrors.NewConflictError("%s", err.Error())
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
+		return apierrors.NewConflictError("This user still owns rows in %s, which keep their user (onDelete: restrict). "+
+			"Delete those rows or give them to another user, then delete the user.", pgErr.TableName)
 	}
 	return apierrors.NewInternalServerError("%s", internalMessage).WithInternalError(err)
 }

@@ -902,11 +902,17 @@ func (ts *AdminTestSuite) studioMemberCount(userID uuid.UUID) int {
 
 // addStudioMember gives a new project user a Studio role and returns them.
 func (ts *AdminTestSuite) addStudioMember(email, role string) *models.User {
+	u := ts.createUser(email)
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`INSERT INTO _supatype.studio_members (user_id, role) VALUES (?, ?)`, u.ID, role).Exec())
+	return u
+}
+
+// createUser inserts a user with `email`.
+func (ts *AdminTestSuite) createUser(email string) *models.User {
 	u, err := models.NewUser("", email, "test", ts.Config.JWT.Aud, nil)
 	require.NoError(ts.T(), err)
 	require.NoError(ts.T(), ts.API.db.Create(u))
-	require.NoError(ts.T(), ts.API.db.RawQuery(
-		`INSERT INTO _supatype.studio_members (user_id, role) VALUES (?, ?)`, u.ID, role).Exec())
 	return u
 }
 
@@ -1054,6 +1060,43 @@ func (ts *AdminTestSuite) TestAdminUserDeleteRefusesTheLastStudioAdmin() {
 	w := ts.deleteUserRequest(editor, false)
 	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(ts.T(), []string{"user_deleted:editor"}, ts.studioAuditFor(editor.ID))
+}
+
+// A model field declared `SupatypeAuthUserId<{ onDelete: "restrict" }>` keeps
+// its user: Postgres refuses the delete with 23503, which reached the caller
+// as a 500 carrying raw Postgres text. It is a 409 that names the table and
+// says what to do, and a user who owns no such rows is still deleted.
+func (ts *AdminTestSuite) TestAdminUserDeleteRefusesAUserKeptByARestrictForeignKey() {
+	require.NoError(ts.T(), ts.API.db.RawQuery(`CREATE SCHEMA app;
+		CREATE TABLE app.comments (
+		id serial PRIMARY KEY,
+		author_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE RESTRICT)`).Exec())
+	ts.T().Cleanup(func() {
+		require.NoError(ts.T(), ts.API.db.RawQuery(`DROP SCHEMA app CASCADE`).Exec())
+	})
+
+	author := ts.createUser("author@example.com")
+	require.NoError(ts.T(), ts.API.db.RawQuery(
+		`INSERT INTO app.comments (author_id) VALUES (?)`, author.ID).Exec())
+
+	w := ts.deleteUserRequest(author, false)
+	require.Equal(ts.T(), http.StatusConflict, w.Code, w.Body.String())
+
+	var body struct {
+		ErrorCode string `json:"error_code"`
+		Message   string `json:"msg"`
+	}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&body))
+	assert.Equal(ts.T(), "conflict", body.ErrorCode)
+	assert.Equal(ts.T(), "This user still owns rows in comments, which keep their user (onDelete: restrict). "+
+		"Delete those rows or give them to another user, then delete the user.", body.Message)
+
+	_, err := models.FindUserByID(ts.API.db, author.ID)
+	require.NoError(ts.T(), err, "the refused delete leaves the user")
+
+	bystander := ts.createUser("bystander@example.com")
+	w = ts.deleteUserRequest(bystander, false)
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
 }
 
 // Two deletes of the last two Studio admins at once both read "two admins"

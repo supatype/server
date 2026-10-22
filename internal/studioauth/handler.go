@@ -38,6 +38,9 @@ type Config struct {
 	// UI access by accident. Nil keeps the legacy claim-based path, so a
 	// deployment that has not been migrated still works.
 	StudioRole StudioRoleLookup
+	// TargetRoles finds the Studio roles of the user a user administration
+	// request acts on (admin_target.go). Nil looks them up through Members.
+	TargetRoles TargetRoleLookup
 	// AdminConfigPath is the generated `admin-config.json`, relative to the
 	// working directory. `AdminRolesFromConfigFile` already reads it; the preview
 	// endpoints read the publishing block from the same file, so settings the
@@ -330,6 +333,9 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 	perms := permissionsOf(result)
 	if !AllowsRequest(perms, req.Method, path) {
 		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
+		return admission{}, false
+	}
+	if !guardAdminAccounts(w, req, c, perms, path) {
 		return admission{}, false
 	}
 	return admitActingMode(w, req, result, perms, path)

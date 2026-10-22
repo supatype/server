@@ -161,6 +161,9 @@ type admission struct {
 	// claims is the caller's verified token, which a request acting as Studio
 	// forwards with the Studio claim added.
 	claims jwt.MapClaims
+	// readsOnly says the request only reads, judged as AllowsRequest judged
+	// it: a GraphQL query sent as a POST reads (permissionMethod).
+	readsOnly bool
 }
 
 // ProxyHandler forwards privileged API calls after admin JWT verification.
@@ -331,14 +334,17 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 	}
 
 	perms := permissionsOf(result)
-	if !AllowsRequest(perms, req.Method, path) {
+	method := permissionMethod(req, path)
+	if !AllowsRequest(perms, method, path) {
 		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false
 	}
 	if !guardAdminAccounts(w, req, c, perms, path) {
 		return admission{}, false
 	}
-	return admitActingMode(w, req, result, perms, path)
+	adm, ok := admitActingMode(w, req, result, perms, path)
+	adm.readsOnly = isReadOnly(method)
+	return adm, ok
 }
 
 // admitActingMode decides how an admitted request acts. The SQL runner is

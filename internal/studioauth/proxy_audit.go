@@ -72,7 +72,7 @@ func auditForward(w http.ResponseWriter, req2 *http.Request, c Config, adm admis
 		return nil, true
 	}
 	logElevated(req2, adm, mode, path)
-	if isReadOnly(req2.Method) {
+	if isReadOnly(req2.Method) || adm.readsOnly {
 		return nil, true
 	}
 	record, recordable := elevatedRecord(req2, adm, mode, path)

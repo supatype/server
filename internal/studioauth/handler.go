@@ -244,6 +244,8 @@ func forwardIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, a
 			return "", false
 		}
 		return ModeStudio, true
+	case adm.mode == ModeAnon:
+		return ModeAnon, setAnonIdentity(w, req2, c)
 	}
 	if !setActingIdentity(w, req, req2, c, adm) {
 		return "", false
@@ -289,6 +291,20 @@ func setAnonKey(req2 *http.Request, c Config) {
 		return
 	}
 	req2.Header.Del("apikey")
+}
+
+// setAnonIdentity sends a request as an anonymous client: the anon key as both
+// the apikey and the bearer, the caller's Studio session dropped. It reports
+// false, having written the response, when no anon key is configured.
+func setAnonIdentity(w http.ResponseWriter, req2 *http.Request, c Config) bool {
+	anon := strings.TrimSpace(c.AnonKey)
+	if anon == "" {
+		writeError(w, http.StatusServiceUnavailable, "anon key not configured")
+		return false
+	}
+	req2.Header.Set("Authorization", "Bearer "+anon)
+	req2.Header.Set("apikey", anon)
+	return true
 }
 
 // setActingIdentity puts the credentials for an elevated or self request on its
@@ -361,6 +377,12 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
 	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms, claims: result.Claims}
 	if under(path, "/sql") || under(path, "/metadata") || under(path, "/studio-admin") {
+		return adm, true
+	}
+	// Anonymous is asked for by name and means it, on every route: an
+	// administration route refuses it upstream, as it refuses any anon client.
+	if mode, _ := resolveActingMode(req, perms); mode == ModeAnon {
+		adm.mode = ModeAnon
 		return adm, true
 	}
 	if perms.ElevatedSQL && isServiceRoleOnly(req.Method, path) {

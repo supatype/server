@@ -26,17 +26,22 @@ import (
 //   - ModeElevated injects the service role key, which no rule applies to, masks
 //     included. Gated on the `elevatedSql` capability, the default for the roles
 //     that hold it (admins and developers), and recorded.
+//   - ModeAnon sends the project's anon key as both the apikey and the bearer,
+//     so the request is exactly an anonymous client's: Studio's "Anonymous"
+//     choice for Try it, GraphQL and function Invoke. The Studio session only
+//     admits the request to the proxy; it does not travel upstream.
 //   - ModeMediated is the Realtime Inspector's, for a caller acting as
 //     themselves: the service role key reaches the control plane, which is told
 //     who the caller is (identity.go) and shows them only what that allows.
 //
-// A caller may always ask to drop to ModeSelf. Asking for a mode the role does
-// not hold is refused rather than silently downgraded, because a request that
-// returns a misleadingly empty result is worse than an error.
+// A caller may always ask to drop to ModeSelf or ModeAnon. Asking for a mode
+// the role does not hold is refused rather than silently downgraded, because a
+// request that returns a misleadingly empty result is worse than an error.
 const (
 	ModeSelf     = "self"
 	ModeStudio   = "studio"
 	ModeElevated = "elevated"
+	ModeAnon     = "anon"
 	ModeMediated = "mediated"
 )
 
@@ -50,9 +55,9 @@ const ActingModeHeader = "X-Supatype-Acting-Mode"
 func resolveActingMode(req *http.Request, perms StudioPermissions) (mode string, ok bool) {
 	requested := strings.ToLower(strings.TrimSpace(req.Header.Get(ActingModeHeader)))
 	switch requested {
-	case ModeSelf:
+	case ModeSelf, ModeAnon:
 		// Dropping privilege needs no permission.
-		return ModeSelf, true
+		return requested, true
 	case ModeElevated:
 		return ModeElevated, perms.ElevatedSQL
 	case ModeStudio:

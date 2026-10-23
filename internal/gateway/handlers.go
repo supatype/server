@@ -130,10 +130,10 @@ func buildStudioConfig(d *Deps) http.Handler {
 		body, err := studioauth.ReadAdminConfigFile(d.Config.AdminConfigPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				http.Error(w, `{"error":"schema not pushed yet"}`, http.StatusNotFound)
+				studioauth.WriteErrorBody(w, http.StatusNotFound, "schema not pushed yet")
 				return
 			}
-			http.Error(w, `{"error":"failed to read admin config"}`, http.StatusInternalServerError)
+			studioauth.WriteErrorBody(w, http.StatusInternalServerError, "failed to read admin config")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

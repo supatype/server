@@ -26,7 +26,7 @@ import (
 func SchemaHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
-			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			WriteErrorBody(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
@@ -38,10 +38,10 @@ func SchemaHandler(c Config) http.HandlerFunc {
 		snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources)
 		if err != nil {
 			if errors.Is(err, studiobootstrap.ErrNoSchemaState) {
-				utilities.WriteJSON(w, http.StatusNotFound, errorBody(err.Error()))
+				WriteErrorBody(w, http.StatusNotFound, err.Error())
 				return
 			}
-			utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("could not read schema state"))
+			WriteErrorBody(w, http.StatusServiceUnavailable, "could not read schema state")
 			return
 		}
 
@@ -61,7 +61,7 @@ func SchemaHandler(c Config) http.HandlerFunc {
 
 		models, err := studiobootstrap.FilterForCaller(snapshot, caller)
 		if err != nil {
-			utilities.WriteJSON(w, http.StatusInternalServerError, errorBody("could not read the schema AST"))
+			WriteErrorBody(w, http.StatusInternalServerError, "could not read the schema AST")
 			return
 		}
 
@@ -82,7 +82,7 @@ func SchemaHandler(c Config) http.HandlerFunc {
 func SessionHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
-			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			WriteErrorBody(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
@@ -166,11 +166,7 @@ func bootstrapCaller(
 ) (studiobootstrap.Caller, Result, bool) {
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
-		status := http.StatusForbidden
-		if result.Message == "Authentication required" {
-			status = http.StatusUnauthorized
-		}
-		utilities.WriteJSON(w, status, errorBody(result.Message))
+		writeRefusal(w, result)
 		return studiobootstrap.Caller{}, result, false
 	}
 

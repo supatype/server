@@ -29,7 +29,7 @@ func MembersAPI(c Config) http.Handler {
 
 		if strings.HasPrefix(path, "/studio-roles") {
 			if req.Method != http.MethodGet {
-				utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+				WriteErrorBody(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
 			// The catalogue is not sensitive, but it still requires admission:
@@ -46,7 +46,7 @@ func MembersAPI(c Config) http.Handler {
 		switch req.Method {
 		case http.MethodGet:
 			if target != "" {
-				utilities.WriteJSON(w, http.StatusNotFound, errorBody("not found"))
+				WriteErrorBody(w, http.StatusNotFound, "not found")
 				return
 			}
 			if _, ok := requireMemberAdmin(w, req, c, false); !ok {
@@ -54,8 +54,7 @@ func MembersAPI(c Config) http.Handler {
 			}
 			members, err := c.Members.List(req.Context())
 			if err != nil {
-				utilities.WriteJSON(w, http.StatusServiceUnavailable,
-					errorBody("could not read Studio membership"))
+				WriteErrorBody(w, http.StatusServiceUnavailable, "could not read Studio membership")
 				return
 			}
 			utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{"members": members})
@@ -66,7 +65,7 @@ func MembersAPI(c Config) http.Handler {
 				return
 			}
 			if target == "" {
-				utilities.WriteJSON(w, http.StatusBadRequest, errorBody("user id is required"))
+				WriteErrorBody(w, http.StatusBadRequest, "user id is required")
 				return
 			}
 
@@ -74,13 +73,13 @@ func MembersAPI(c Config) http.Handler {
 				Role string `json:"role"`
 			}
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-				utilities.WriteJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
+				WriteErrorBody(w, http.StatusBadRequest, "invalid JSON body")
 				return
 			}
 			role := strings.TrimSpace(body.Role)
 			if _, known := PermissionsForRole(role); !known {
-				utilities.WriteJSON(w, http.StatusBadRequest, errorBody(
-					"role must be one of: "+strings.Join(KnownStudioRoles(), ", ")))
+				WriteErrorBody(w, http.StatusBadRequest,
+					"role must be one of: "+strings.Join(KnownStudioRoles(), ", "))
 				return
 			}
 
@@ -99,7 +98,7 @@ func MembersAPI(c Config) http.Handler {
 				return
 			}
 			if target == "" {
-				utilities.WriteJSON(w, http.StatusBadRequest, errorBody("user id is required"))
+				WriteErrorBody(w, http.StatusBadRequest, "user id is required")
 				return
 			}
 			if err := c.Members.Revoke(req.Context(), acting, target); err != nil {
@@ -110,7 +109,7 @@ func MembersAPI(c Config) http.Handler {
 			utilities.WriteJSON(w, http.StatusOK, map[string]interface{}{"userId": target, "role": nil})
 
 		default:
-			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			WriteErrorBody(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	})
 }
@@ -127,11 +126,7 @@ func requireMemberAdmin(
 ) (string, bool) {
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
-		status := http.StatusForbidden
-		if result.Message == "Authentication required" {
-			status = http.StatusUnauthorized
-		}
-		utilities.WriteJSON(w, status, errorBody(result.Message))
+		writeRefusal(w, result)
 		return "", false
 	}
 
@@ -144,8 +139,8 @@ func requireMemberAdmin(
 		allowed = perms.ManageMembers || perms.SchemaView
 	}
 	if !allowed {
-		utilities.WriteJSON(w, http.StatusForbidden, errorBody(
-			"Studio role \""+result.Role+"\" cannot manage Studio membership"))
+		WriteErrorBody(w, http.StatusForbidden,
+			"Studio role \""+result.Role+"\" cannot manage Studio membership")
 		return "", false
 	}
 
@@ -155,13 +150,13 @@ func requireMemberAdmin(
 func writeMemberError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, studiomembers.ErrUnknownUser):
-		utilities.WriteJSON(w, http.StatusNotFound, errorBody(err.Error()))
+		WriteErrorBody(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, studiomembers.ErrLastAdmin):
-		utilities.WriteJSON(w, http.StatusConflict, errorBody(err.Error()))
+		WriteErrorBody(w, http.StatusConflict, err.Error())
 	default:
 		// Self-change refusals and anything else the store rejected. These are
 		// caller mistakes, not server faults.
-		utilities.WriteJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+		WriteErrorBody(w, http.StatusBadRequest, err.Error())
 	}
 }
 
@@ -176,8 +171,4 @@ func roleCatalogue() []map[string]interface{} {
 		})
 	}
 	return out
-}
-
-func errorBody(message string) map[string]interface{} {
-	return map[string]interface{}{"error": "forbidden", "message": message}
 }

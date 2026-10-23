@@ -67,21 +67,16 @@ func ConfigFromServer(cfg *config.Config) Config {
 func VerifyHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
-			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			WriteErrorBody(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
 		result := ResolveAccess(req, c)
 		if !result.Allowed {
-			status := http.StatusForbidden
-			if result.Sub == "" && result.Message == "Authentication required" {
-				status = http.StatusUnauthorized
-			}
-			utilities.WriteJSON(w, status, map[string]interface{}{
-				"error":   "forbidden",
-				"message": result.Message,
-				"allowed": false,
-			})
+			status := refusalStatus(result)
+			body := errorBody(status, result.Message)
+			body["allowed"] = false
+			utilities.WriteJSON(w, status, body)
 			return
 		}
 
@@ -330,11 +325,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 // refuseAccess answers a request whose caller was not admitted.
 func refuseAccess(w http.ResponseWriter, result Result) {
-	status := http.StatusForbidden
-	if result.Message == "Authentication required" {
-		status = http.StatusUnauthorized
-	}
-	writeError(w, status, result.Message)
+	writeError(w, refusalStatus(result), result.Message)
 }
 
 // admitProxied decides whether one request may pass the Studio proxy, and as

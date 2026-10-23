@@ -53,7 +53,7 @@ func PreviewAPI(c Config) http.Handler {
 			return
 		}
 		if req.Method != http.MethodPost {
-			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			WriteErrorBody(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
@@ -65,7 +65,7 @@ func PreviewAPI(c Config) http.Handler {
 		case strings.HasSuffix(path, "/revoke"):
 			revokeOnePreviewLink(w, req, c, strings.TrimSuffix(path, "/revoke"))
 		default:
-			utilities.WriteJSON(w, http.StatusNotFound, errorBody("not found"))
+			WriteErrorBody(w, http.StatusNotFound, "not found")
 		}
 	})
 }
@@ -104,14 +104,14 @@ type previewResponse struct {
 func mintPreviewLink(w http.ResponseWriter, req *http.Request, c Config) {
 	var body previewRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 8<<10)).Decode(&body); err != nil {
-		utilities.WriteJSON(w, http.StatusBadRequest, errorBody("could not read the request body"))
+		WriteErrorBody(w, http.StatusBadRequest, "could not read the request body")
 		return
 	}
 
 	settings, err := PublishingSettingsFromConfigFile(c.AdminConfigPath)
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusNotImplemented, errorBody(
-			"this project has no versioned models, so there are no drafts to preview"))
+		WriteErrorBody(w, http.StatusNotImplemented,
+			"this project has no versioned models, so there are no drafts to preview")
 		return
 	}
 
@@ -120,8 +120,8 @@ func mintPreviewLink(w http.ResponseWriter, req *http.Request, c Config) {
 		scope = PreviewScopeRecord
 	}
 	if scope != PreviewScopeRecord && scope != PreviewScopeProject {
-		utilities.WriteJSON(w, http.StatusBadRequest, errorBody(
-			"scope must be \"record\" or \"project\""))
+		WriteErrorBody(w, http.StatusBadRequest,
+			"scope must be \"record\" or \"project\"")
 		return
 	}
 
@@ -132,15 +132,15 @@ func mintPreviewLink(w http.ResponseWriter, req *http.Request, c Config) {
 
 	if scope == PreviewScopeRecord {
 		if strings.TrimSpace(body.Model) == "" || strings.TrimSpace(body.RecordID) == "" {
-			utilities.WriteJSON(w, http.StatusBadRequest, errorBody(
-				"a record link needs a model and a recordId"))
+			WriteErrorBody(w, http.StatusBadRequest,
+				"a record link needs a model and a recordId")
 			return
 		}
 	}
 
 	ttl, err := resolveTTL(body.TTL, scope, settings)
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+		WriteErrorBody(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -149,8 +149,8 @@ func mintPreviewLink(w http.ResponseWriter, req *http.Request, c Config) {
 		// Fail closed. Minting without the epoch would produce a link that no
 		// policy can match, which reads to its holder as "the draft does not
 		// exist" rather than as an outage.
-		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody(
-			"could not read the preview revocation counter"))
+		WriteErrorBody(w, http.StatusServiceUnavailable,
+			"could not read the preview revocation counter")
 		return
 	}
 
@@ -158,7 +158,7 @@ func mintPreviewLink(w http.ResponseWriter, req *http.Request, c Config) {
 
 	id, secret, code, err := newPreviewCode()
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusInternalServerError, errorBody("could not mint a link"))
+		WriteErrorBody(w, http.StatusInternalServerError, "could not mint a link")
 		return
 	}
 
@@ -170,7 +170,7 @@ func mintPreviewLink(w http.ResponseWriter, req *http.Request, c Config) {
 	if err := storePreviewLink(req.Context(), c, link, hashPreviewSecret(secret), epoch, expires); err != nil {
 		// Fail loudly rather than returning a code nothing can resolve, which would read to its
 		// holder as a draft that does not exist.
-		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("could not record the link"))
+		WriteErrorBody(w, http.StatusServiceUnavailable, "could not record the link")
 		return
 	}
 
@@ -204,35 +204,31 @@ func requirePreviewMinter(
 ) (string, string, bool) {
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
-		status := http.StatusForbidden
-		if result.Message == "Authentication required" {
-			status = http.StatusUnauthorized
-		}
-		utilities.WriteJSON(w, status, errorBody(result.Message))
+		writeRefusal(w, result)
 		return "", "", false
 	}
 
 	if scope == PreviewScopeProject {
 		if !settings.AllowProjectScope {
-			utilities.WriteJSON(w, http.StatusForbidden, errorBody(
-				"this project does not allow project-wide preview links"))
+			WriteErrorBody(w, http.StatusForbidden,
+				"this project does not allow project-wide preview links")
 			return "", "", false
 		}
 		// The elevated roles, read from the same capability set every other
 		// Studio decision uses rather than from a list of role names kept here.
 		perms := permissionsOf(result)
 		if !perms.SchemaView {
-			utilities.WriteJSON(w, http.StatusForbidden, errorBody(
+			WriteErrorBody(w, http.StatusForbidden,
 				"Studio role \""+result.Role+"\" cannot mint a project-wide preview link. "+
-					"Mint a link for the record instead."))
+					"Mint a link for the record instead.")
 			return "", "", false
 		}
 		return result.Role, result.Sub, true
 	}
 
 	if !settings.RoleSeesDrafts(result.Role) {
-		utilities.WriteJSON(w, http.StatusForbidden, errorBody(
-			"Studio role \""+result.Role+"\" cannot see drafts, so it cannot share one"))
+		WriteErrorBody(w, http.StatusForbidden,
+			"Studio role \""+result.Role+"\" cannot see drafts, so it cannot share one")
 		return "", "", false
 	}
 	return result.Role, result.Sub, true
@@ -336,8 +332,8 @@ func previewEpoch(ctx context.Context, c Config) (int, error) {
 func revokePreviewLinks(w http.ResponseWriter, req *http.Request, c Config) {
 	settings, err := PublishingSettingsFromConfigFile(c.AdminConfigPath)
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusNotImplemented, errorBody(
-			"this project has no versioned models, so there are no preview links"))
+		WriteErrorBody(w, http.StatusNotImplemented,
+			"this project has no versioned models, so there are no preview links")
 		return
 	}
 	// Revoking is an elevated act for the same reason minting a project link is:
@@ -353,12 +349,12 @@ func revokePreviewLinks(w http.ResponseWriter, req *http.Request, c Config) {
 	}
 
 	if c.Resources == nil {
-		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("no database"))
+		WriteErrorBody(w, http.StatusServiceUnavailable, "no database")
 		return
 	}
 	pool, err := c.Resources.AdminPool()
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("no database"))
+		WriteErrorBody(w, http.StatusServiceUnavailable, "no database")
 		return
 	}
 
@@ -372,8 +368,8 @@ func revokePreviewLinks(w http.ResponseWriter, req *http.Request, c Config) {
           WHERE singleton
       RETURNING preview_epoch`).Scan(&epoch)
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody(
-			"could not revoke preview links"))
+		WriteErrorBody(w, http.StatusServiceUnavailable,
+			"could not revoke preview links")
 		return
 	}
 

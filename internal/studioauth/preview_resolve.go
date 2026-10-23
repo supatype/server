@@ -34,7 +34,7 @@ const previewExchangeTTL = time.Minute
 func PreviewResolveAPI(c Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
-			utilities.WriteJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			WriteErrorBody(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
@@ -42,24 +42,24 @@ func PreviewResolveAPI(c Config) http.Handler {
 			Code string `json:"code"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4<<10)).Decode(&body); err != nil {
-			utilities.WriteJSON(w, http.StatusBadRequest, errorBody("could not read the request body"))
+			WriteErrorBody(w, http.StatusBadRequest, "could not read the request body")
 			return
 		}
 		if strings.TrimSpace(body.Code) == "" {
-			utilities.WriteJSON(w, http.StatusBadRequest, errorBody("a preview code is required"))
+			WriteErrorBody(w, http.StatusBadRequest, "a preview code is required")
 			return
 		}
 
 		link, epoch, linkExpires, err := resolvePreviewLink(req.Context(), c, body.Code)
 		if err != nil {
 			if errors.Is(err, errNoPreviewDatabase) {
-				utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("no database"))
+				WriteErrorBody(w, http.StatusServiceUnavailable, "no database")
 				return
 			}
 			// One answer for every reason a code does not work. Distinguishing "revoked" from
 			// "never existed" would confirm that a draft is there to be found.
-			utilities.WriteJSON(w, http.StatusNotFound, errorBody(
-				"this preview link is not valid. It may have expired, or been revoked."))
+			WriteErrorBody(w, http.StatusNotFound,
+				"this preview link is not valid. It may have expired, or been revoked.")
 			return
 		}
 
@@ -77,7 +77,7 @@ func PreviewResolveAPI(c Config) http.Handler {
 			Expires:  expires,
 		})
 		if err != nil {
-			utilities.WriteJSON(w, http.StatusInternalServerError, errorBody("could not sign the token"))
+			WriteErrorBody(w, http.StatusInternalServerError, "could not sign the token")
 			return
 		}
 
@@ -99,8 +99,8 @@ func PreviewResolveAPI(c Config) http.Handler {
 func listPreviewLinksForRecord(w http.ResponseWriter, req *http.Request, c Config) {
 	settings, err := PublishingSettingsFromConfigFile(c.AdminConfigPath)
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusNotImplemented, errorBody(
-			"this project has no versioned models, so there are no preview links"))
+		WriteErrorBody(w, http.StatusNotImplemented,
+			"this project has no versioned models, so there are no preview links")
 		return
 	}
 	if _, _, ok := requirePreviewMinter(w, req, c, PreviewScopeRecord, settings); !ok {
@@ -110,15 +110,15 @@ func listPreviewLinksForRecord(w http.ResponseWriter, req *http.Request, c Confi
 	model := strings.TrimSpace(req.URL.Query().Get("model"))
 	recordID := strings.TrimSpace(req.URL.Query().Get("recordId"))
 	if model == "" || recordID == "" {
-		utilities.WriteJSON(w, http.StatusBadRequest, errorBody(
-			"a model and a recordId are required"))
+		WriteErrorBody(w, http.StatusBadRequest,
+			"a model and a recordId are required")
 		return
 	}
 
 	links, err := listPreviewLinks(req.Context(), c, model, recordID)
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody(
-			"could not read the preview links"))
+		WriteErrorBody(w, http.StatusServiceUnavailable,
+			"could not read the preview links")
 		return
 	}
 	utilities.WriteJSON(w, http.StatusOK, map[string]any{"links": links})
@@ -132,8 +132,8 @@ func listPreviewLinksForRecord(w http.ResponseWriter, req *http.Request, c Confi
 func revokeOnePreviewLink(w http.ResponseWriter, req *http.Request, c Config, id string) {
 	settings, err := PublishingSettingsFromConfigFile(c.AdminConfigPath)
 	if err != nil {
-		utilities.WriteJSON(w, http.StatusNotImplemented, errorBody(
-			"this project has no versioned models, so there are no preview links"))
+		WriteErrorBody(w, http.StatusNotImplemented,
+			"this project has no versioned models, so there are no preview links")
 		return
 	}
 	if _, _, ok := requirePreviewMinter(w, req, c, PreviewScopeRecord, settings); !ok {
@@ -141,13 +141,13 @@ func revokeOnePreviewLink(w http.ResponseWriter, req *http.Request, c Config, id
 	}
 
 	if !strings.HasPrefix(id, previewIDPrefix) {
-		utilities.WriteJSON(w, http.StatusBadRequest, errorBody("that is not a preview link id"))
+		WriteErrorBody(w, http.StatusBadRequest, "that is not a preview link id")
 		return
 	}
 
 	if err := revokePreviewLink(req.Context(), c, id); err != nil {
-		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody(
-			"could not revoke the preview link"))
+		WriteErrorBody(w, http.StatusServiceUnavailable,
+			"could not revoke the preview link")
 		return
 	}
 	// Idempotent, and says so: revoking an already dead link is the caller's intent satisfied, not

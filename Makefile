@@ -82,7 +82,7 @@ vulncheck: check-govulncheck # Check for known vulnerabilities
 # once resolved to a release whose go directive was newer than go.mod's, and CI
 # sets GOTOOLCHAIN=local, so `go install` refused before it had downloaded
 # anything and every build went red on a day nobody touched it. v1.9.0 needs go
-# 1.26.0, which go.mod's 1.26.9 satisfies. Raise this with the go directive, together.
+# 1.26.0, which go.mod's 1.26.10 satisfies. Raise this with the go directive, together.
 GOVULNCHECK_VERSION ?= v1.9.0
 
 check-govulncheck:
@@ -101,7 +101,7 @@ static: | check-staticcheck
 
 # Pinned, not @latest: a release whose go directive outruns go.mod's fails the build under
 # CI's GOTOOLCHAIN=local on a day nobody touched it. v0.8.2 needs go 1.26.0, which go.mod's
-# 1.26.9 satisfies. Raise this with the go directive, together.
+# 1.26.10 satisfies. Raise this with the go directive, together.
 STATICCHECK_VERSION ?= v0.8.2
 
 check-staticcheck:

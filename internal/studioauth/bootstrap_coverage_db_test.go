@@ -348,6 +348,90 @@ func TestSessionWithNoSchema(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `"access"`) {
 		t.Error("access was reported with no schema to derive it from")
 	}
+	assertFieldAccess(t, rec, fieldAccessUnavailable)
+}
+
+// schemaWithBackslashes is a schema whose stored JSON holds backslashes, as a real
+// one does once a check expression or a TypeScript type quotes a string.
+const schemaWithBackslashes = `{"models":[
+	{"name":"Post","annotations":{"db":{"tableName":"posts"},
+	 "check":"status in (\"draft\",\"live\")",
+	 "tsType":"\"draft\" | \"live\" | \"café\"",
+	 "platform":{"access":{"read":{"type":"public"},
+	   "fields":{"secret":{"read":{"type":"private"}}}}}}}
+]}`
+
+// Both endpoints read a schema whose JSON holds backslashes. The stored snapshot
+// used to go through a text-to-bytea cast, which parsed each backslash as a bytea
+// escape: the schema endpoint answered 503 and the session dropped its access.
+func TestTheBootstrapEndpointsReadASchemaWithBackslashes(t *testing.T) {
+	c := bootstrapConfig(t, schemaWithBackslashes, "admin")
+
+	rec := httptest.NewRecorder()
+	SchemaHandler(c)(rec, studioRequest(http.MethodGet, "/studio/schema", signedIn(t)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"posts"`) {
+		t.Errorf("schema: status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	SessionHandler(c)(rec, studioRequest(http.MethodGet, "/studio/session", signedIn(t)))
+	body := assertFieldAccess(t, rec, fieldAccessAvailable)
+	if body.Access["posts"] == nil || body.Fields["posts"] == nil {
+		t.Errorf("session: access = %v, fields = %v, want both for posts", body.Access, body.Fields)
+	}
+}
+
+// A session whose schema cannot be read says so, rather than answering without
+// access or fields and leaving Studio to read that as "no rules".
+func TestSessionSaysWhenFieldAccessIsUnavailable(t *testing.T) {
+	unparseable := bootstrapConfig(t, `{"models":"not a list"}`, "admin")
+	rec := httptest.NewRecorder()
+	SessionHandler(unparseable)(rec, studioRequest(http.MethodGet, "/studio/session", signedIn(t)))
+	assertFieldAccess(t, rec, fieldAccessUnavailable)
+
+	unreachable := bootstrapConfig(t, schemaWithAMaskedColumn, "admin")
+	pool, err := unreachable.Resources.AdminPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `DROP TABLE _supatype.schema_state`); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	SessionHandler(unreachable)(rec, studioRequest(http.MethodGet, "/studio/session", signedIn(t)))
+	body := assertFieldAccess(t, rec, fieldAccessUnavailable)
+	if body.Access != nil || body.Fields != nil {
+		t.Errorf("unreachable: access = %v, fields = %v, want neither", body.Access, body.Fields)
+	}
+}
+
+// sessionAccessBody is the part of a session answer that says what is known
+// about the caller's access.
+type sessionAccessBody struct {
+	FieldAccess       string         `json:"fieldAccess"`
+	FieldAccessReason string         `json:"fieldAccessReason"`
+	Access            map[string]any `json:"access"`
+	Fields            map[string]any `json:"fields"`
+}
+
+// assertFieldAccess checks a 200 session answer carries this field access marker,
+// with a reason exactly when it is unavailable.
+func assertFieldAccess(t *testing.T, rec *httptest.ResponseRecorder, want string) sessionAccessBody {
+	t.Helper()
+	var body sessionAccessBody
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session: status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.FieldAccess != want {
+		t.Errorf("fieldAccess = %q, want %q (%s)", body.FieldAccess, want, rec.Body.String())
+	}
+	if (body.FieldAccessReason != "") != (want == fieldAccessUnavailable) {
+		t.Errorf("fieldAccessReason = %q with fieldAccess %q", body.FieldAccessReason, want)
+	}
+	return body
 }
 
 // ─── The application identity ─────────────────────────────────────────────────

@@ -3,10 +3,13 @@ package studioauth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/studiobootstrap"
 	"github.com/supatype/server/internal/utilities"
 )
@@ -35,27 +38,8 @@ func SchemaHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources)
-		if err != nil {
-			if errors.Is(err, studiobootstrap.ErrNoSchemaState) {
-				utilities.WriteJSON(w, http.StatusNotFound, errorBody(err.Error()))
-				return
-			}
-			utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("could not read schema state"))
-			return
-		}
-
-		// The filtered payload depends on the caller as well as the schema, so the
-		// tag covers both. Without the role in it, two callers with different
-		// access would share a cache entry.
-		etag := "\"" + snapshot.Hash + "-" + callerCacheKey(caller) + "\""
-		w.Header().Set("ETag", etag)
-		// Revalidate every time: a schema push or a role change must take effect
-		// immediately, and the ETag makes the common case a 304 anyway.
-		w.Header().Set("Cache-Control", "private, no-cache")
-
-		if match := req.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
-			w.WriteHeader(http.StatusNotModified)
+		snapshot, ok := schemaSnapshot(w, req, c)
+		if !ok || notModified(w, req, snapshot, caller) {
 			return
 		}
 
@@ -73,6 +57,50 @@ func SchemaHandler(c Config) http.HandlerFunc {
 		})
 	}
 }
+
+// schemaSnapshot loads the schema state for the schema endpoint, answering the
+// request itself when it cannot: 404 before the first push, 503 when the state
+// is there but could not be read.
+func schemaSnapshot(w http.ResponseWriter, req *http.Request, c Config) (*studiobootstrap.Snapshot, bool) {
+	snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources)
+	if errors.Is(err, studiobootstrap.ErrNoSchemaState) {
+		utilities.WriteJSON(w, http.StatusNotFound, errorBody(err.Error()))
+		return nil, false
+	}
+	if err != nil {
+		logSchemaReadFailure(req, err)
+		utilities.WriteJSON(w, http.StatusServiceUnavailable, errorBody("could not read schema state"))
+		return nil, false
+	}
+	return snapshot, true
+}
+
+// notModified sets the schema's cache headers and answers 304 when the client's
+// copy is current.
+func notModified(w http.ResponseWriter, req *http.Request, snapshot *studiobootstrap.Snapshot, caller studiobootstrap.Caller) bool {
+	// The filtered payload depends on the caller as well as the schema, so the
+	// tag covers both. Without the role in it, two callers with different
+	// access would share a cache entry.
+	etag := "\"" + snapshot.Hash + "-" + callerCacheKey(caller) + "\""
+	w.Header().Set("ETag", etag)
+	// Revalidate every time: a schema push or a role change must take effect
+	// immediately, and the ETag makes the common case a 304 anyway.
+	w.Header().Set("Cache-Control", "private, no-cache")
+
+	if match := req.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	return false
+}
+
+// The session's `fieldAccess` marker. Without it a session whose schema could
+// not be read looked the same as one whose schema has no access rules, and Studio
+// read the missing keys as "nothing is restricted".
+const (
+	fieldAccessAvailable   = "available"
+	fieldAccessUnavailable = "unavailable"
+)
 
 // SessionHandler serves GET /studio/session.
 //
@@ -102,13 +130,55 @@ func SessionHandler(c Config) http.HandlerFunc {
 			"canElevate":  perms.ElevatedSQL,
 		}
 
-		if snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources); err == nil {
-			addSessionAccess(body, snapshot, caller, perms.Write)
-		}
+		markFieldAccess(body, req, loadSessionAccess(body, req, c, caller, perms.Write))
 
 		w.Header().Set("Cache-Control", "private, no-store")
 		utilities.WriteJSON(w, http.StatusOK, body)
 	}
+}
+
+// loadSessionAccess reads the schema state and puts the caller's access on a
+// session body, or says why it could not.
+func loadSessionAccess(body map[string]interface{}, req *http.Request, c Config, caller studiobootstrap.Caller, canWrite bool) error {
+	snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources)
+	if err != nil {
+		return err
+	}
+	return addSessionAccess(body, snapshot, caller, canWrite)
+}
+
+// markFieldAccess says on a session body whether its access answers are there.
+//
+// A session still answers when they are not, because the caller's capability
+// does not depend on the schema. Leaving the keys out was indistinguishable from
+// a schema with no rules, so Studio drew every column as unrestricted; the
+// marker lets it say "unavailable" instead.
+func markFieldAccess(body map[string]interface{}, req *http.Request, err error) {
+	if err == nil {
+		body["fieldAccess"] = fieldAccessAvailable
+		return
+	}
+	body["fieldAccess"] = fieldAccessUnavailable
+	if errors.Is(err, studiobootstrap.ErrNoSchemaState) {
+		body["fieldAccessReason"] = err.Error()
+		return
+	}
+	logSchemaReadFailure(req, err)
+	body["fieldAccessReason"] = "could not read the schema state; the server log has the cause"
+}
+
+// loggedSchemaFailures holds each schema read failure already logged, so a
+// project that cannot be read says why once rather than on every Studio load.
+var loggedSchemaFailures sync.Map
+
+// logSchemaReadFailure logs a schema state read that failed, once per distinct
+// error.
+func logSchemaReadFailure(req *http.Request, err error) {
+	if _, seen := loggedSchemaFailures.LoadOrStore(err.Error(), struct{}{}); seen {
+		return
+	}
+	logrus.WithError(err).WithField("path", req.URL.Path).
+		Error("studio: could not read _supatype.schema_state, so Studio has no schema or access answers")
 }
 
 // addSessionAccess puts the caller's settled access on a session body.
@@ -121,25 +191,34 @@ func SessionHandler(c Config) http.HandlerFunc {
 // blocking it. A Studio role that writes nothing (viewer) is offered no write,
 // whatever the app's own rules would let its token do: the proxy refuses those
 // requests, so offering them would show controls that cannot work.
-func addSessionAccess(body map[string]interface{}, snapshot *studiobootstrap.Snapshot, caller studiobootstrap.Caller, canWrite bool) {
-	if models, err := studiobootstrap.FilterForCaller(snapshot, caller); err == nil {
-		access := make(map[string]map[string]studiobootstrap.Verdict, len(models))
-		for _, m := range models {
-			access[m.Table] = withoutWrites(m.Access, canWrite)
-		}
-		body["access"] = access
-		body["schemaHash"] = snapshot.Hash
+//
+// Both halves or neither: an AST that cannot be read is an error, so the session
+// is marked unavailable rather than answered with one half missing.
+func addSessionAccess(body map[string]interface{}, snapshot *studiobootstrap.Snapshot, caller studiobootstrap.Caller, canWrite bool) error {
+	models, err := studiobootstrap.FilterForCaller(snapshot, caller)
+	if err != nil {
+		return fmt.Errorf("model access from the schema AST: %w", err)
 	}
-	if fields, err := studiobootstrap.FieldVerdictsForCaller(snapshot, caller); err == nil {
-		if !canWrite {
-			for _, columns := range fields {
-				for name, verdict := range columns {
-					columns[name] = studiobootstrap.FieldVerdict{Read: verdict.Read, Write: studiobootstrap.VerdictDeny, Create: studiobootstrap.VerdictDeny}
-				}
+	fields, err := studiobootstrap.FieldVerdictsForCaller(snapshot, caller)
+	if err != nil {
+		return fmt.Errorf("field access from the schema AST: %w", err)
+	}
+
+	access := make(map[string]map[string]studiobootstrap.Verdict, len(models))
+	for _, m := range models {
+		access[m.Table] = withoutWrites(m.Access, canWrite)
+	}
+	if !canWrite {
+		for _, columns := range fields {
+			for name, verdict := range columns {
+				columns[name] = studiobootstrap.FieldVerdict{Read: verdict.Read, Write: studiobootstrap.VerdictDeny, Create: studiobootstrap.VerdictDeny}
 			}
 		}
-		body["fields"] = fields
 	}
+	body["access"] = access
+	body["fields"] = fields
+	body["schemaHash"] = snapshot.Hash
+	return nil
 }
 
 // withoutWrites is a model's access with create, update and delete denied when

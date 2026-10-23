@@ -1,8 +1,13 @@
 package studioauth
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/supatype/server/internal/studiobootstrap"
 )
 
@@ -29,7 +34,9 @@ func TestSessionFieldsOfferAViewerNoWrite(t *testing.T) {
 		{"editor", true, studiobootstrap.FieldVerdict{Read: allow, Write: allow, Create: allow}},
 	} {
 		body := map[string]interface{}{}
-		addSessionAccess(body, snapshot, caller, tc.canWrite)
+		if err := addSessionAccess(body, snapshot, caller, tc.canWrite); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
 		fields, ok := body["fields"].(map[string]map[string]studiobootstrap.FieldVerdict)
 		if !ok {
 			t.Fatalf("%s: no fields on the session body: %v", tc.name, body)
@@ -37,5 +44,26 @@ func TestSessionFieldsOfferAViewerNoWrite(t *testing.T) {
 		if got := fields["posts"]["title"]; got != tc.want {
 			t.Errorf("%s: posts.title = %+v, want %+v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A schema state that cannot be read is logged with the route that hit it, and
+// only once per distinct error: Studio asks on every load, and a project that is
+// broken in the same way each time should not fill the log saying so.
+func TestASchemaReadFailureIsLoggedOnce(t *testing.T) {
+	hook := logtest.NewGlobal()
+	req := httptest.NewRequest(http.MethodGet, "/studio/session", nil)
+	failure := errors.New("invalid input syntax for type bytea (log once test)")
+
+	for i := 0; i < 3; i++ {
+		markFieldAccess(map[string]interface{}{}, req, failure)
+	}
+
+	entries := hook.AllEntries()
+	if len(entries) != 1 {
+		t.Fatalf("logged %d times, want once", len(entries))
+	}
+	if entries[0].Data["path"] != "/studio/session" || entries[0].Data[logrus.ErrorKey] != failure {
+		t.Errorf("entry = %+v, want the path and the error", entries[0].Data)
 	}
 }

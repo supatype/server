@@ -76,15 +76,15 @@ func TestWriteIsConjoinedWithRead(t *testing.T) {
 	}
 }
 
-// The case that makes `create` a separate answer. On INSERT there is no row, so a
-// row-dependent write predicate yields NULL for every caller — settled deny, not "ask per
-// row". This is what lets a create form omit the field instead of rendering an input nobody
-// can satisfy.
-func TestRowDependentWriteCannotBeCreated(t *testing.T) {
+// On INSERT the database judges a row-dependent write rule against the row being stored, as an
+// RLS `WITH CHECK` judges a new row (supatype_mask MASK-N1, and the tier 2 view trigger alike).
+// The owner writing their own id is allowed, so the answer depends on the new row: `row`, and
+// the create form keeps the field.
+func TestRowDependentWriteIsJudgedOnTheNewRow(t *testing.T) {
 	got := verdicts(t, `{"owner_id":{"write":{"type":"owner","field":"owner_id"}}}`, Caller{UserID: "u1"})
 
-	if got["owner_id"].Create != VerdictDeny {
-		t.Errorf("a row-dependent write rule is unsatisfiable on INSERT, got %q", got["owner_id"].Create)
+	if got["owner_id"].Create != VerdictRow {
+		t.Errorf("a row-dependent write rule is judged on the new row at INSERT, got %q", got["owner_id"].Create)
 	}
 	if got["owner_id"].Write != VerdictRow {
 		t.Errorf("the same rule is satisfiable on UPDATE by the owner, got %q", got["owner_id"].Write)
@@ -107,12 +107,37 @@ func TestDeniedWriteIsDeniedOnCreate(t *testing.T) {
 	}
 }
 
-// With no write rule the governing predicate is the read rule, so a row-dependent *read* rule
-// also makes the column uncreatable — the extension uses `can_read` as the write test there.
+// With no write rule the read rule governs writing, and the extension judges it against the
+// new row on INSERT. So a row-dependent read rule leaves the column creatable per row, not
+// refused outright.
 func TestAbsentWriteRuleInheritsTheReadRulesCreatability(t *testing.T) {
 	got := verdicts(t, `{"secret":{"read":{"type":"owner","field":"owner_id"}}}`, Caller{UserID: "u1"})
+	if got["secret"].Create != VerdictRow {
+		t.Errorf("a row-dependent read rule is judged on the new row at INSERT, got %q", got["secret"].Create)
+	}
+}
+
+// The fresh-user case (B2): `Author.email` has only `read: Owner<"user_id">`, and an editor
+// acting as Studio creates an Author. Email is required, so a create form without it can never
+// be saved. It must stay on the form, while existing records keep the padlock (`read: row`).
+func TestOwnerReadOnlyColumnStaysOnTheCreateForm(t *testing.T) {
+	fields := `{"email":{"read":{"type":"owner","field":"user_id"}}}`
+	got := verdicts(t, fields, Caller{UserID: "u1", AppRole: "authenticated", AsStudio: true})
+
+	if got["email"].Create == VerdictDeny {
+		t.Errorf("an editor must be able to supply a required owner-read column on create, got %+v", got["email"])
+	}
+	if got["email"].Read != VerdictRow || got["email"].Write != VerdictRow {
+		t.Errorf("existing records still ask per row for read and write, got %+v", got["email"])
+	}
+}
+
+// A read rule the caller can never satisfy still refuses creation: the database tests the read
+// rule as the write rule, and it is false whatever the new row holds.
+func TestRoleReadRuleTheCallerFailsIsNotCreatable(t *testing.T) {
+	got := verdicts(t, `{"secret":{"read":{"type":"role","roles":["admin"]}}}`, Caller{AppRole: "user"})
 	if got["secret"].Create != VerdictDeny {
-		t.Errorf("a row-dependent read rule governs writing when no write rule exists, got %q", got["secret"].Create)
+		t.Errorf("a role the caller lacks refuses INSERT too, got %q", got["secret"].Create)
 	}
 }
 

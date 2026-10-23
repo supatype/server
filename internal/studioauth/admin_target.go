@@ -138,16 +138,16 @@ func guardAdminAccounts(w http.ResponseWriter, req *http.Request, c Config, perm
 		return true
 	}
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, refusedUncheckedTarget)
+		WriteErrorBody(w, http.StatusRequestEntityTooLarge, refusedUncheckedTarget)
 		return false
 	}
 	roles, err := c.targetRoles()(req.Context(), kind, value)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, refusedUncheckedTarget)
+		WriteErrorBody(w, http.StatusServiceUnavailable, refusedUncheckedTarget)
 		return false
 	}
 	if holdsStudioAdmin(roles) {
-		writeError(w, http.StatusForbidden, refusedAdminTarget)
+		WriteErrorBody(w, http.StatusForbidden, refusedAdminTarget)
 		return false
 	}
 	return true

@@ -77,12 +77,12 @@ func auditForward(w http.ResponseWriter, req2 *http.Request, c Config, adm admis
 	}
 	record, recordable := elevatedRecord(req2, adm, mode, path)
 	if !recordable {
-		writeError(w, http.StatusRequestEntityTooLarge, refusedUnrecordableSQL)
+		WriteErrorBody(w, http.StatusRequestEntityTooLarge, refusedUnrecordableSQL)
 		return nil, false
 	}
 	ref, err := c.auditor().AuditElevated(req2.Context(), record)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, refusedUnaudited)
+		WriteErrorBody(w, http.StatusServiceUnavailable, refusedUnaudited)
 		return nil, false
 	}
 	return &proxyAudit{auditor: c.auditor(), ref: ref, ctx: req2.Context()}, true

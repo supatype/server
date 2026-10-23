@@ -140,7 +140,7 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		result := ResolveAccess(req, c)
 		if !result.Allowed {
-			refuseAccess(w, result)
+			writeRefusal(w, result)
 			return
 		}
 		next.ServeHTTP(w, req)
@@ -269,7 +269,7 @@ func forwardMediated(w http.ResponseWriter, req, req2 *http.Request, c Config, a
 func setServiceRole(w http.ResponseWriter, req2 *http.Request, c Config) bool {
 	sr := strings.TrimSpace(c.ServiceRoleKey)
 	if sr == "" {
-		writeError(w, http.StatusServiceUnavailable, "service role key not configured")
+		WriteErrorBody(w, http.StatusServiceUnavailable, "service role key not configured")
 		return false
 	}
 	req2.Header.Set("Authorization", "Bearer "+sr)
@@ -294,7 +294,7 @@ func setAnonKey(req2 *http.Request, c Config) {
 func setAnonIdentity(w http.ResponseWriter, req2 *http.Request, c Config) bool {
 	anon := strings.TrimSpace(c.AnonKey)
 	if anon == "" {
-		writeError(w, http.StatusServiceUnavailable, "anon key not configured")
+		WriteErrorBody(w, http.StatusServiceUnavailable, "anon key not configured")
 		return false
 	}
 	req2.Header.Set("Authorization", "Bearer "+anon)
@@ -318,16 +318,6 @@ func setActingIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config,
 	return true
 }
 
-// writeError answers a refused request with a JSON error.
-func writeError(w http.ResponseWriter, status int, message string) {
-	utilities.WriteJSON(w, status, map[string]string{"error": message})
-}
-
-// refuseAccess answers a request whose caller was not admitted.
-func refuseAccess(w http.ResponseWriter, result Result) {
-	writeError(w, refusalStatus(result), result.Message)
-}
-
 // admitProxied decides whether one request may pass the Studio proxy, and as
 // whom. On a refusal it has already written the response.
 //
@@ -336,14 +326,14 @@ func refuseAccess(w http.ResponseWriter, result Result) {
 func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path string) (admission, bool) {
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
-		refuseAccess(w, result)
+		writeRefusal(w, result)
 		return admission{}, false
 	}
 
 	perms := permissionsOf(result)
 	method := permissionMethod(req, path)
 	if !AllowsRequest(perms, method, path) && !allowsStoragePolicyRead(req, perms, path) {
-		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
+		WriteErrorBody(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false
 	}
 	if !guardAdminAccounts(w, req, c, perms, path) {
@@ -381,7 +371,7 @@ func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, pe
 	}
 	mode, ok := resolveActingMode(req, perms)
 	if !ok {
-		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot act in the mode it asked for")
+		WriteErrorBody(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot act in the mode it asked for")
 		return admission{}, false
 	}
 	adm.mode = mode
@@ -403,7 +393,7 @@ func admitAsStudio(w http.ResponseWriter, req *http.Request, adm admission, path
 		return adm, true
 	}
 	if !isUnambiguousPath(path) {
-		writeError(w, http.StatusForbidden, "Studio cannot act on a path with dot segments or escapes")
+		WriteErrorBody(w, http.StatusForbidden, "Studio cannot act on a path with dot segments or escapes")
 		return admission{}, false
 	}
 	return adm, true

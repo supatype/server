@@ -25,6 +25,7 @@ import (
 //	Read content rows and files                   yes      yes       yes     yes
 //	Edit content rows and files                   yes      yes       yes     no
 //	Schema and migration history view             yes      yes       no      yes
+//	Storage policies and RLS status, read-only    yes      yes       yes     yes
 //	SQL editor, elevated SQL                      yes      yes       no      no
 //	Storage bucket management                     yes      yes       no      no
 //	Auth users administration                     yes      yes       no      no
@@ -141,13 +142,9 @@ func allowsNamedRoute(perms StudioPermissions, method, path string) (allowed, na
 	// admin operations that need a superuser connection (SQ2) go with it.
 	case under(path, "/sql"), under(path, "/studio-admin"):
 		return perms.SQLEditor, true
-	// The catalogue's introspect query alone: the tables and columns behind Data
-	// Explorer and the schema screens, for every role that may read rows.
-	case under(path, "/metadata/introspect"):
-		return perms.Read, true
 	// Studio's named, read-only schema queries (RQ3): catalogs and the ledger.
 	case under(path, "/metadata"):
-		return perms.SchemaView, true
+		return allowsMetadata(perms, method, path), true
 	case under(path, "/admin/studio-members"):
 		return perms.ManageMembers || (isReadOnly(method) && perms.SchemaView), true
 	// The project's own users are a separate capability from content rows.
@@ -158,6 +155,25 @@ func allowsNamedRoute(perms StudioPermissions, method, path string) (allowed, na
 		return perms.ManageBuckets || (isReadOnly(method) && perms.Read), true
 	}
 	return false, false
+}
+
+// allowsMetadata judges a request to the read-only catalogue. The gateway
+// answers it only on a POST to two exact paths: the introspect query, the
+// tables and columns behind Data Explorer and the schema screens, for every
+// role that may read rows; the rest of the catalogue for schema view. Any other
+// request under /metadata falls through to the application carrying the
+// service role's key (forwardIdentity), so it is administration.
+func allowsMetadata(perms StudioPermissions, method, path string) bool {
+	switch {
+	case method != http.MethodPost:
+		return perms.Administer
+	case path == "/metadata/introspect":
+		return perms.Read
+	case path == "/metadata":
+		return perms.SchemaView
+	default:
+		return perms.Administer
+	}
 }
 
 // allowsContent judges one data-plane request: a read needs Read, anything else

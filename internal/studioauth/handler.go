@@ -351,7 +351,7 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 
 	perms := permissionsOf(result)
 	method := permissionMethod(req, path)
-	if !AllowsRequest(perms, method, path) {
+	if !AllowsRequest(perms, method, path) && !allowsStoragePolicyRead(req, perms, path) {
 		writeError(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false
 	}

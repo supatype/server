@@ -68,11 +68,11 @@
     },
     "policies": {
       "params": ["schema"],
-      "sql": "SELECT schemaname, tablename, policyname, permissive, cmd, qual, with_check, CASE WHEN COALESCE(array_length(roles, 1), 0) = 0 THEN 'all' ELSE array_to_string(roles::text[], ', ') END AS roles_label FROM pg_catalog.pg_policies WHERE lower(schemaname) = lower($1::text) ORDER BY tablename, policyname"
+      "sql": "SELECT schemaname, tablename, policyname, permissive, cmd, qual, with_check, CASE WHEN COALESCE(array_length(roles, 1), 0) = 0 THEN 'all' ELSE array_to_string(roles::text[], ', ') END AS roles_label FROM pg_catalog.pg_policies WHERE schemaname = $1::text ORDER BY tablename, policyname"
     },
     "rls_status": {
       "params": ["schema"],
-      "sql": "SELECT c.relname AS tablename, c.relrowsecurity AS rls_enabled FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND lower(n.nspname) = lower($1::text) ORDER BY c.relname"
+      "sql": "SELECT c.relname AS tablename, c.relrowsecurity AS rls_enabled FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND n.nspname = $1::text ORDER BY c.relname"
     },
     "migrations_audited": {
       "params": [],

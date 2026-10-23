@@ -46,3 +46,24 @@ func TestTheStudioConfigEndpointSaysWhatFailed(t *testing.T) {
 		})
 	}
 }
+
+// Without a session the config endpoint refuses in the same shape: the code
+// for 401 and the sentence, not the sentence in `error`.
+func TestTheStudioConfigEndpointRefusesWithACode(t *testing.T) {
+	deps := depsFor(t, &config.Config{Mode: "dev", AdminConfigPath: "no-admin-config-here.json", JWTSecret: testJWTSecret}, nil)
+	rec := httptest.NewRecorder()
+	buildStudioConfig(deps).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/studio-config", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("not JSON: %q", rec.Body.String())
+	}
+	if body.Error != "unauthorized" || body.Message != "Authentication required" {
+		t.Errorf("body = %+v, want error unauthorized and message Authentication required", body)
+	}
+}

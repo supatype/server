@@ -119,7 +119,7 @@ func setStudioCredentials(w http.ResponseWriter, req2 *http.Request, c Config, a
 	}
 	token, err := mintStudioToken(c.JWTSecret, adm.claims, adm.perms.Write, time.Now())
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "could not act as Studio: "+err.Error())
+		WriteErrorBody(w, http.StatusServiceUnavailable, "could not act as Studio: "+err.Error())
 		return false
 	}
 	req2.Header.Set("Authorization", "Bearer "+token)

@@ -41,11 +41,11 @@ func clampSignedURLExpiry(w http.ResponseWriter, req2 *http.Request, path string
 	}
 	body, err := clampedSigningBody(req2.Body)
 	if errors.Is(err, errLookAlikeKey) {
-		writeError(w, http.StatusBadRequest, err.Error())
+		WriteErrorBody(w, http.StatusBadRequest, err.Error())
 		return false
 	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "signing request body must be a JSON object with a numeric expiresIn")
+		WriteErrorBody(w, http.StatusBadRequest, "signing request body must be a JSON object with a numeric expiresIn")
 		return false
 	}
 	req2.Body = io.NopCloser(bytes.NewReader(body))

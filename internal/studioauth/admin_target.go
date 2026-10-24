@@ -8,9 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 
 	"github.com/gofrs/uuid"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/supatype/server/internal/studiomembers"
 )
 
@@ -27,6 +29,10 @@ const refusedAdminTarget = "Only a Studio admin can change another admin's accou
 
 // refusedUncheckedTarget is the answer when whose account it is cannot be told.
 const refusedUncheckedTarget = "Studio could not check whose account this is, so the change was not made. Try again."
+
+// refusedOwnAccount is the answer to anyone, admin or not, disabling, deleting
+// or changing the role of their own account (owner decision).
+const refusedOwnAccount = "You can't disable, delete or change the role of your own account. Ask another admin."
 
 // TargetRoleLookup returns the Studio roles held by the users one request names.
 type TargetRoleLookup func(ctx context.Context, kind studiomembers.TargetKind, value string) ([]string, error)
@@ -162,4 +168,86 @@ func holdsStudioAdmin(roles []string) bool {
 		}
 	}
 	return false
+}
+
+// Nobody disables, deletes or changes the role of their own account through
+// the auth admin API, admin or not (owner decision). Refused for the caller's
+// own user id: DELETE on the user, and a PUT on the user that bans
+// (`ban_duration` other than "none"), changes the project role (`role`) or
+// changes the role claim Studio reads on the legacy claim path
+// (`app_metadata.role`). Their own sessions, MFA factors, password, email and
+// other profile fields stay theirs to change. The Studio role itself is
+// guarded the same way in the membership API.
+
+// guardOwnAccount refuses, having written the response, a request that
+// disables, deletes or changes the role of the caller's own account.
+func guardOwnAccount(w http.ResponseWriter, req *http.Request, result Result, path string) bool {
+	m := authAdminUser.FindStringSubmatch(path)
+	if m == nil || (m[2] != "" && m[2] != "/") {
+		return true
+	}
+	_, id, err := uuidTarget(studiomembers.TargetUserID, m[1])
+	if err != nil || !studiomembers.SameUser(result.Sub, id) {
+		return true
+	}
+	refuse, err := changesOwnAccount(req, result.Claims)
+	if err != nil {
+		WriteErrorBody(w, http.StatusRequestEntityTooLarge, refusedUncheckedTarget)
+		return false
+	}
+	if refuse {
+		WriteErrorBody(w, http.StatusForbidden, refusedOwnAccount)
+		return false
+	}
+	return true
+}
+
+// changesOwnAccount reports whether a request on the caller's own user is one
+// they may not make: a delete, or a PUT that bans or changes a role.
+func changesOwnAccount(req *http.Request, claims jwt.MapClaims) (bool, error) {
+	switch req.Method {
+	case http.MethodDelete:
+		return true, nil
+	case http.MethodPut:
+		body, err := readBodyRestoring(req)
+		if err != nil {
+			return false, err
+		}
+		return bansOrReRoles(body, claims), nil
+	}
+	return false, nil
+}
+
+// bansOrReRoles reads a user update the way the auth server does, into the
+// same field types, so a body it cannot read is left for it to refuse. A role
+// sent unchanged, as Studio's own profile form sends it, is not a change.
+func bansOrReRoles(body []byte, claims jwt.MapClaims) bool {
+	var params struct {
+		BanDuration string                 `json:"ban_duration"`
+		Role        string                 `json:"role"`
+		AppMetadata map[string]interface{} `json:"app_metadata"`
+	}
+	if json.Unmarshal(body, &params) != nil {
+		return false
+	}
+	if params.BanDuration != "" && params.BanDuration != "none" {
+		return true
+	}
+	if params.Role != "" && params.Role != claimText(claims, "role") {
+		return true
+	}
+	appRole, sent := params.AppMetadata["role"]
+	return sent && !reflect.DeepEqual(appRole, appMetadataRole(claims))
+}
+
+// claimText is a string claim from the caller's token, or "".
+func claimText(claims jwt.MapClaims, name string) string {
+	text, _ := claims[name].(string)
+	return text
+}
+
+// appMetadataRole is the caller's `app_metadata.role` claim, or nil.
+func appMetadataRole(claims jwt.MapClaims) interface{} {
+	meta, _ := claims["app_metadata"].(map[string]interface{})
+	return meta["role"]
 }

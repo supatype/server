@@ -77,8 +77,11 @@ func TestOpenDevNoLongerSkipsAnyStudioGate(t *testing.T) {
 		"CORS origins": func(w http.ResponseWriter) bool {
 			return CORSAccess(c)(w, req(), true)
 		},
-		"members": func(w http.ResponseWriter) bool {
-			_, ok := requireMemberAdmin(w, req(), c, true)
+		"members read": func(w http.ResponseWriter) bool {
+			return requireMemberReader(w, req(), c)
+		},
+		"members change": func(w http.ResponseWriter) bool {
+			_, ok := requireMemberChange(w, req(), c, memberPlain)
 			return ok
 		},
 		"bootstrap": func(w http.ResponseWriter) bool {

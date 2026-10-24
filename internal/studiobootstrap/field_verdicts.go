@@ -15,7 +15,9 @@ type FieldVerdict struct {
 	Write Verdict `json:"write"`
 	// Create is the INSERT path. The masking extension (MASK-N1) and the tier 2 view trigger
 	// both judge the write predicate against the new row, as an RLS `WITH CHECK` does, so a
-	// rule that reads the row is answered per row here too, never refused outright.
+	// rule that reads the row is answered per row here too, never refused outright. A caller
+	// acting as Studio is not judged by the field rules on this path at all: a new record shows
+	// them only what they typed, so the engine lets a Studio editor give every field.
 	Create Verdict `json:"create"`
 }
 
@@ -77,7 +79,20 @@ func resolveField(readRule, writeRule json.RawMessage, caller Caller) FieldVerdi
 	// INSERT runs the same predicate as UPDATE, against the new row instead of the stored
 	// one. A rule that reads the row is therefore `row` on both paths: the caller may create
 	// a record their rule accepts, such as one they own, and the database refuses the rest.
-	return FieldVerdict{Read: read, Write: write, Create: write}
+	return FieldVerdict{Read: read, Write: write, Create: createVerdict(write, caller)}
+}
+
+// createVerdict is the INSERT path's answer. Acting as Studio it is `allow` whatever the rules
+// say: the engine's write predicates exempt a Studio editor's create (`rls::studio_creates_sql`
+// in the schema engine), since on a new record nothing they could not already see leaks. A
+// Studio role that writes nothing is refused later, with every other write (addSessionAccess).
+// An app caller's create runs the write predicate against the new row, as UPDATE runs it
+// against the stored one, so it takes the write verdict.
+func createVerdict(write Verdict, caller Caller) Verdict {
+	if caller.AsStudio {
+		return VerdictAllow
+	}
+	return write
 }
 
 // conjoin is `AND` over verdicts: certain when both are certain, denied if either denies, and

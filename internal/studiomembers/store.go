@@ -167,7 +167,7 @@ func (s Store) SetRole(ctx context.Context, actingUserID, targetUserID, role str
 	if targetUserID == "" {
 		return ErrUnknownUser
 	}
-	if actingUserID != "" && actingUserID == targetUserID {
+	if SameUser(actingUserID, targetUserID) {
 		return errors.New("you cannot change your own Studio role")
 	}
 
@@ -216,7 +216,7 @@ func (s Store) Revoke(ctx context.Context, actingUserID, targetUserID string) er
 	if targetUserID == "" {
 		return ErrUnknownUser
 	}
-	if actingUserID != "" && actingUserID == targetUserID {
+	if SameUser(actingUserID, targetUserID) {
 		return errors.New("you cannot revoke your own Studio access")
 	}
 

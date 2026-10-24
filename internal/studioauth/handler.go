@@ -336,6 +336,9 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 		WriteErrorBody(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false
 	}
+	if !guardOwnAccount(w, req, result, path) {
+		return admission{}, false
+	}
 	if !guardAdminAccounts(w, req, c, perms, path) {
 		return admission{}, false
 	}

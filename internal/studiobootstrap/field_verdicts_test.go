@@ -132,6 +132,39 @@ func TestOwnerReadOnlyColumnStaysOnTheCreateForm(t *testing.T) {
 	}
 }
 
+// A Studio-mode writer creating a record may give every field, the ones masked from them included:
+// on a new record they see only what they typed, and the database's Studio exemption accepts the
+// value. Existing records keep the caller's own read and write verdicts, so a masked field there
+// stays padlocked.
+func TestStudioModeWriterCreatesEveryField(t *testing.T) {
+	fields := `{
+	  "salary":{"read":{"type":"role","roles":["admin"]},"write":{"type":"role","roles":["admin"]}},
+	  "email":{"read":{"type":"owner","field":"user_id"}},
+	  "locked":{"write":{"type":"private"}}}`
+	got := verdicts(t, fields, Caller{UserID: "u1", AppRole: "authenticated", AsStudio: true})
+
+	for _, column := range []string{"salary", "email", "locked"} {
+		if got[column].Create != VerdictAllow {
+			t.Errorf("a Studio-mode writer creates %s, got %+v", column, got[column])
+		}
+	}
+	if got["salary"].Read != VerdictDeny || got["salary"].Write != VerdictDeny {
+		t.Errorf("an existing record's salary stays padlocked, got %+v", got["salary"])
+	}
+	if got["email"].Read != VerdictRow || got["email"].Write != VerdictRow {
+		t.Errorf("an existing record's email is still asked per row, got %+v", got["email"])
+	}
+}
+
+// The same caller in the app is judged by the field rules alone: no create past them.
+func TestAppCallerCreateFollowsTheFieldRules(t *testing.T) {
+	fields := `{"salary":{"read":{"type":"role","roles":["admin"]},"write":{"type":"role","roles":["admin"]}}}`
+	got := verdicts(t, fields, Caller{UserID: "u1", AppRole: "authenticated"})
+	if got["salary"].Create != VerdictDeny {
+		t.Errorf("an app caller who is not an admin may not create salary, got %+v", got["salary"])
+	}
+}
+
 // A read rule the caller can never satisfy still refuses creation: the database tests the read
 // rule as the write rule, and it is false whatever the new row holds.
 func TestRoleReadRuleTheCallerFailsIsNotCreatable(t *testing.T) {

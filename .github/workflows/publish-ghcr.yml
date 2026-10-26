@@ -1,4 +1,4 @@
-# Cloud platform image — GHCR only (Pulumi / k8s pull ghcr.io/supatype/server).
+# Cloud platform image, GHCR only (Pulumi and k8s pull ghcr.io/supatype/server).
 # Public self-host Docker Hub image: publish.yml → supatype/server
 name: Publish server to GHCR
 
@@ -54,14 +54,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Notify supatype-cloud (pin server image on platform stack)
+      - name: Notify cloud (pin server image on platform stack)
         env:
           GH_TOKEN: ${{ secrets.CLOUD_REPO_DISPATCH_TOKEN }}
         run: |
           if [ -z "${GH_TOKEN}" ]; then
-            echo "CLOUD_REPO_DISPATCH_TOKEN not set — skip repository_dispatch"
+            echo "CLOUD_REPO_DISPATCH_TOKEN not set, skipping repository_dispatch"
             exit 0
           fi
-          gh api "repos/${{ github.repository_owner }}/supatype-cloud/dispatches" \
+          gh api "repos/${{ github.repository_owner }}/cloud/dispatches" \
             -f event_type=server-image-published \
             -f "client_payload[tag]=v${{ inputs.version }}"

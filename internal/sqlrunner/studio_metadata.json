@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "about": "Studio's read-only metadata queries (RQ3, RQ3b). Each runs in a read-only transaction with its parameters bound, never interpolated, for any role holding schemaView. They read catalogs, the engine's ledgers (managed objects, migrations, seeds) and two server settings, never a table's rows. supatype-server and the control plane carry this same file and pin its hash.",
+  "queries": {
+    "schemas": {
+      "params": [],
+      "sql": "SELECT s.schema_name FROM information_schema.schemata s WHERE s.schema_name NOT IN ('information_schema','pg_catalog','pg_toast') AND s.schema_name NOT LIKE 'pg_temp_%' AND s.schema_name NOT LIKE 'pg_toast_temp_%' AND left(s.schema_name, 1) <> '_' AND EXISTS (SELECT 1 FROM information_schema.tables t WHERE t.table_schema = s.schema_name AND t.table_type = 'BASE TABLE') ORDER BY CASE WHEN s.schema_name = 'public' THEN 0 WHEN s.schema_name IN ('auth', 'extensions', 'storage') THEN 2 WHEN s.schema_name LIKE '%\\_auth' ESCAPE '\\' OR s.schema_name LIKE '%\\_internal' ESCAPE '\\' THEN 2 ELSE 1 END, s.schema_name"
+    },
+    "tables": {
+      "params": ["schema"],
+      "sql": "SELECT t.table_name, GREATEST(c.reltuples::bigint, 0) AS row_estimate, pg_total_relation_size(c.oid)::bigint AS bytes FROM information_schema.tables t JOIN pg_namespace n ON n.nspname = t.table_schema JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = n.oid WHERE t.table_schema = $1::text AND t.table_type = 'BASE TABLE' ORDER BY t.table_name"
+    },
+    "columns": {
+      "params": ["schema", "table"],
+      "sql": "SELECT column_name, udt_name, is_nullable, column_default FROM information_schema.columns WHERE table_schema = $1::text AND table_name = $2::text ORDER BY ordinal_position"
+    },
+    "constraints": {
+      "params": ["schema"],
+      "sql": "SELECT t.relname AS table_name, c.conname AS name, CASE c.contype WHEN 'p' THEN 'PRIMARY KEY' WHEN 'f' THEN 'FOREIGN KEY' WHEN 'u' THEN 'UNIQUE' WHEN 'c' THEN 'CHECK' WHEN 'x' THEN 'EXCLUDE' ELSE c.contype::text END AS type, pg_get_constraintdef(c.oid) AS definition, obj_description(c.oid, 'pg_constraint') AS comment FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = $1::text AND c.contype <> 'n' ORDER BY t.relname, c.conname"
+    },
+    "indexes": {
+      "params": ["schema"],
+      "sql": "SELECT t.relname AS table_name, i.relname AS index_name, am.amname AS method, ix.indisunique AS is_unique, ix.indisprimary AS is_primary, pg_size_pretty(pg_relation_size(ix.indexrelid)) AS size, (SELECT string_agg(a.attname, ', ' ORDER BY k.ord) FROM unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum) AS columns, pg_get_indexdef(ix.indexrelid) AS definition, obj_description(i.oid, 'pg_class') AS comment FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace JOIN pg_am am ON am.oid = i.relam WHERE n.nspname = $1::text ORDER BY t.relname, i.relname"
+    },
+    "functions": {
+      "params": ["schema"],
+      "sql": "SELECT routine_name, routine_type, data_type AS return_type, external_language AS language, is_deterministic, routine_definition FROM information_schema.routines WHERE routine_schema = $1::text ORDER BY routine_name"
+    },
+    "triggers": {
+      "params": ["schema"],
+      "sql": "SELECT trigger_name, event_manipulation, event_object_table, action_timing, action_orientation, action_statement FROM information_schema.triggers WHERE trigger_schema = $1::text ORDER BY event_object_table, trigger_name"
+    },
+    "types": {
+      "params": ["schema"],
+      "sql": "SELECT t.typname, t.typtype, array_agg(e.enumlabel ORDER BY e.enumsortorder) FILTER (WHERE t.typtype = 'e') AS enum_values FROM pg_type t LEFT JOIN pg_enum e ON e.enumtypid = t.oid JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = $1::text AND t.typtype IN ('e','c') AND t.typname NOT LIKE '\\_%' GROUP BY t.typname, t.typtype ORDER BY t.typname"
+    },
+    "views": {
+      "params": ["schema"],
+      "sql": "SELECT table_name AS view_name, view_definition FROM information_schema.views WHERE table_schema = $1::text ORDER BY table_name"
+    },
+    "extensions_installed": {
+      "params": [],
+      "sql": "SELECT e.extname, e.extversion, d.description FROM pg_extension e LEFT JOIN pg_description d ON d.objoid = e.oid AND d.classoid = 'pg_extension'::regclass ORDER BY e.extname"
+    },
+    "extensions_available": {
+      "params": [],
+      "sql": "SELECT name, default_version, comment FROM pg_available_extensions WHERE installed_version IS NULL ORDER BY name"
+    },
+    "roles": {
+      "params": [],
+      "sql": "SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin, rolreplication, rolbypassrls, rolconnlimit, rolvaliduntil FROM pg_roles WHERE rolname NOT LIKE 'pg_%' ORDER BY rolname"
+    },
+    "owned_objects": {
+      "params": ["schema"],
+      "sql": "SELECT kind, parent, name FROM _supatype.managed_objects WHERE schema_name = $1::text AND status <> 'released' AND parent <> ''"
+    },
+    "ledger_kinds": {
+      "params": [],
+      "sql": "SELECT DISTINCT kind FROM _supatype.managed_objects ORDER BY kind"
+    },
+    "ledger_objects": {
+      "params": ["kind", "status", "table_pattern", "tableless", "offset"],
+      "sql": "SELECT kind, schema_name, parent, name, status, migration_id, updated_at::TEXT, count(*) OVER () AS total FROM _supatype.managed_objects WHERE ($1::text IS NULL OR kind = $1::text) AND ($2::text IS NULL OR status = $2::text) AND ($3::text IS NULL OR (parent = '' AND ($4::boolean OR kind = 'table') AND name ILIKE $3::text ESCAPE '\\') OR (parent <> '' AND split_part(parent, '.', 1) ILIKE $3::text ESCAPE '\\')) ORDER BY kind, schema_name, parent, name LIMIT 50 OFFSET $5::int"
+    },
+    "ledger_count": {
+      "params": ["kind", "status", "table_pattern", "tableless"],
+      "sql": "SELECT count(*) AS total FROM _supatype.managed_objects WHERE ($1::text IS NULL OR kind = $1::text) AND ($2::text IS NULL OR status = $2::text) AND ($3::text IS NULL OR (parent = '' AND ($4::boolean OR kind = 'table') AND name ILIKE $3::text ESCAPE '\\') OR (parent <> '' AND split_part(parent, '.', 1) ILIKE $3::text ESCAPE '\\'))"
+    },
+    "policies": {
+      "params": ["schema"],
+      "sql": "SELECT schemaname, tablename, policyname, permissive, cmd, qual, with_check, CASE WHEN COALESCE(array_length(roles, 1), 0) = 0 THEN 'all' ELSE array_to_string(roles::text[], ', ') END AS roles_label FROM pg_catalog.pg_policies WHERE lower(schemaname) = lower($1::text) ORDER BY tablename, policyname"
+    },
+    "rls_status": {
+      "params": ["schema"],
+      "sql": "SELECT c.relname AS tablename, c.relrowsecurity AS rls_enabled FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND lower(n.nspname) = lower($1::text) ORDER BY c.relname"
+    },
+    "migrations_audited": {
+      "params": [],
+      "sql": "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = '_supatype' AND table_name = 'migrations' AND column_name = 'pushed_by') AS audited"
+    },
+    "migrations": {
+      "params": [],
+      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, pushed_by, pushed_by_verified, pushed_via, pushed_from, renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by FROM _supatype.migrations ORDER BY id ASC"
+    },
+    "migrations_legacy": {
+      "params": [],
+      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, NULL AS pushed_by, NULL AS pushed_by_verified, NULL AS pushed_via, NULL AS pushed_from, NULL AS renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by FROM _supatype.migrations ORDER BY id ASC"
+    },
+    "migration_sql": {
+      "params": ["id"],
+      "sql": "SELECT sql_up FROM _supatype.migrations WHERE id = $1::text::int"
+    },
+    "seeds": {
+      "params": [],
+      "sql": "SELECT id, file, ir_hash, schema_fingerprint, applied_at::text, duration_ms, status, rows_written, error_message, engine_version FROM _supatype.seeds ORDER BY applied_at DESC, id DESC"
+    },
+    "database_settings": {
+      "params": [],
+      "sql": "SELECT current_setting('max_connections') AS max_connections, current_setting('statement_timeout') AS statement_timeout"
+    }
+  }
+}

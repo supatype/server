@@ -97,6 +97,7 @@ POST    /admin/v1/*
 POST    /auth/v1/*
 POST    /graphql/v1/*
 POST    /hooks/v1/previous/*
+POST    /metadata
 POST    /platform/v1/*
 POST    /preview-links/resolve
 POST    /rest/v1/*

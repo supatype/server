@@ -96,17 +96,12 @@ func SessionHandler(c Config) http.HandlerFunc {
 			perms = *result.Permissions
 		}
 
-		mode := ModeSelf
-		if perms.ElevatedSQL {
-			mode = ModeElevated
-		}
-
 		body := map[string]interface{}{
 			"sub":         result.Sub,
 			"role":        result.Role,
 			"appRole":     caller.AppRole,
 			"permissions": perms,
-			"mode":        mode,
+			"mode":        reportedMode(req, perms),
 			"canElevate":  perms.ElevatedSQL,
 		}
 

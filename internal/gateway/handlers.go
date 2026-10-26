@@ -84,6 +84,8 @@ func (d *Deps) DeclaredCache(req *http.Request) map[string]proxy.TableCache {
 	return m.Cache
 }
 
+func buildMetadata(d *Deps) http.Handler { return sqlrunner.MetadataHandler(d.Config, d.AdminPool) }
+
 func buildSQLRunner(d *Deps) http.Handler {
 	return sqlrunner.Handler(d.Config, d.AdminPool)
 }

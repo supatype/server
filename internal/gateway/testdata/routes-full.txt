@@ -126,6 +126,7 @@ POST    /functions/v1/admin/env
 POST    /functions/v1/admin/{name}/env
 POST    /graphql/v1/*
 POST    /hooks/v1/previous/*
+POST    /metadata
 POST    /platform/v1/*
 POST    /preview-links/resolve
 POST    /realtime/v1/*

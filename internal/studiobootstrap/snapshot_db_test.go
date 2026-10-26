@@ -109,6 +109,53 @@ func TestLoadSnapshot(t *testing.T) {
 	}
 }
 
+// backslashAST is a schema whose JSON text holds backslashes, as a real one does
+// once a check expression or a TypeScript type quotes a string.
+const backslashAST = `{"models":[
+	{"name":"Post","annotations":{"db":{"tableName":"posts"},
+	 "check":"status in (\"draft\",\"live\")",
+	 "tsType":"\"draft\" | \"live\"",
+	 "path":"C:\\temp\\posts",
+	 "note":"caf\u00e9 \u0001 line\nbreak",
+	 "platform":{"access":{"read":{"type":"public"},
+	   "fields":{"secret":{"read":{"type":"private"}}}}}}}
+]}`
+
+// The snapshot is JSON, read as text. Reading it through a text-to-bytea cast
+// made Postgres parse every backslash as a bytea escape, so a schema holding a
+// quoted string failed with "invalid input syntax for type bytea" and Studio lost
+// its access answers.
+func TestLoadSnapshotWithBackslashes(t *testing.T) {
+	ctx, resources := snapshotStore(t, backslashAST)
+
+	snapshot, err := LoadSnapshot(ctx, resources)
+	if err != nil {
+		t.Fatalf("LoadSnapshot: %v", err)
+	}
+	var shape struct {
+		Models []struct {
+			Annotations map[string]any `json:"annotations"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(snapshot.AST, &shape); err != nil {
+		t.Fatalf("the AST read back is not JSON: %v (%s)", err, snapshot.AST)
+	}
+	got := shape.Models[0].Annotations
+	for key, want := range map[string]string{
+		"check":  `status in ("draft","live")`,
+		"tsType": `"draft" | "live"`,
+		"path":   `C:\temp\posts`,
+		"note":   "caf\u00e9 \u0001 line\nbreak",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+	if models, err := FilterForCaller(snapshot, Caller{}); err != nil || len(models) != 1 {
+		t.Errorf("FilterForCaller = %+v, %v", models, err)
+	}
+}
+
 // A change to either half invalidates a client's cached copy.
 func TestTheHashCoversBothHalves(t *testing.T) {
 	ctx, resources := snapshotStore(t, postAndSecretAST)

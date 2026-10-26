@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/supatype/server/internal/data"
 )
 
@@ -38,10 +39,26 @@ func LoadSnapshot(ctx context.Context, resources *data.Resources) (*Snapshot, er
 		return nil, err
 	}
 
-	var ast, adminConfig []byte
+	ast, adminConfig, err := readSchemaState(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	if ast == "" {
+		return nil, ErrNoSchemaState
+	}
+	return newSnapshot(ast, adminConfig), nil
+}
+
+// readSchemaState reads the stored AST and admin config as JSON text.
+//
+// Read as text, never cast to bytea: a text-to-bytea cast parses every backslash
+// as a bytea escape, so any schema whose JSON quotes a string (a check
+// expression, a TypeScript type) failed with "invalid input syntax for type
+// bytea" and could not be loaded at all.
+func readSchemaState(ctx context.Context, pool *pgxpool.Pool) (ast, adminConfig string, err error) {
 	err = pool.QueryRow(ctx, `
-		SELECT COALESCE(ast_snapshot::text, '')::bytea,
-		       COALESCE(admin_config::text, '')::bytea
+		SELECT COALESCE(ast_snapshot::text, ''),
+		       COALESCE(admin_config::text, '')
 		  FROM _supatype.schema_state
 		 WHERE id = 1`).Scan(&ast, &adminConfig)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -49,24 +66,22 @@ func LoadSnapshot(ctx context.Context, resources *data.Resources) (*Snapshot, er
 		// same thing to Studio as a row with nothing in it. Returning the driver
 		// error instead put "no rows in result set" in front of a developer on
 		// their first run, where the answer is "push the schema first".
-		return nil, ErrNoSchemaState
+		return "", "", ErrNoSchemaState
 	}
-	if err != nil {
-		return nil, err
-	}
-	if len(ast) == 0 {
-		return nil, ErrNoSchemaState
-	}
+	return ast, adminConfig, err
+}
 
+// newSnapshot wraps the stored JSON with a hash of both halves.
+func newSnapshot(ast, adminConfig string) *Snapshot {
 	sum := sha256.New()
-	sum.Write(ast)
-	sum.Write(adminConfig)
+	sum.Write([]byte(ast))
+	sum.Write([]byte(adminConfig))
 
 	return &Snapshot{
 		AST:         json.RawMessage(ast),
 		AdminConfig: json.RawMessage(adminConfig),
 		Hash:        hex.EncodeToString(sum.Sum(nil))[:32],
-	}, nil
+	}
 }
 
 // Model is one table as Studio needs to know about it.
@@ -105,23 +120,9 @@ func FilterForCaller(snapshot *Snapshot, caller Caller) ([]Model, error) {
 		return nil, err
 	}
 
-	// Fixed order so the response is stable and cacheable.
-	operations := []string{"read", "create", "update", "delete"}
-
 	models := make([]Model, 0, len(shape.Models))
 	for _, m := range shape.Models {
-		access := make(map[string]Verdict, len(operations))
-		reachable := false
-		for _, op := range operations {
-			v := Evaluate(m.Annotations.Platform.Access[op], caller)
-			if caller.AsStudio {
-				v = VerdictAllow
-			}
-			access[op] = v
-			if v != VerdictDeny {
-				reachable = true
-			}
-		}
+		access, reachable := modelAccess(m.Annotations.Platform.Access, caller)
 		if !reachable {
 			continue
 		}
@@ -133,4 +134,25 @@ func FilterForCaller(snapshot *Snapshot, caller Caller) ([]Model, error) {
 		models = append(models, Model{Name: m.Name, Table: table, Access: access})
 	}
 	return models, nil
+}
+
+// modelOperations is fixed in order so the response is stable and cacheable.
+var modelOperations = []string{"read", "create", "update", "delete"}
+
+// modelAccess is the caller's verdict on each operation of one model, and
+// whether any of them is anything but a denial.
+func modelAccess(rules map[string]json.RawMessage, caller Caller) (map[string]Verdict, bool) {
+	access := make(map[string]Verdict, len(modelOperations))
+	reachable := false
+	for _, op := range modelOperations {
+		v := Evaluate(rules[op], caller)
+		if caller.AsStudio {
+			v = VerdictAllow
+		}
+		access[op] = v
+		if v != VerdictDeny {
+			reachable = true
+		}
+	}
+	return access, reachable
 }

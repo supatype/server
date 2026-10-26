@@ -159,11 +159,35 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err := tx.Exec(ctx, reassignToOwner); err != nil {
+		return nil, failing(http.StatusInternalServerError, "failed to hand objects to the database owner: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, failing(http.StatusInternalServerError, "failed to commit: %w", err)
 	}
 	return rows, nil
 }
+
+// reassignToOwner hands everything the editor role owns to the database owner,
+// in the same transaction as the statement that created it.
+//
+// The editor logs in as supatype_sql_editor, a non-superuser member of the
+// database owner, so an object it creates would otherwise belong to a login
+// role no migration or Studio view expects to find as an owner. The owner is
+// resolved from the catalogue rather than assumed, because it is `postgres`
+// on self-host but need not be anywhere else.
+//
+// It only runs when this session is the editor. A deployment that has not
+// configured SUPATYPE_SQL_EDITOR_DATABASE_URL falls back to the SQL DSN, whose
+// cluster may have no editor role to reassign from at all.
+const reassignToOwner = `DO $reassign$
+BEGIN
+  IF session_user = 'supatype_sql_editor' THEN
+    EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I',
+      (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()));
+  END IF;
+END
+$reassign$`
 
 // collect reads the result set, refusing one too large to hold in memory.
 func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, error) {

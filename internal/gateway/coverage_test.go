@@ -183,6 +183,53 @@ func TestAdminPoolWithoutADatabase(t *testing.T) {
 	}
 }
 
+// The editor pool is told "no database" the same way, as a nil interface.
+func TestEditorPoolWithoutADatabase(t *testing.T) {
+	d := depsFor(t, &config.Config{Mode: "standalone"}, nil)
+
+	pool, err := d.EditorPool()
+	if err == nil {
+		t.Error("want an error")
+	}
+	if pool != nil {
+		t.Errorf("pool = %#v, want a nil interface", pool)
+	}
+}
+
+// POST /sql runs on the editor pool, and the read-only metadata route stays on
+// the admin pool. With only an editor DSN configured the two answer differently:
+// /sql reaches for a pool and fails to begin, /metadata has no pool at all.
+func TestTheSQLRunnerUsesTheEditorPoolAndMetadataTheAdminPool(t *testing.T) {
+	d := depsFor(t, &config.Config{
+		Mode:                 "standalone",
+		ServiceRoleKey:       "k",
+		SQLEditorDatabaseURL: "postgres://supatype_sql_editor:x@127.0.0.1:1/none",
+	}, nil)
+
+	sqlBody := serveSQLRoute(t, buildSQLRunner(d), "/sql", `{"query":"select 1"}`)
+	if !strings.Contains(sqlBody, "failed to begin transaction") {
+		t.Errorf("/sql did not run on the editor pool: %s", sqlBody)
+	}
+	metaBody := serveSQLRoute(t, buildMetadata(d), "/metadata", `{"name":"roles","params":{}}`)
+	if !strings.Contains(metaBody, "database not available") {
+		t.Errorf("/metadata did not stay on the admin pool: %s", metaBody)
+	}
+}
+
+// serveSQLRoute posts body to h with the service-role key and returns what it
+// answered.
+func serveSQLRoute(t *testing.T, h http.Handler, path, body string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer k")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("%s: status = %d, want 503 (%s)", path, rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
 // A deployment with no database cannot read pg_keyspace's views either, and the
 // admin API is handed a nil interface rather than a typed nil it would call a
 // method on. The stats routes render that as "unavailable", which is a state,

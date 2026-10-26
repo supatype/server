@@ -206,6 +206,17 @@ func (d *Deps) AdminPool() (sqlrunner.Pool, error) {
 	return pool, nil
 }
 
+// EditorPool hands out the pool the Studio SQL editor runs statements on, as
+// the same narrow interface and with the same explicit nil conversion as
+// AdminPool. The read-only metadata routes stay on AdminPool.
+func (d *Deps) EditorPool() (sqlrunner.Pool, error) {
+	pool, err := d.Resources.EditorPool()
+	if err != nil {
+		return nil, err
+	}
+	return pool, nil
+}
+
 // apiConfigStore picks where the API configuration is kept.
 //
 // The platform keyspace when this is a single-tenant managed pod that has one, and a file

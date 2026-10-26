@@ -13,6 +13,7 @@ import (
 	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/corsorigins"
+	"github.com/supatype/server/internal/draftinsert"
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/maskedfields"
 	"github.com/supatype/server/internal/modelhooks"
@@ -151,7 +152,9 @@ func buildStudioConfig(d *Deps) http.Handler {
 // write reaches them before PostgREST sees it, which is the only place a hook
 // can still reject or rewrite one.
 func buildREST(d *Deps) http.Handler {
-	return maskedfields.Middleware(d.MaskedFields,
+	// Outermost, beside the masked-fields header: both describe the schema rather than the
+	// caller, and a refused insert is never cached, so where the cache sits does not matter.
+	return draftinsert.Middleware(d.DraftTables, maskedfields.Middleware(d.MaskedFields,
 		restcache.Middleware(
 			restcache.Deps{
 				Store:          d.APIStore,
@@ -166,7 +169,7 @@ func buildREST(d *Deps) http.Handler {
 			},
 			d.Hooks(restProxyHandler(d)),
 		),
-	)
+	))
 }
 
 // restProxyHandler forwards to PostgREST, telling it which schema to use and

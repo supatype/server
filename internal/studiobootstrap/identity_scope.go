@@ -3,7 +3,6 @@ package studiobootstrap
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"time"
 
 	"github.com/supatype/server/internal/data"
@@ -16,8 +15,8 @@ import (
 // keyed by identity.
 //
 // Row-dependence is not the same question. `Lte<"published_at", Now>` varies by row
-// and by time but not by caller, so a shared entry is fine for it — the whole point
-// of allowing public caching on a published-content table.
+// and by time but not by caller, so a shared entry is fine for it. That is the whole
+// point of allowing public caching on a published-content table.
 func IsIdentityDependent(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
@@ -90,39 +89,22 @@ func operandIsIdentityDependent(o *operand) bool {
 // this is consulted on a request path and the answer changes only on push.
 const identityScopeTTL = 30 * time.Second
 
-var identityScope struct {
-	sync.Mutex
-	tables   map[string]bool
-	loadedAt time.Time
-	loaded   bool
-}
+var identityScope = classification[map[string]bool]{ttl: identityScopeTTL}
 
 // IdentityScopedTables returns the tables whose read rule varies by caller.
 //
-// The second result is false when the classification could not be determined — the
+// The second result is false when the classification could not be determined. The
 // caller must then treat every table as identity-scoped, because "we could not
 // check" is not a reason to start sharing responses between users.
 func IdentityScopedTables(ctx context.Context, resources *data.Resources) (map[string]bool, bool) {
-	identityScope.Lock()
-	defer identityScope.Unlock()
+	return identityScope.get(ctx, resources, identityScopedTablesFromAST)
+}
 
-	if identityScope.loaded && time.Since(identityScope.loadedAt) < identityScopeTTL {
-		return identityScope.tables, true
-	}
-
-	snapshot, err := LoadSnapshot(ctx, resources)
-	if err != nil {
-		// Keep serving a previous answer rather than flapping to "unknown" on a
-		// transient database blip; the TTL still bounds how old it can be.
-		if identityScope.loaded {
-			return identityScope.tables, true
-		}
-		return nil, false
-	}
-
+// identityScopedTablesFromAST is the pure half: snapshot bytes in, classification out.
+func identityScopedTablesFromAST(raw []byte) (map[string]bool, error) {
 	var shape astShape
-	if err := json.Unmarshal(snapshot.AST, &shape); err != nil {
-		return nil, false
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		return nil, err
 	}
 
 	tables := make(map[string]bool, len(shape.Models))
@@ -133,9 +115,5 @@ func IdentityScopedTables(ctx context.Context, resources *data.Resources) (map[s
 		}
 		tables[table] = IsIdentityDependent(m.Annotations.Platform.Access["read"])
 	}
-
-	identityScope.tables = tables
-	identityScope.loadedAt = time.Now()
-	identityScope.loaded = true
-	return tables, true
+	return tables, nil
 }

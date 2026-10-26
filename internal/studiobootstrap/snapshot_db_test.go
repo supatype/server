@@ -59,9 +59,11 @@ func snapshotStore(t *testing.T, ast string) (context.Context, *data.Resources) 
 		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS _supatype.schema_state`)
 		ResetIdentityScopeCache()
 		ResetFieldScopeCache()
+		resetDraftTables()
 	})
 	ResetIdentityScopeCache()
 	ResetFieldScopeCache()
+	resetDraftTables()
 	return ctx, resources
 }
 

@@ -260,6 +260,12 @@ func (d *Deps) KeyspaceMonitor() admin.StatsQuerier {
 	return pool
 }
 
+// DraftTables binds the drafts classification to this gateway's resources, for
+// the middleware that names create_record on a refused insert into one.
+func (d *Deps) DraftTables(ctx context.Context) (map[string]bool, bool) {
+	return studiobootstrap.DraftTables(ctx, d.Resources)
+}
+
 // IdentityScopedTables binds the caller-dependence classification to this
 // gateway's resources, so the REST cache takes the answer as a value rather
 // than reaching for a database of its own.

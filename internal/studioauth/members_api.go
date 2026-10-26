@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gofrs/uuid"
 	"github.com/supatype/server/internal/studiomembers"
 	"github.com/supatype/server/internal/utilities"
 )
@@ -149,6 +150,10 @@ func requireMemberChange(w http.ResponseWriter, req *http.Request, c Config, tar
 		WriteErrorBody(w, http.StatusBadRequest, "user id is required")
 		return "", false
 	}
+	if _, err := uuid.FromString(target); err != nil {
+		WriteErrorBody(w, http.StatusBadRequest, "user id must be a UUID")
+		return "", false
+	}
 	return result.Sub, true
 }
 
@@ -183,10 +188,12 @@ func writeMemberError(w http.ResponseWriter, err error) {
 		WriteErrorBody(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, studiomembers.ErrLastAdmin):
 		WriteErrorBody(w, http.StatusConflict, err.Error())
+	case errors.Is(err, studiomembers.ErrOwnRole), errors.Is(err, studiomembers.ErrOwnAccess):
+		WriteErrorBody(w, http.StatusForbidden, err.Error())
 	default:
-		// Self-change refusals and anything else the store rejected. These are
-		// caller mistakes, not server faults.
-		WriteErrorBody(w, http.StatusBadRequest, err.Error())
+		// The store refused nothing on the caller's account: the database is
+		// missing or failed. That is the server's fault, and its text stays here.
+		WriteErrorBody(w, http.StatusServiceUnavailable, "could not change Studio membership")
 	}
 }
 

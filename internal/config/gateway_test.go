@@ -11,6 +11,7 @@ func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 		"SUPATYPE_CLOUD_ACTIVITY_ENABLED": "true",
 		"SUPATYPE_CLOUD_ACTIVITY_URL":     "http://cp:4001",
 		"SUPATYPE_CONTROL_PLANE_URL":      "http://cp:8080",
+		"SUPATYPE_CONTROL_PLANE_SECRET":   "cp-s3cret",
 		"SUPATYPE_INTERNAL_HMAC_SECRET":   "s3cret",
 		"SUPATYPE_NONPROD":                "true",
 		"SUPATYPE_BLOCK_BOT_UA":           "true",
@@ -37,6 +38,7 @@ func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 	for name, got := range map[string]string{
 		"SUPATYPE_CLOUD_ACTIVITY_URL":   cfg.CloudActivityURL,
 		"SUPATYPE_CONTROL_PLANE_URL":    cfg.ControlPlaneURL,
+		"SUPATYPE_CONTROL_PLANE_SECRET": cfg.ControlPlaneSecret,
 		"SUPATYPE_INTERNAL_HMAC_SECRET": cfg.InternalHMACSecret,
 		"MAU_EMAIL_SALT":                cfg.MAUEmailSalt,
 		"VALKEY_ADDR":                   cfg.ValkeyAddrLegacy,

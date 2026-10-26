@@ -17,11 +17,38 @@ func TestRequireServiceRole(t *testing.T) {
 		wantStatus     int
 		wantNextCalled bool
 	}{
+		// Dev mode used to wave every request through. A function deployed to a
+		// dev stack could then reach the control plane through the gateway,
+		// which presents the control plane secret on the caller's behalf.
 		{
-			name:           "dev mode bypasses auth",
+			name:           "dev mode without a key denied",
+			mode:           "dev",
+			serviceKey:     "secret",
+			authHeader:     "",
+			wantStatus:     http.StatusUnauthorized,
+			wantNextCalled: false,
+		},
+		{
+			name:           "dev mode with the wrong key denied",
+			mode:           "dev",
+			serviceKey:     "secret",
+			authHeader:     "Bearer wrong",
+			wantStatus:     http.StatusUnauthorized,
+			wantNextCalled: false,
+		},
+		{
+			name:           "dev mode with no key configured denied",
 			mode:           "dev",
 			serviceKey:     "",
-			authHeader:     "",
+			authHeader:     "Bearer anything",
+			wantStatus:     http.StatusUnauthorized,
+			wantNextCalled: false,
+		},
+		{
+			name:           "dev mode with the correct key allowed",
+			mode:           "dev",
+			serviceKey:     "secret",
+			authHeader:     "Bearer secret",
 			wantStatus:     http.StatusNoContent,
 			wantNextCalled: true,
 		},

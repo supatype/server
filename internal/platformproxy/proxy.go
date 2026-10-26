@@ -13,6 +13,10 @@ import (
 	"github.com/supatype/server/internal/proxy"
 )
 
+// SecretHeader carries the control plane secret on every forwarded request.
+// The control plane reads the same name.
+const SecretHeader = "X-Supatype-Control-Plane-Secret"
+
 // Handler returns a chi router for /platform/v1/* protected by service-role auth.
 //
 // An unusable upstream is returned as an error rather than a panic. This used to
@@ -36,10 +40,25 @@ func Handler(cfg *config.Config) (http.Handler, error) {
 	}
 
 	px := proxy.New(u, proxy.ProxyOpts{})
+	secret := strings.TrimSpace(cfg.ControlPlaneSecret)
 	r := chi.NewRouter()
 	r.Use(functions.RequireServiceRoleMiddleware(cfg))
 	r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		presentSecret(req.Header, secret)
 		px.ServeHTTP(w, req)
 	}))
 	return r, nil
+}
+
+// presentSecret puts the gateway's control plane secret on a forwarded request,
+// and only the gateway's.
+//
+// Any copy the client sent is removed first, whether or not a secret is
+// configured: forwarding it would let a caller who guessed or leaked the value
+// use the gateway to deliver it.
+func presentSecret(h http.Header, secret string) {
+	h.Del(SecretHeader)
+	if secret != "" {
+		h.Set(SecretHeader, secret)
+	}
 }

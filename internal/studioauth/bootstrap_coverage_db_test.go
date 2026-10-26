@@ -389,6 +389,16 @@ func TestSessionSaysWhenFieldAccessIsUnavailable(t *testing.T) {
 	SessionHandler(unparseable)(rec, studioRequest(http.MethodGet, "/studio/session", signedIn(t)))
 	assertFieldAccess(t, rec, fieldAccessUnavailable)
 
+	// Model rules that read but field rules that do not: both halves or neither,
+	// so the model access that could be read is not answered alone.
+	halfReadable := bootstrapConfig(t, `{"models":[{"name":"Post","annotations":{"db":{"tableName":"posts"},
+		"platform":{"access":{"read":{"type":"public"},"fields":"not an object"}}}}]}`, "admin")
+	rec = httptest.NewRecorder()
+	SessionHandler(halfReadable)(rec, studioRequest(http.MethodGet, "/studio/session", signedIn(t)))
+	if body := assertFieldAccess(t, rec, fieldAccessUnavailable); body.Access != nil || body.Fields != nil {
+		t.Errorf("half readable: access = %v, fields = %v, want neither", body.Access, body.Fields)
+	}
+
 	unreachable := bootstrapConfig(t, schemaWithAMaskedColumn, "admin")
 	pool, err := unreachable.Resources.AdminPool()
 	if err != nil {
@@ -501,6 +511,9 @@ func TestCallerCacheKey(t *testing.T) {
 		"an anonymous one":   {studiobootstrap.Caller{AppRole: "editor"}, "editor-unauth"},
 		"no role named":      {studiobootstrap.Caller{UserID: "u"}, "anon"},
 		"nothing at all":     {studiobootstrap.Caller{}, "anon-unauth"},
+		// Acting as Studio is answered differently from acting as yourself.
+		"an editor acting as Studio": {studiobootstrap.Caller{UserID: "u", AppRole: "editor", AsStudio: true}, "editor+studio"},
+		"anonymous, as Studio":       {studiobootstrap.Caller{AsStudio: true}, "anon+studio-unauth"},
 	} {
 		if got := callerCacheKey(tc.caller); got != tc.want {
 			t.Errorf("%s: key = %q, want %q", name, got, tc.want)

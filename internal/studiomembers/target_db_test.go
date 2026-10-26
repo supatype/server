@@ -51,3 +51,21 @@ func TestTargetRolesWithoutADatabaseIsAnError(t *testing.T) {
 		t.Fatal("expected an error with no database")
 	}
 }
+
+// A membership table the lookup cannot read, missing or of a shape it cannot
+// scan, is an unknown answer: an error, never "this user holds no role".
+func TestTargetRolesReportsATableItCannotRead(t *testing.T) {
+	for _, tc := range []struct{ name, breakIt string }{
+		{"missing", `DROP TABLE _supatype.studio_members`},
+		{"unscannable role", `ALTER TABLE _supatype.studio_members ALTER COLUMN role TYPE text[] USING ARRAY[role]`},
+	} {
+		ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+			VALUES ('`+adminA+`', 'admin')`)
+		if _, err := adminPool(t, store).Exec(ctx, tc.breakIt); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if roles, err := store.TargetRoles(ctx, TargetUserID, adminA); err == nil || roles != nil {
+			t.Errorf("%s: got %v, %v; want an error and no roles", tc.name, roles, err)
+		}
+	}
+}

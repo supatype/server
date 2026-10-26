@@ -72,3 +72,24 @@ func assertErrorBody(t *testing.T, rec *httptest.ResponseRecorder, code, message
 		t.Errorf("body = %+v, want error %q and message %q", body, code, message)
 	}
 }
+
+// A status with no code of its own takes its class's, so a client branching on
+// the code still tells its own mistake from a server fault.
+func TestAStatusWithNoCodeOfItsOwnTakesItsClassCode(t *testing.T) {
+	for status, want := range map[int]string{
+		http.StatusRequestEntityTooLarge: "validation_error",
+		http.StatusTeapot:                "validation_error",
+		http.StatusBadGateway:            "internal_error",
+		http.StatusGatewayTimeout:        "internal_error",
+	} {
+		rec := httptest.NewRecorder()
+		WriteErrorBody(rec, status, "the sentence")
+		var body struct{ Error, Message string }
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%d: %v", status, err)
+		}
+		if rec.Code != status || body.Error != want || body.Message != "the sentence" {
+			t.Errorf("%d: got %d %+v, want code %q", status, rec.Code, body, want)
+		}
+	}
+}

@@ -58,3 +58,14 @@ func TestAnonymousDoesNotWidenARole(t *testing.T) {
 		t.Fatalf("viewer anon write: got %d, reached %v", rec.Code, next.reached)
 	}
 }
+
+// Acting as an anonymous client needs the project's anon key. Without one the
+// request is refused as unavailable rather than sent with the caller's own
+// session or with none.
+func TestAnonymousWithoutAnAnonKeyIsRefused(t *testing.T) {
+	_, viewer := proxyCapturing(t, "viewer", func(c *Config) { c.AnonKey = "" })
+	got := viewer(http.MethodGet, "/studio/proxy/rest/v1/posts", http.Header{ActingModeHeader: {ModeAnon}})
+	if got.code != http.StatusServiceUnavailable || got.upstream != "" {
+		t.Fatalf("got %d at %q, want 503 and no upstream", got.code, got.upstream)
+	}
+}

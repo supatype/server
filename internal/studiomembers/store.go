@@ -24,6 +24,12 @@ var ErrLastAdmin = errors.New("this is the last Studio admin; promote someone el
 // ErrUnknownUser is returned when the target has no row in auth.users.
 var ErrUnknownUser = errors.New("no such user in this project")
 
+// ErrOwnRole is returned when a caller tries to change their own Studio role.
+var ErrOwnRole = errors.New("you cannot change your own Studio role")
+
+// ErrOwnAccess is returned when a caller tries to revoke their own Studio access.
+var ErrOwnAccess = errors.New("you cannot revoke your own Studio access")
+
 // Member is one membership row, joined to the project user it belongs to.
 type Member struct {
 	UserID    string `json:"userId"`
@@ -168,7 +174,7 @@ func (s Store) SetRole(ctx context.Context, actingUserID, targetUserID, role str
 		return ErrUnknownUser
 	}
 	if SameUser(actingUserID, targetUserID) {
-		return errors.New("you cannot change your own Studio role")
+		return ErrOwnRole
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
@@ -217,7 +223,7 @@ func (s Store) Revoke(ctx context.Context, actingUserID, targetUserID string) er
 		return ErrUnknownUser
 	}
 	if SameUser(actingUserID, targetUserID) {
-		return errors.New("you cannot revoke your own Studio access")
+		return ErrOwnAccess
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)

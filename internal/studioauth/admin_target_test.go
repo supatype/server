@@ -244,3 +244,90 @@ func TestNoOneMayChangeTheirOwnStudioMembership(t *testing.T) {
 		}
 	}
 }
+
+// failingBody is a request body whose read fails partway, as a client that
+// drops the connection mid-upload does.
+type failingBody struct{}
+
+func (failingBody) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+func (failingBody) Close() error             { return nil }
+
+// mustNotLook is a target lookup the guard must not reach.
+func mustNotLook(t *testing.T) TargetRoleLookup {
+	return func(_ context.Context, kind studiomembers.TargetKind, value string) ([]string, error) {
+		t.Errorf("looked up %d %q, want no lookup", kind, value)
+		return nil, nil
+	}
+}
+
+// With no lookup of its own, the guard asks the membership store; a store with
+// no database cannot say whose account it is, so the change is refused.
+func TestTheGuardAsksTheMembershipStoreByDefault(t *testing.T) {
+	next, rec := sendUserAdmin(t, "developer", http.MethodPut, "/auth/v1/admin/users/"+plainUserID, `{}`, nil)
+	if next.reached || rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), refusedUncheckedTarget) {
+		t.Fatalf("got %d %s, reached %v", rec.Code, rec.Body.String(), next.reached)
+	}
+}
+
+// A request that names nobody the auth server could find, an id it cannot
+// read or an email that is missing or unreadable, is left for it to refuse
+// without a lookup.
+func TestARequestNamingNoUserIsLeftToTheAuthServer(t *testing.T) {
+	for _, a := range []struct{ name, method, path, body string }{
+		{"escape that will not decode", http.MethodPut, "/auth/v1/admin/users/%25zz", `{"ban_duration":"1h"}`},
+		{"id that is not a uuid", http.MethodDelete, "/auth/v1/admin/users/not-a-uuid", ""},
+		{"session that is not a uuid", http.MethodDelete, "/auth/v1/admin/sessions/not-a-uuid", ""},
+		{"no email", http.MethodPost, "/auth/v1/invite", `{"data":{}}`},
+		{"unreadable body", http.MethodPost, "/auth/v1/recover", `{"email":`},
+	} {
+		next, rec := sendUserAdmin(t, "developer", a.method, a.path, a.body, mustNotLook(t))
+		if !next.reached {
+			t.Errorf("%s: refused with %d %s", a.name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// sendGuarded sends one auth request as a developer signed in as ownUserID,
+// with body as the request body exactly, nil included.
+func sendGuarded(t *testing.T, method, path string, body io.ReadCloser) (*proxyUpstream, *httptest.ResponseRecorder) {
+	t.Helper()
+	token := bearer(t, jwt.MapClaims{"sub": ownUserID, "role": "authenticated"})
+	req := httptest.NewRequest(method, path, nil)
+	req.Body = body
+	req.Header.Set("Authorization", "Bearer "+token)
+	cfg := membershipConfig("developer")
+	cfg.TargetRoles = fakeTargets
+	next := &proxyUpstream{}
+	rec := httptest.NewRecorder()
+	ProxyHandler(next, cfg).ServeHTTP(rec, req)
+	return next, rec
+}
+
+// A request with no body at all names no email, so it is the auth server's to
+// refuse.
+func TestAnEmailRequestWithNoBodyIsLeftToTheAuthServer(t *testing.T) {
+	if next, rec := sendGuarded(t, http.MethodPost, "/auth/v1/invite", nil); !next.reached {
+		t.Fatalf("refused with %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A body the guard cannot read, or one too large to inspect, means it cannot
+// tell whose account a change is on, so the change is refused, on another
+// user's account and on your own.
+func TestABodyTheGuardCannotReadIsRefused(t *testing.T) {
+	oversized := `{"email":"` + strings.Repeat("a", guardBodyLimit) + `"}`
+	for _, a := range []struct {
+		name, method, path string
+		body               io.ReadCloser
+	}{
+		{"email too large", http.MethodPost, "/auth/v1/invite", io.NopCloser(strings.NewReader(oversized))},
+		{"email read fails", http.MethodPost, "/auth/v1/admin/generate_link", failingBody{}},
+		{"own account too large", http.MethodPut, "/auth/v1/admin/users/" + ownUserID, io.NopCloser(strings.NewReader(oversized))},
+		{"own account read fails", http.MethodPut, "/auth/v1/admin/users/" + ownUserID, failingBody{}},
+	} {
+		next, rec := sendGuarded(t, a.method, a.path, a.body)
+		if next.reached || rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), refusedUncheckedTarget) {
+			t.Errorf("%s: got %d %s, reached %v", a.name, rec.Code, rec.Body.String(), next.reached)
+		}
+	}
+}

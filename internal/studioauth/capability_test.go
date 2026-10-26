@@ -11,7 +11,7 @@ import (
 )
 
 func TestPermissionsForRoleFailsClosed(t *testing.T) {
-	for _, role := range []string{"", "superuser", "Admin", "authenticated", "viewer"} {
+	for _, role := range []string{"", "superuser", "Admin", "authenticated", "owner", "billing"} {
 		if _, ok := PermissionsForRole(role); ok {
 			t.Fatalf("role %q must not be recognised", role)
 		}
@@ -24,17 +24,21 @@ func TestPermissionsForRoleFailsClosed(t *testing.T) {
 }
 
 // The same membership row must mean the same thing in both hosts; these
-// expectations mirror STUDIO_ROLE_PERMISSIONS in the control plane and the role
-// matrix in the plan.
+// expectations are the owner's role matrix, which the control plane shares.
 func TestRolePermissionsMatchTheControlPlane(t *testing.T) {
 	cases := map[string]StudioPermissions{
 		"admin": {
-			Read: true, Write: true, SchemaView: true,
-			SQLEditor: true, ElevatedSQL: true, ManageMembers: true,
-			RealtimeInspect: true,
+			Read: true, Write: true, SchemaView: true, PushSchema: true, Deploy: true,
+			SQLEditor: true, ElevatedSQL: true, RealtimeInspect: true, ViewLogs: true,
+			ManageKeys: true, ManageDomains: true, ManageMembers: true, Billing: true,
+			OrgSettings: true, CreateProject: true, DeleteProject: true, ViewUsage: true,
 		},
-		"developer": {Read: true, Write: true, SchemaView: true, SQLEditor: true, RealtimeInspect: true},
-		"editor":    {Read: true, Write: true},
+		"developer": {
+			Read: true, Write: true, SchemaView: true, PushSchema: true, Deploy: true,
+			SQLEditor: true, RealtimeInspect: true, ViewLogs: true, CreateProject: true, ViewUsage: true,
+		},
+		"editor": {Read: true, Write: true},
+		"viewer": {Read: true, SchemaView: true, ViewLogs: true},
 	}
 	if len(cases) != len(KnownStudioRoles()) {
 		t.Fatalf("role catalogue changed: %v", KnownStudioRoles())

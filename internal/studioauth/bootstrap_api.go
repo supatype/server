@@ -13,14 +13,14 @@ import (
 
 // Studio's two bootstrap endpoints:
 //
-//	GET /studio/schema   — the pushed schema, filtered to what the caller may reach
-//	GET /studio/session  — what the caller may do, resolved as far as possible
+//	GET /studio/schema    the pushed schema, filtered to what the caller may reach
+//	GET /studio/session   what the caller may do, resolved as far as possible
 //
 // Both are answered from the database on every request. A capability baked into a
 // session payload or a cookie would let a demoted user keep the interface they had
 // until it expired, and capability is precisely the thing that must not be
 // cacheable. What *is* cacheable is the schema, which is the same for everyone
-// with the same access — hence the ETag.
+// with the same access, hence the ETag.
 
 // SchemaHandler serves GET /studio/schema.
 func SchemaHandler(c Config) http.HandlerFunc {
@@ -110,30 +110,60 @@ func SessionHandler(c Config) http.HandlerFunc {
 			"canElevate":  perms.ElevatedSQL,
 		}
 
-		// Row-independent access per model, so Studio can grey out what is settled
-		// and only ask per row where the answer genuinely depends on one.
 		if snapshot, err := studiobootstrap.LoadSnapshot(req.Context(), c.Resources); err == nil {
-			if models, err := studiobootstrap.FilterForCaller(snapshot, caller); err == nil {
-				access := make(map[string]map[string]studiobootstrap.Verdict, len(models))
-				for _, m := range models {
-					access[m.Table] = m.Access
-				}
-				body["access"] = access
-				body["schemaHash"] = snapshot.Hash
-			}
-
-			// Per-column verdicts, so a masked cell can show a lock instead of an empty
-			// string, a readable-but-not-writable input can be disabled rather than
-			// rejected on save, and a column nobody can create is absent from a create
-			// form rather than blocking it.
-			if fields, err := studiobootstrap.FieldVerdictsForCaller(snapshot, caller); err == nil {
-				body["fields"] = fields
-			}
+			addSessionAccess(body, snapshot, caller, perms.Write)
 		}
 
 		w.Header().Set("Cache-Control", "private, no-store")
 		utilities.WriteJSON(w, http.StatusOK, body)
 	}
+}
+
+// addSessionAccess puts the caller's settled access on a session body.
+//
+// Row-independent access per model, so Studio can grey out what is settled and
+// only ask per row where the answer genuinely depends on one. Per-column
+// verdicts, so a masked cell can show a lock instead of an empty string, a
+// readable-but-not-writable input can be disabled rather than rejected on save,
+// and a column nobody can create is absent from a create form rather than
+// blocking it. A Studio role that writes nothing (viewer) is offered no write,
+// whatever the app's own rules would let its token do: the proxy refuses those
+// requests, so offering them would show controls that cannot work.
+func addSessionAccess(body map[string]interface{}, snapshot *studiobootstrap.Snapshot, caller studiobootstrap.Caller, canWrite bool) {
+	if models, err := studiobootstrap.FilterForCaller(snapshot, caller); err == nil {
+		access := make(map[string]map[string]studiobootstrap.Verdict, len(models))
+		for _, m := range models {
+			access[m.Table] = withoutWrites(m.Access, canWrite)
+		}
+		body["access"] = access
+		body["schemaHash"] = snapshot.Hash
+	}
+	if fields, err := studiobootstrap.FieldVerdictsForCaller(snapshot, caller); err == nil {
+		if !canWrite {
+			for _, columns := range fields {
+				for name, verdict := range columns {
+					columns[name] = studiobootstrap.FieldVerdict{Read: verdict.Read, Write: studiobootstrap.VerdictDeny, Create: studiobootstrap.VerdictDeny}
+				}
+			}
+		}
+		body["fields"] = fields
+	}
+}
+
+// withoutWrites is a model's access with create, update and delete denied when
+// the caller's Studio role writes nothing.
+func withoutWrites(access map[string]studiobootstrap.Verdict, canWrite bool) map[string]studiobootstrap.Verdict {
+	if canWrite {
+		return access
+	}
+	out := make(map[string]studiobootstrap.Verdict, len(access))
+	for op, verdict := range access {
+		if op != "read" {
+			verdict = studiobootstrap.VerdictDeny
+		}
+		out[op] = verdict
+	}
+	return out
 }
 
 // bootstrapCaller admits the request and describes who is asking.
@@ -162,7 +192,7 @@ func bootstrapCaller(
 
 // callerFromRequest reads the *application* identity from the token.
 //
-// The app role is what `auth.role()` returns and what a `Role<>` rule tests — the
+// The app role is what `auth.role()` returns and what a `Role<>` rule tests: the
 // developer's namespace, not the Studio role. Using the Studio role here would
 // report access the database will not grant, because the policies never look at it.
 func callerFromRequest(req *http.Request, result Result) studiobootstrap.Caller {

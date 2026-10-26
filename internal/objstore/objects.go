@@ -34,33 +34,73 @@ type ObjectMeta struct {
 	LastAccessedAt string `json:"last_accessed_at"`
 }
 
-// listItem is the wire format returned by listObjects / removeObjects.
-// It nests size and mimetype under "metadata" to match the shape expected by
-// @supatype/client's StorageObject and the Studio's StorageBrowser.
+// listItem is the wire format of one list entry: the storage service's in the
+// supatype repo (packages/storage), field for field, because @supatype/client
+// checks every entry against that shape. A value this store does not have is
+// null, never left out, and size and mimetype are lifted out of metadata as the
+// service lifts them. testdata/node-list-entry.json pins it.
 type listItem struct {
 	ID             string         `json:"id"`
-	Name           string         `json:"name"`
 	BucketID       string         `json:"bucket_id"`
-	Owner          string         `json:"owner,omitempty"`
-	CreatedAt      string         `json:"created_at,omitempty"`
-	UpdatedAt      string         `json:"updated_at,omitempty"`
-	LastAccessedAt string         `json:"last_accessed_at,omitempty"`
+	Name           string         `json:"name"`
+	Owner          *string        `json:"owner"`
 	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      string         `json:"created_at"`
+	UpdatedAt      string         `json:"updated_at"`
+	LastAccessedAt string         `json:"last_accessed_at"`
+	Size           *int64         `json:"size"`
+	Mimetype       *string        `json:"mimetype"`
+}
+
+// removedItem is what a remove answers for each object it removed, as the
+// storage service answers it: the name and the bucket, nothing more.
+type removedItem struct {
+	Name     string `json:"name"`
+	BucketID string `json:"bucket_id"`
+}
+
+// orNull is s, or nil for an empty string, so it encodes as null.
+func orNull(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func metaToListItem(m ObjectMeta) listItem {
+	metadata := map[string]any{"size": m.Size}
+	if m.ContentType != "" {
+		metadata["mimetype"] = m.ContentType
+	}
+	size := m.Size
 	return listItem{
 		ID:             m.ID,
-		Name:           m.Name,
 		BucketID:       m.BucketID,
-		Owner:          m.Owner,
+		Name:           m.Name,
+		Owner:          orNull(m.Owner),
+		Metadata:       metadata,
 		CreatedAt:      m.CreatedAt,
 		UpdatedAt:      m.UpdatedAt,
 		LastAccessedAt: m.LastAccessedAt,
-		Metadata: map[string]any{
-			"size":     m.Size,
-			"mimetype": m.ContentType,
-		},
+		Size:           &size,
+		Mimetype:       orNull(m.ContentType),
+	}
+}
+
+// sidecarlessMeta stands in for the sidecar of a file written without one. The
+// file's own modification time serves for every timestamp, so an entry still
+// has all three, as every entry the storage service lists does; no owner and no
+// type are known, so those stay empty and encode as null.
+func sidecarlessMeta(bucket, objPath string, info os.FileInfo) ObjectMeta {
+	modified := info.ModTime().UTC().Format(time.RFC3339)
+	return ObjectMeta{
+		ID:             syntheticID(bucket, objPath),
+		Name:           objPath,
+		BucketID:       bucket,
+		Size:           info.Size(),
+		CreatedAt:      modified,
+		UpdatedAt:      modified,
+		LastAccessedAt: modified,
 	}
 }
 
@@ -132,8 +172,8 @@ func newID() string {
 // syntheticID derives a stable id for an object that has no sidecar.
 //
 // It used to be newID(), so listing the same directory twice returned a
-// different id for the same file. Anything keying on id — Studio's storage
-// browser does — saw every object replaced on each refresh.
+// different id for the same file. Anything keying on id (Studio's storage
+// browser does) saw every object replaced on each refresh.
 func syntheticID(bucket, objPath string) string {
 	sum := sha256.Sum256([]byte(bucket + "\x00" + objPath))
 	return formatUUID(sum[:16], 8)
@@ -191,7 +231,7 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Normalise content type — strip parameters (e.g. "image/jpeg; charset=…").
+	// Normalise content type: strip parameters (e.g. "image/jpeg; charset=…").
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -258,7 +298,7 @@ func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
 
 // serveFile opens and streams a stored object. Content-Type is set from the
 // saved metadata. Image transform query params (?width, ?height, etc.) are
-// accepted but silently ignored — local dev serves the raw file.
+// accepted but silently ignored, because local dev serves the raw file.
 func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPath string) {
 	fileRel, err := s.objectFileRel(bucket, objPath)
 	if err != nil {
@@ -299,7 +339,7 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		if meta.ContentType != "" {
 			w.Header().Set("Content-Type", meta.ContentType)
 		}
-		// Update last accessed time (best effort — don't fail the request if this errors).
+		// Update last accessed time (best effort: don't fail the request if this errors).
 		meta.LastAccessedAt = time.Now().UTC().Format(time.RFC3339)
 		_ = s.saveObjectMeta(meta, bucket, objPath)
 	}
@@ -312,7 +352,8 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 
 // removeObjects: DELETE /object/{bucket}
 // Requires a valid JWT. Body: { prefixes: string[] }
-// Returns the list of deleted ObjectMeta records (mirrors the Node.js service).
+// Answers each removed object's name and bucket, as the storage service does.
+// An object with no sidecar is removed and reported like any other.
 func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
@@ -324,7 +365,7 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var deleted []listItem
+	deleted := []removedItem{}
 	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
@@ -335,7 +376,6 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for _, prefix := range body.Prefixes {
-		meta, _ := s.loadObjectMeta(bucket, prefix)
 		fileRel, metaRel, err := s.objectPaths(bucket, prefix)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -343,13 +383,8 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := root.Remove(fileRel); err == nil {
 			_ = root.Remove(metaRel)
-			if meta != nil {
-				deleted = append(deleted, metaToListItem(*meta))
-			}
+			deleted = append(deleted, removedItem{Name: prefix, BucketID: bucket})
 		}
-	}
-	if deleted == nil {
-		deleted = []listItem{}
 	}
 	utilities.WriteJSON(w, http.StatusOK, deleted)
 }
@@ -411,13 +446,7 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 		if meta, err := s.loadObjectMeta(bucket, objPath); err == nil {
 			results = append(results, *meta)
 		} else {
-			// Synthesise minimal metadata when the sidecar is missing.
-			results = append(results, ObjectMeta{
-				ID:       syntheticID(bucket, objPath),
-				Name:     objPath,
-				BucketID: bucket,
-				Size:     info.Size(),
-			})
+			results = append(results, sidecarlessMeta(bucket, objPath, info))
 		}
 		return nil
 	})
@@ -533,7 +562,7 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveSignedURL: GET /object/sign/{bucket}/*?token=...
-// No auth required — the token is the credential.
+// No auth required: the token is the credential.
 func (s *store) serveSignedURL(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {

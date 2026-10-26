@@ -172,7 +172,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		return fail(errors.New("serve: SUPATYPE_SERVICE_ROLE_KEY must be set when SUPATYPE_MODE is not dev"))
 	}
 
-	manifest, err := proxy.Load(srvCfg.ManifestPath)
+	manifest, manifestStamp, err := proxy.LoadStamped(srvCfg.ManifestPath)
 	if err != nil {
 		return fail(fmt.Errorf("serve: failed to load route manifest: %w", err))
 	}
@@ -207,7 +207,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from the keyspace")
 	}
 
-	if watchErr := proxy.Watch(srvCfg.ManifestPath, live.ReloadFrom); watchErr != nil {
+	if watchErr := proxy.Watch(srvCfg.ManifestPath, manifestStamp, live.ReloadFrom); watchErr != nil {
 		logrus.WithError(watchErr).Debug("serve: manifest file events unavailable, polling for changes instead")
 	}
 

@@ -17,7 +17,7 @@ import (
 // roleMatrixSHA256 pins the shared role document. The control plane and the CLI
 // carry the same file and pin the same hash, so a change to what a role may do
 // has to be made in all three, or one of them fails.
-const roleMatrixSHA256 = "db2e046d93ac5142cbf5a1920d9715f5f4537ddce8394059dffeceeb4e2ead0b"
+const roleMatrixSHA256 = "ca7e760ce5a24160f34b43bc52660d1d07b8c7a700402d2b32f2b4d908767a58"
 
 type sharedRoleMatrix struct {
 	Roles         []string            `json:"roles"`
@@ -86,9 +86,9 @@ func TestEveryPermissionFollowsTheMatrix(t *testing.T) {
 	}
 }
 
-// A viewer reads content and schema and changes nothing, and always acts as
-// themselves.
-func TestViewerIsReadOnlyAndSelf(t *testing.T) {
+// A viewer reads content and schema and changes nothing. They read as Studio by
+// default, and may act as themselves; never elevated.
+func TestViewerIsReadOnlyAndNeverElevated(t *testing.T) {
 	viewer, ok := PermissionsForRole("viewer")
 	if !ok {
 		t.Fatal("viewer must be a Studio role")
@@ -111,8 +111,8 @@ func TestViewerIsReadOnlyAndSelf(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
-	if mode, ok := resolveActingMode(req, viewer); !ok || mode != ModeSelf {
-		t.Fatalf("viewer default mode = %q, %v; want self", mode, ok)
+	if mode, ok := resolveActingMode(req, viewer); !ok || mode != ModeStudio {
+		t.Fatalf("viewer default mode = %q, %v; want studio", mode, ok)
 	}
 	req.Header.Set(ActingModeHeader, ModeElevated)
 	if _, ok := resolveActingMode(req, viewer); ok {

@@ -257,7 +257,7 @@ func buildStorage(d *Deps) http.Handler {
 			badGateway(w, "bad gateway")
 			return
 		}
-		upstreamProxy(u).ServeHTTP(w, req)
+		upstreamProxy(u).ServeHTTP(safeStorageWriter(w, req), req)
 	})
 }
 

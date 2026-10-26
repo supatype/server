@@ -17,6 +17,10 @@ type Result struct {
 	// Permissions is set when capability came from a membership role. Nil on the
 	// legacy claim path, where the claim only ever meant "is an admin".
 	Permissions *StudioPermissions
+	// Claims is the verified token's claim set, which a request acting as Studio
+	// forwards with the Studio claim added (studio_token.go). Nil when the token
+	// did not verify.
+	Claims jwt.MapClaims
 }
 
 // VerifyBearerToken validates a user JWT and checks studio admin role membership.
@@ -53,10 +57,11 @@ func VerifyBearerToken(token string, jwtSecret string, adminRoles []string) Resu
 			Message: "You don't have permission to access the admin panel",
 			Sub:     sub,
 			Role:    role,
+			Claims:  claims,
 		}
 	}
 
-	return Result{Allowed: true, Message: "ok", Role: role, Sub: sub}
+	return Result{Allowed: true, Message: "ok", Role: role, Sub: sub, Claims: claims}
 }
 
 // VerifyRequest extracts Bearer token from req and verifies it.
@@ -125,17 +130,17 @@ func ResolveAccess(req *http.Request, c Config) Result {
 		}
 	}
 
-	// A role this deployment does not understand grants nothing — see
+	// A role this deployment does not understand grants nothing: see
 	// capability.go for why unknown roles must not inherit.
 	perms, known := PermissionsForRole(role)
 	if !known {
 		return Result{
 			Allowed: false,
-			Message: "Unrecognised Studio role \"" + role + "\" — access denied",
+			Message: "Unrecognised Studio role \"" + role + "\": access denied",
 			Role:    role,
 			Sub:     res.Sub,
 		}
 	}
 
-	return Result{Allowed: true, Message: "ok", Role: role, Sub: res.Sub, Permissions: &perms}
+	return Result{Allowed: true, Message: "ok", Role: role, Sub: res.Sub, Permissions: &perms, Claims: res.Claims}
 }

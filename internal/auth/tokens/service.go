@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"maps"
 	mathRand "math/rand"
 	"net/http"
 	"net/url"
@@ -979,6 +980,9 @@ func SignJWT(config *conf.JWTConfiguration, claims jwt.Claims) (string, error) {
 var schemaLoader = gojsonschema.NewStringLoader(MinimumViableTokenSchema)
 
 func validateTokenClaims(outputClaims map[string]interface{}) error {
+	if err := rejectReservedClaims(maps.Keys(outputClaims)); err != nil {
+		return err
+	}
 	documentLoader := gojsonschema.NewGoLoader(outputClaims)
 	result, err := gojsonschema.Validate(schemaLoader, documentLoader)
 	if err != nil {

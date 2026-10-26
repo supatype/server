@@ -91,10 +91,7 @@ func SessionHandler(c Config) http.HandlerFunc {
 			return
 		}
 
-		perms := legacyAdminPermissions()
-		if result.Permissions != nil {
-			perms = *result.Permissions
-		}
+		perms := permissionsOf(result)
 
 		body := map[string]interface{}{
 			"sub":         result.Sub,
@@ -177,7 +174,10 @@ func bootstrapCaller(
 		return studiobootstrap.Caller{}, result, false
 	}
 
-	return callerFromRequest(req, result), result, true
+	caller := callerFromRequest(req, result)
+	// Acting as Studio, the app's row rules do not limit them (acting_mode.go).
+	caller.AsStudio = reportedMode(req, permissionsOf(result)) == ModeStudio
+	return caller, result, true
 }
 
 // callerFromRequest reads the *application* identity from the token.
@@ -230,6 +230,11 @@ func callerCacheKey(caller studiobootstrap.Caller) string {
 	role := strings.TrimSpace(caller.AppRole)
 	if role == "" {
 		role = "anon"
+	}
+	if caller.AsStudio {
+		// A caller acting as Studio is answered differently from the same caller
+		// acting as themselves, so the two must not share a tag.
+		role += "+studio"
 	}
 	if caller.UserID == "" {
 		return role + "-unauth"

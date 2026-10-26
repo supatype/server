@@ -47,73 +47,81 @@ var namedRules = []proxyRule{
 	{http.MethodGet, "/admin/studio-members", true, true, false},
 	{http.MethodPatch, "/admin/studio-members/abc", true, false, false},
 	{http.MethodDelete, "/admin/studio-members/abc", true, false, false},
-	{http.MethodGet, "/auth/v1/admin/users", true, false, false},
-	{http.MethodPost, "/auth/v1/admin/users", true, false, false},
+	{http.MethodGet, "/auth/v1/admin/users", true, true, false},
+	{http.MethodPost, "/auth/v1/admin/users", true, true, false},
+	// Listing buckets is where browsing files starts; managing them is not content.
+	{http.MethodGet, "/storage/v1/bucket", true, true, true},
+	{http.MethodGet, "/storage/v1/bucket/media", true, true, true},
+	{http.MethodPost, "/storage/v1/bucket", true, true, false},
+	{http.MethodPut, "/storage/v1/bucket/media", true, true, false},
+	{http.MethodDelete, "/storage/v1/bucket/media", true, true, false},
+	{http.MethodPost, "/storage/v1/bucket/media/empty", true, true, false},
+	// Studio membership stays the admin's.
+	{http.MethodPost, "/admin/studio-members", true, false, false},
 }
 
 // The self-host control plane. It runs as the service role: it pushes schema,
 // deploys and deletes functions, and its reads include function secrets, so a
-// read is as privileged as a write.
+// read is as privileged as a write. Admins and developers administer the project
+// (owner decision 2026-10-21); editors never do.
 var platformRules = []proxyRule{
-	{http.MethodGet, "/platform/v1/projects/ref/status", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/ref/schema/migrations", true, false, false},
-	{http.MethodPost, "/platform/v1/projects/ref/schema/push", true, false, false},
-	{http.MethodPost, "/platform/v1/projects/ref/schema/rollback", true, false, false},
-	{http.MethodPost, "/platform/v1/projects/ref/functions/deploy", true, false, false},
-	{http.MethodDelete, "/platform/v1/projects/ref/functions/hello", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/ref/functions/env", true, false, false},
-	{http.MethodPost, "/platform/v1/projects/ref/functions/env", true, false, false},
-	{http.MethodOptions, "/platform/v1/projects/ref/functions/env", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/ref/status", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/schema/migrations", true, true, false},
+	{http.MethodPost, "/platform/v1/projects/ref/schema/push", true, true, false},
+	{http.MethodPost, "/platform/v1/projects/ref/schema/rollback", true, true, false},
+	{http.MethodPost, "/platform/v1/projects/ref/functions/deploy", true, true, false},
+	{http.MethodDelete, "/platform/v1/projects/ref/functions/hello", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/functions/env", true, true, false},
+	{http.MethodPost, "/platform/v1/projects/ref/functions/env", true, true, false},
+	{http.MethodOptions, "/platform/v1/projects/ref/functions/env", true, true, false},
 }
 
-// The Realtime Inspector's control-plane routes: the one narrow exception to
-// "the control plane is admin only". Developers debug realtime, so they may
-// read channels, connections and the stream, and send a test broadcast; every
-// other platform path, realtime settings included, stays admin only.
+// The Realtime Inspector's control-plane routes. Developers reach them as part
+// of the control plane; editors and viewers never do.
 var realtimeInspectorRules = []proxyRule{
 	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels", true, true, false},
 	{http.MethodGet, "/platform/v1/projects/ref/realtime/connections", true, true, false},
 	{http.MethodGet, "/platform/v1/projects/ref/realtime/stream", true, true, false},
 	{http.MethodPost, "/platform/v1/projects/ref/realtime/broadcast", true, true, false},
 	{http.MethodGet, "/platform/v1/project", true, true, false},
-	{http.MethodGet, "/platform/v1/projects/ref/realtime/settings", true, false, false},
-	{http.MethodPatch, "/platform/v1/projects/ref/realtime/settings", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/ref/realtime/metrics", true, false, false},
-	{http.MethodPost, "/platform/v1/projects/ref/realtime/channels", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/ref/realtime/broadcast", true, false, false},
-	{http.MethodPost, "/platform/v1/project", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/settings", true, true, false},
+	{http.MethodPatch, "/platform/v1/projects/ref/realtime/settings", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/metrics", true, true, false},
+	{http.MethodPost, "/platform/v1/projects/ref/realtime/channels", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/broadcast", true, true, false},
+	{http.MethodPost, "/platform/v1/project", true, true, false},
 	// Matched on whole segments: a tail that climbs out of the inspector's
 	// routes is judged as the platform path it is.
-	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/../../schema/migrations", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/../realtime/channels", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/%2e%2e/realtime/channels", true, false, false},
-	{http.MethodGet, "/platform/v1/projects/ref/x/realtime/channels", true, false, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/../../schema/migrations", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/realtime/channels/", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/../realtime/channels", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/%2e%2e/realtime/channels", true, true, false},
+	{http.MethodGet, "/platform/v1/projects/ref/x/realtime/channels", true, true, false},
 }
 
 // Everything else behind the gateway is administration that only the service
-// role can do, and a route added later must land here rather than fall through
-// to "may write content rows".
+// role can do, for admins and developers, and a route added later must land here
+// rather than fall through to "may write content rows".
 var serviceRoleRules = []proxyRule{
-	{http.MethodGet, "/functions/v1/admin/list", true, false, false},
-	{http.MethodGet, "/functions/v1/admin/env", true, false, false},
-	{http.MethodPost, "/functions/v1/admin/env", true, false, false},
-	{http.MethodGet, "/admin/v1/config/rest", true, false, false},
-	{http.MethodPatch, "/admin/v1/config/rest", true, false, false},
-	{http.MethodPost, "/admin/v1/database/credentials/first-view", true, false, false},
-	{http.MethodGet, "/admin/v1/database/connection", true, false, false},
-	{http.MethodPost, "/internal/v0hooks/send-email", true, false, false},
-	{http.MethodGet, "/some/route/added/later", true, false, false},
-	{http.MethodGet, "/", true, false, false},
-	{http.MethodGet, "", true, false, false},
+	{http.MethodGet, "/functions/v1/admin/list", true, true, false},
+	{http.MethodGet, "/functions/v1/admin/env", true, true, false},
+	{http.MethodPost, "/functions/v1/admin/env", true, true, false},
+	{http.MethodGet, "/admin/v1/config/rest", true, true, false},
+	{http.MethodPatch, "/admin/v1/config/rest", true, true, false},
+	{http.MethodPost, "/admin/v1/database/credentials/first-view", true, true, false},
+	{http.MethodGet, "/admin/v1/database/connection", true, true, false},
+	{http.MethodPost, "/internal/v0hooks/send-email", true, true, false},
+	{http.MethodGet, "/some/route/added/later", true, true, false},
+	{http.MethodGet, "/", true, true, false},
+	{http.MethodGet, "", true, true, false},
 	// A prefix only counts on a segment boundary.
-	{http.MethodGet, "/rest/v1x", true, false, false},
-	{http.MethodPost, "/sqlx", true, false, false},
-	{http.MethodGet, "/functions/v1admin/env", true, false, false},
+	{http.MethodGet, "/rest/v1x", true, true, false},
+	{http.MethodPost, "/sqlx", true, true, false},
+	{http.MethodGet, "/functions/v1admin/env", true, true, false},
 	// The router does not clean paths, so neither does the rule: this one is
 	// routed to the control plane, whatever its tail says.
-	{http.MethodGet, "/platform/v1/../rest/v1/posts", true, false, false},
-	{http.MethodGet, "//platform/v1/projects/ref/functions/env", true, false, false},
+	{http.MethodGet, "/platform/v1/../rest/v1/posts", true, true, false},
+	{http.MethodGet, "//platform/v1/projects/ref/functions/env", true, true, false},
 }
 
 func TestAllowsRequestMatrix(t *testing.T) {
@@ -158,6 +166,7 @@ func proxyThroughRouter(t *testing.T, role string) func(method, target string) (
 	t.Helper()
 	token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
 	cfg := Config{
+		Audit:          &fakeAuditor{},
 		JWTSecret:      testSecret,
 		ServiceRoleKey: "service-role-key",
 		AdminRoles:     DefaultAdminRoles,
@@ -184,25 +193,26 @@ func proxyThroughRouter(t *testing.T, role string) func(method, target string) (
 	}
 }
 
-func TestProxyRefusesPlatformToNonAdmins(t *testing.T) {
-	for _, role := range []string{"developer", "editor"} {
-		call := proxyThroughRouter(t, role)
-		for _, rule := range platformRules {
-			code, landed := call(rule.method, "/studio/proxy"+rule.path)
-			if code != http.StatusForbidden || landed != "" {
-				t.Errorf("%s %s %s: got %d, landed at %q; want 403 and no upstream",
-					role, rule.method, rule.path, code, landed)
-			}
-		}
-		if code, landed := call(http.MethodPost, "/studio/proxy/rest/v1/posts"); code != http.StatusOK || landed != "rest" {
-			t.Errorf("%s must still write content rows, got %d at %q", role, code, landed)
+// The control plane is for admins and developers (owner decision 2026-10-21);
+// an editor reaches none of it, and still writes content rows.
+func TestProxyRefusesPlatformToEditors(t *testing.T) {
+	editor := proxyThroughRouter(t, "editor")
+	for _, rule := range platformRules {
+		code, landed := editor(rule.method, "/studio/proxy"+rule.path)
+		if code != http.StatusForbidden || landed != "" {
+			t.Errorf("editor %s %s: got %d, landed at %q; want 403 and no upstream", rule.method, rule.path, code, landed)
 		}
 	}
+	if code, landed := editor(http.MethodPost, "/studio/proxy/rest/v1/posts"); code != http.StatusOK || landed != "rest" {
+		t.Errorf("editor must still write content rows, got %d at %q", code, landed)
+	}
 
-	admin := proxyThroughRouter(t, RoleAdmin)
-	for _, rule := range platformRules {
-		if code, landed := admin(rule.method, "/studio/proxy"+rule.path); code != http.StatusOK || landed != "platform" {
-			t.Errorf("admin %s %s: got %d at %q, want the control plane", rule.method, rule.path, code, landed)
+	for _, role := range []string{RoleAdmin, "developer"} {
+		call := proxyThroughRouter(t, role)
+		for _, rule := range platformRules {
+			if code, landed := call(rule.method, "/studio/proxy"+rule.path); code != http.StatusOK || landed != "platform" {
+				t.Errorf("%s %s %s: got %d at %q, want the control plane", role, rule.method, rule.path, code, landed)
+			}
 		}
 	}
 }
@@ -224,6 +234,7 @@ func TestProxyJudgesTheRoutedPath(t *testing.T) {
 func TestProxyServedWithoutAMountJudgesTheEscapedPath(t *testing.T) {
 	token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
 	cfg := Config{
+		Audit:          &fakeAuditor{},
 		JWTSecret:      testSecret,
 		ServiceRoleKey: "service-role-key",
 		AdminRoles:     DefaultAdminRoles,

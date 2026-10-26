@@ -10,13 +10,14 @@ import (
 )
 
 // Who may read and change the allowed origins: anyone with schema-level trust reads them, and only
-// the roles the shared matrix gives ManageDomains (owner and admin) change them. The Cloud control
-// plane, having checked the member's role itself, comes in as the project with the service role key.
+// the roles the shared matrix gives ManageDomains (owner, admin and developer) change them. The
+// Cloud control plane, having checked the member's role itself, comes in as the project with the
+// service role key.
 func TestCORSAccessFollowsTheRoleMatrix(t *testing.T) {
 	token := signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
 	for role, want := range map[string]struct{ read, write bool }{
 		"admin":     {true, true},
-		"developer": {true, false},
+		"developer": {true, true},
 		"viewer":    {true, false},
 		"editor":    {false, false},
 		"unknown":   {false, false},

@@ -137,10 +137,7 @@ func requireMemberAdmin(
 
 	// No Permissions means the deployment is still on the legacy claim path,
 	// where the claim only ever meant "is an admin".
-	perms := legacyAdminPermissions()
-	if result.Permissions != nil {
-		perms = *result.Permissions
-	}
+	perms := permissionsOf(result)
 
 	allowed := perms.ManageMembers
 	if !mutating {

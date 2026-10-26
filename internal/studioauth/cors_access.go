@@ -28,10 +28,7 @@ func CORSAccess(c Config) func(w http.ResponseWriter, req *http.Request, mutatin
 			utilities.WriteJSON(w, status, errorBody(result.Message))
 			return false
 		}
-		perms := legacyAdminPermissions()
-		if result.Permissions != nil {
-			perms = *result.Permissions
-		}
+		perms := permissionsOf(result)
 		allowed := perms.ManageDomains
 		if !mutating {
 			allowed = perms.ManageDomains || perms.SchemaView

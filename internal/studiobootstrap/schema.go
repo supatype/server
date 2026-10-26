@@ -14,7 +14,7 @@ import (
 
 // ErrNoSchemaState means the project has never been pushed, so there is nothing
 // for Studio to render yet.
-var ErrNoSchemaState = errors.New("no schema state — push the schema first")
+var ErrNoSchemaState = errors.New("no schema state: push the schema first")
 
 const readTimeout = 5 * time.Second
 
@@ -114,6 +114,9 @@ func FilterForCaller(snapshot *Snapshot, caller Caller) ([]Model, error) {
 		reachable := false
 		for _, op := range operations {
 			v := Evaluate(m.Annotations.Platform.Access[op], caller)
+			if caller.AsStudio {
+				v = VerdictAllow
+			}
 			access[op] = v
 			if v != VerdictDeny {
 				reachable = true

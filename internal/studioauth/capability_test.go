@@ -30,12 +30,15 @@ func TestRolePermissionsMatchTheControlPlane(t *testing.T) {
 		"admin": {
 			Read: true, Write: true, SchemaView: true, PushSchema: true, Deploy: true,
 			SQLEditor: true, ElevatedSQL: true, RealtimeInspect: true, ViewLogs: true,
-			ManageKeys: true, ManageDomains: true, ManageMembers: true, Billing: true,
+			ManageKeys: true, ManageDomains: true, ManageUsers: true, ManageBuckets: true,
+			ManageMembers: true, Administer: true, Billing: true,
 			OrgSettings: true, CreateProject: true, DeleteProject: true, ViewUsage: true,
 		},
 		"developer": {
 			Read: true, Write: true, SchemaView: true, PushSchema: true, Deploy: true,
-			SQLEditor: true, RealtimeInspect: true, ViewLogs: true, CreateProject: true, ViewUsage: true,
+			SQLEditor: true, ElevatedSQL: true, RealtimeInspect: true, ViewLogs: true,
+			ManageKeys: true, ManageDomains: true, ManageUsers: true, ManageBuckets: true, Administer: true,
+			CreateProject: true, ViewUsage: true,
 		},
 		"editor": {Read: true, Write: true},
 		"viewer": {Read: true, SchemaView: true, ViewLogs: true},
@@ -55,15 +58,20 @@ func TestRolePermissionsMatchTheControlPlane(t *testing.T) {
 }
 
 // Only admin may hand out access. A developer who could promote themselves would
-// make the whole distinction cosmetic.
+// make the whole distinction cosmetic. Developers hold everything else an admin
+// does: elevated SQL, users, buckets, keys and administration (owner decision
+// 2026-10-21).
 func TestOnlyAdminManagesMembership(t *testing.T) {
 	for _, role := range KnownStudioRoles() {
 		perms, _ := PermissionsForRole(role)
 		if perms.ManageMembers != (role == RoleAdmin) {
 			t.Fatalf("role %q: ManageMembers=%v", role, perms.ManageMembers)
 		}
-		if perms.ElevatedSQL != (role == RoleAdmin) {
-			t.Fatalf("role %q: ElevatedSQL=%v", role, perms.ElevatedSQL)
+		builds := role == RoleAdmin || role == "developer"
+		if perms.ElevatedSQL != builds || perms.ManageUsers != builds ||
+			perms.ManageBuckets != builds || perms.ManageKeys != builds || perms.Administer != builds ||
+			perms.ManageDomains != builds {
+			t.Fatalf("role %q: %+v", role, perms)
 		}
 	}
 }
@@ -122,6 +130,7 @@ func TestVerifyHandlerReportsRolePermissions(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	cfg := Config{
+		Audit:      &fakeAuditor{},
 		JWTSecret:  testSecret,
 		AdminRoles: DefaultAdminRoles,
 		StudioRole: func(string) (string, bool) { return "editor", true },
@@ -161,6 +170,7 @@ func TestVerifyHandlerDeniesUnknownRole(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	cfg := Config{
+		Audit:      &fakeAuditor{},
 		JWTSecret:  testSecret,
 		AdminRoles: DefaultAdminRoles,
 		StudioRole: func(string) (string, bool) { return "superuser", true },
@@ -185,6 +195,7 @@ func TestProxyHandlerEnforcesRoleOnWrites(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	cfg := Config{
+		Audit:          &fakeAuditor{},
 		JWTSecret:      testSecret,
 		ServiceRoleKey: "service-role-key",
 		AdminRoles:     DefaultAdminRoles,

@@ -17,14 +17,21 @@ import (
 // self-hosted or managed. Self-host grants admin, developer, editor and viewer;
 // owner and billing are Cloud org roles and grant nothing here.
 //
+// Studio roles decide what a Studio user may do in Studio; the app's row rules
+// do not limit Studio editing, its field rules (masking) still apply (owner
+// decision 2026-10-21, acting_mode.go).
+//
 //	Capability                                   admin  developer  editor  viewer
-//	Read content rows                             yes      yes       yes     yes
-//	Edit content rows                             yes      yes       yes     no
+//	Read content rows and files                   yes      yes       yes     yes
+//	Edit content rows and files                   yes      yes       yes     no
 //	Schema and migration history view             yes      yes       no      yes
-//	SQL editor (elevated: RLS does not apply)     yes      yes       no      no
-//	Elevated SQL, DDL, destructive                yes      no        no      no
-//	Studio members and keys                       yes      no        no      no
+//	SQL editor, elevated SQL                      yes      yes       no      no
+//	Storage bucket management                     yes      yes       no      no
+//	Auth users administration                     yes      yes       no      no
+//	Project keys                                  yes      yes       no      no
+//	Studio members (granting Studio roles)        yes      no        no      no
 //	Realtime Inspector (channels, stream, test)   yes      yes       no      no
+//	Administration (admin API, control plane)     yes      yes       no      no
 //
 // Unknown roles get nothing. A typo in a `studio_members` row must fail closed
 // rather than inherit whatever the nearest known role allows.
@@ -32,7 +39,7 @@ import (
 // StudioPermissions is the capability set Studio renders from. Its JSON names
 // are the shared document's permission names, one field each.
 type StudioPermissions struct {
-	// Read and Write cover content rows, which is to say the data plane.
+	// Read and Write cover content rows and files, which is to say the data plane.
 	Read  bool `json:"read"`
 	Write bool `json:"write"`
 	// SchemaView covers the schema and migration history views.
@@ -44,7 +51,8 @@ type StudioPermissions struct {
 	// role: row level security does not apply, so its holder can read and change
 	// every row. The owner granted it to developers knowingly (RX1).
 	SQLEditor bool `json:"sqlEditor"`
-	// ElevatedSQL covers DDL and anything that bypasses RLS.
+	// ElevatedSQL is acting as the service role for data requests: the elevated
+	// mode, where no rule applies, field masking included.
 	ElevatedSQL bool `json:"elevatedSql"`
 	// RealtimeInspect covers the Realtime Inspector: channels, connections,
 	// the live message stream and test broadcasts. Not realtime settings.
@@ -52,8 +60,18 @@ type StudioPermissions struct {
 	ViewLogs        bool `json:"viewLogs"`
 	ManageKeys      bool `json:"manageKeys"`
 	ManageDomains   bool `json:"manageDomains"`
-	// ManageMembers covers Studio membership and user administration.
+	// ManageUsers covers the project's own users, through its auth admin API.
+	ManageUsers bool `json:"manageUsers"`
+	// ManageBuckets covers creating, changing and deleting storage buckets.
+	// Listing them is Read, since browsing files starts there.
+	ManageBuckets bool `json:"manageBuckets"`
+	// ManageMembers covers Studio membership: granting and revoking Studio roles.
 	ManageMembers bool `json:"manageMembers"`
+	// Administer covers service-role administration: the admin API, the
+	// self-host control plane, function administration, and any route no other
+	// permission names, so a route added later starts with the admins and
+	// developers who administer the project.
+	Administer bool `json:"administer"`
 	// The rest are Cloud organisation powers. Self-host has no organisation, so
 	// nothing here acts on them; they are carried so the document maps whole.
 	Billing       bool `json:"billing"`
@@ -83,7 +101,8 @@ func KnownStudioRoles() []string {
 // dataPlanePrefixes are the routes that carry content: rows, files, realtime and
 // function invocation. Every role works with content, so these are the only
 // routes that `Read` and `Write` open. Function administration lives under
-// `/functions/v1/admin` and is not content.
+// `/functions/v1/admin` and bucket management under `/storage/v1/bucket`, and
+// neither is content.
 var dataPlanePrefixes = []string{"/rest/v1", "/graphql/v1", "/storage/v1", "/realtime/v1", "/functions/v1"}
 
 // AllowsRequest reports whether a capability set covers one proxied request.
@@ -96,63 +115,76 @@ var dataPlanePrefixes = []string{"/rest/v1", "/graphql/v1", "/storage/v1", "/rea
 // `resolvePermission`, which refuses any path it does not name. Everything else
 // behind the gateway (the self-host control plane at `/platform/v1`, the admin
 // API at `/admin/v1`, function administration, and any route added later) is
-// service-role administration and needs `ElevatedSQL`, the capability that
-// already means "may act as the service role": it is what resolveActingMode
-// requires to elevate. A new route therefore starts admin-only rather than
-// inheriting "may write content rows".
+// service-role administration and needs `Administer`, so a new route starts
+// with admins and developers rather than inheriting "may write content rows".
 func AllowsRequest(perms StudioPermissions, method, path string) bool {
-	readOnly := method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
-
+	if allowed, named := allowsNamedRoute(perms, method, path); named {
+		return allowed
+	}
 	switch {
-	// The SQL runner connects with the project's admin DSN, so every query
-	// through it is elevated regardless of who asked: row level security does not
-	// apply to it. The owner chose to open it to every role holding SQLEditor,
-	// developers included (RX1), knowing it lets them read and change every row.
-	case under(path, "/sql"):
-		return perms.SQLEditor
-
-	// The allow-listed admin operations that need a superuser connection (SQ2):
-	// enabling an extension, and RLS or policy changes on the auth and storage
-	// tables. The same roles that hold the SQL editor reach them, and each is
-	// recorded as elevated.
-	case under(path, "/studio-admin"):
-		return perms.SQLEditor
-
-	// The catalogue's introspect query alone: the tables and columns behind Data
-	// Explorer and the schema screens, for every role that may read rows. Editors
-	// use those screens without holding schema view.
-	case under(path, "/metadata/introspect"):
-		return perms.Read
-
-	// Studio's named, read-only schema queries (RQ3): catalogs and the ledger,
-	// never rows, for every role that may see the schema.
-	case under(path, "/metadata"):
-		return perms.SchemaView
-
-	// Studio membership and project keys.
-	case under(path, "/admin/studio-members"):
-		if readOnly {
-			return perms.ManageMembers || perms.SchemaView
-		}
-		return perms.ManageMembers
-
-	// User administration is a separate capability from writing content rows.
-	case under(path, "/auth/v1"):
-		return perms.ManageMembers
-
 	case isDataPlane(path):
-		if readOnly {
-			return perms.Read
-		}
-		return perms.Write
-
+		return allowsContent(perms, method, path)
 	// The one named exception to "the control plane is admin only".
 	case IsRealtimeInspectorRoute(method, path):
 		return perms.RealtimeInspect
-
 	default:
-		return perms.ElevatedSQL
+		return perms.Administer
 	}
+}
+
+// allowsNamedRoute answers for the routes with a rule of their own, and reports
+// whether path was one of them.
+func allowsNamedRoute(perms StudioPermissions, method, path string) (allowed, named bool) {
+	switch {
+	// The SQL runner connects with the project's admin DSN, so every query
+	// through it is elevated regardless of who asked (RX1). The allow-listed
+	// admin operations that need a superuser connection (SQ2) go with it.
+	case under(path, "/sql"), under(path, "/studio-admin"):
+		return perms.SQLEditor, true
+	// The catalogue's introspect query alone: the tables and columns behind Data
+	// Explorer and the schema screens, for every role that may read rows.
+	case under(path, "/metadata/introspect"):
+		return perms.Read, true
+	// Studio's named, read-only schema queries (RQ3): catalogs and the ledger.
+	case under(path, "/metadata"):
+		return perms.SchemaView, true
+	case under(path, "/admin/studio-members"):
+		return perms.ManageMembers || (isReadOnly(method) && perms.SchemaView), true
+	// The project's own users are a separate capability from content rows.
+	case under(path, "/auth/v1"):
+		return perms.ManageUsers, true
+	// Listing buckets is where browsing files starts; changing them is not content.
+	case under(path, "/storage/v1/bucket"):
+		return perms.ManageBuckets || (isReadOnly(method) && perms.Read), true
+	}
+	return false, false
+}
+
+// allowsContent judges one data-plane request: a read needs Read, anything else
+// Write. Listing a bucket's objects and signing a download URL are POSTs that
+// only read, so a viewer may browse files.
+func allowsContent(perms StudioPermissions, method, path string) bool {
+	if isReadOnly(method) || isStorageReadPost(method, path) {
+		return perms.Read
+	}
+	return perms.Write
+}
+
+// The storage POSTs that only read: whole-path patterns whose segments are
+// neither dot segments nor percent-encoded, so nothing a URL parser would later
+// resolve differently can pass for one.
+var (
+	storageListObjects = regexp.MustCompile(`^/storage/v1/object/list/[^/.%][^/%]*$`)
+	storageSignObject  = regexp.MustCompile(`^/storage/v1/object/sign/[^/.%][^/%]*(/[^/.%][^/%]*)+$`)
+)
+
+func isStorageReadPost(method, path string) bool {
+	return method == http.MethodPost &&
+		(storageListObjects.MatchString(path) || storageSignObject.MatchString(path))
+}
+
+func isReadOnly(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 }
 
 // The Realtime Inspector's control-plane routes. Whole-path patterns, so a
@@ -248,4 +280,13 @@ func routedPath(req *http.Request) string {
 func legacyAdminPermissions() StudioPermissions {
 	perms, _ := PermissionsForRole(RoleAdmin)
 	return perms
+}
+
+// permissionsOf is the capability set an admitted caller acts with: their
+// membership role's, or on the legacy claim path an admin's.
+func permissionsOf(result Result) StudioPermissions {
+	if result.Permissions != nil {
+		return *result.Permissions
+	}
+	return legacyAdminPermissions()
 }

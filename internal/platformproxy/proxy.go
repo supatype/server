@@ -15,7 +15,7 @@ import (
 
 // SecretHeader carries the control plane secret on every forwarded request.
 // The control plane reads the same name.
-const SecretHeader = "X-Supatype-Control-Plane-Secret"
+const SecretHeader = "X-Supatype-Control-Plane-Secret" // #nosec G101 -- a header name, not a credential
 
 // Handler returns a chi router for /platform/v1/* protected by service-role auth.
 //

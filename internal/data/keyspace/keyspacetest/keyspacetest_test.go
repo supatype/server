@@ -162,6 +162,14 @@ func TestTenantsAndSets(t *testing.T) {
 	if got := c.SetMembers("mau:2026-08"); !reflect.DeepEqual(got, []string{"user-1"}) {
 		t.Errorf("members = %v, want the one user counted once", got)
 	}
+	// The fake refuses what the real client refuses, so a caller computing a
+	// past expiry fails here and not first against a live server.
+	if err := c.AddToExpiringSet(ctx, "mau:2026-08", "user-2", time.Now().Add(-time.Hour)); err == nil {
+		t.Error("a past expiry was accepted")
+	}
+	if got := c.SetMembers("mau:2026-08"); len(got) != 1 {
+		t.Errorf("members = %v, want the refused add left out", got)
+	}
 	if got := c.SetMembers("mau:never"); len(got) != 0 {
 		t.Errorf("an empty set = %v", got)
 	}
@@ -202,7 +210,7 @@ func TestTheFailuresATestCanAskFor(t *testing.T) {
 	if _, err := c.GetTenantConfig(ctx, "proj-a"); !errors.Is(err, ErrFailed) {
 		t.Errorf("GetTenantConfig: %v", err)
 	}
-	if err := c.AddToExpiringSet(ctx, "k", "m", time.Now()); !errors.Is(err, ErrFailed) {
+	if err := c.AddToExpiringSet(ctx, "k", "m", time.Now().Add(time.Hour)); !errors.Is(err, ErrFailed) {
 		t.Errorf("AddToExpiringSet: %v", err)
 	}
 

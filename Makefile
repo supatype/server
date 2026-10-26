@@ -68,8 +68,7 @@ sec: check-gosec # Check for security vulnerabilities
 
 # Pinned for the same reason as staticcheck: `@latest` reported itself as `Gosec : dev` and
 # gained a new check (G703 taint analysis) on a day nobody touched this repository, failing a
-# pull request about field validators on pre-existing code. v2.29.0 is the newest release whose
-# go directive 1.25 satisfies.
+# pull request about field validators on pre-existing code. Raise it deliberately, not by drift.
 GOSEC_VERSION ?= v2.29.0
 
 check-gosec:
@@ -80,12 +79,11 @@ vulncheck: check-govulncheck # Check for known vulnerabilities
 	govulncheck $(CHECK_FILES)
 
 # Pinned for the third time, for the third tool, for the same reason: `@latest`
-# resolved to golang.org/x/vuln v1.8.0, whose go directive is 1.26.0, while
-# go.mod pins 1.25.13 and CI sets GOTOOLCHAIN=local. `go install` then refuses
-# before it has downloaded anything, and every build in the repository went red
-# on a day nobody touched it. v1.7.0 is the newest release whose go directive
-# 1.25.0 satisfies. Raise this with the go directive, together.
-GOVULNCHECK_VERSION ?= v1.7.0
+# once resolved to a release whose go directive was newer than go.mod's, and CI
+# sets GOTOOLCHAIN=local, so `go install` refused before it had downloaded
+# anything and every build went red on a day nobody touched it. v1.9.0 needs go
+# 1.26.0, which go.mod's 1.26.9 satisfies. Raise this with the go directive, together.
+GOVULNCHECK_VERSION ?= v1.9.0
 
 check-govulncheck:
 	@command -v govulncheck >/dev/null 2>&1 \
@@ -101,10 +99,10 @@ unused: | check-staticcheck # Look for unused code
 static: | check-staticcheck
 	staticcheck ./...
 
-# Pinned, not @latest: honnef.co/go/tools v0.8.x requires go >= 1.26, while go.mod pins 1.25.13
-# and CI sets GOTOOLCHAIN=local, so @latest began failing the build on a day nobody touched it.
-# v0.7.0 is the newest release that builds on 1.25. Raise this with the go directive, together.
-STATICCHECK_VERSION ?= v0.7.0
+# Pinned, not @latest: a release whose go directive outruns go.mod's fails the build under
+# CI's GOTOOLCHAIN=local on a day nobody touched it. v0.8.2 needs go 1.26.0, which go.mod's
+# 1.26.9 satisfies. Raise this with the go directive, together.
+STATICCHECK_VERSION ?= v0.8.2
 
 check-staticcheck:
 	@command -v staticcheck >/dev/null 2>&1 \

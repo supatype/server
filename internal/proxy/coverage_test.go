@@ -187,6 +187,39 @@ func TestForwardedForAppendsToAnExistingChain(t *testing.T) {
 	}
 }
 
+// What the upstream receives, not what the helper writes: the proxy itself must
+// not add the client a second time, and the edge's forwarding headers must
+// survive the hop alongside this one's.
+func TestTheUpstreamSeesEachHopOnce(t *testing.T) {
+	var got http.Header
+	upstream := echo(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
+	req.Host = "api.example.com"
+	req.RemoteAddr = "203.0.113.7:1"
+	req.Header.Set("X-Forwarded-For", "198.51.100.1")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("Forwarded", "for=198.51.100.1;proto=https")
+	New(mustParse(t, upstream.URL), ProxyOpts{}).ServeHTTP(httptest.NewRecorder(), req)
+
+	if xff := got.Get("X-Forwarded-For"); xff != "198.51.100.1, 203.0.113.7" {
+		t.Errorf("X-Forwarded-For = %q, want each hop exactly once", xff)
+	}
+	if proto := got.Get("X-Forwarded-Proto"); proto != "https" {
+		t.Errorf("X-Forwarded-Proto = %q, want the edge's", proto)
+	}
+	if host := got.Get("X-Forwarded-Host"); host != "api.example.com" {
+		t.Errorf("X-Forwarded-Host = %q", host)
+	}
+	want := []string{"for=198.51.100.1;proto=https", `for=203.0.113.7;proto=https;host="api.example.com"`}
+	if fwd := got.Values("Forwarded"); strings.Join(fwd, "|") != strings.Join(want, "|") {
+		t.Errorf("Forwarded = %#v, want %#v", fwd, want)
+	}
+}
+
 // Headers the edge already set are its answer, not this hop's to overwrite.
 func TestExistingForwardedProtoAndHostAreLeftAlone(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

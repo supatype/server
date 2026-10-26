@@ -75,7 +75,7 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 }
 
 // prepareUpstreamWebSocketRequest rewrites r for forwarding over a raw TCP dial,
-// mirroring proxy.New's Director. http.Request.Write prefers RequestURI when set;
+// mirroring rewriteForUpstream. http.Request.Write prefers RequestURI when set;
 // chi StripPrefix only updates URL.Path, so we must clear RequestURI here.
 func prepareUpstreamWebSocketRequest(r *http.Request, target *url.URL, clientFacingHost string) {
 	r.RequestURI = ""

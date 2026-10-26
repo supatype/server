@@ -162,24 +162,16 @@ type admission struct {
 func ProxyHandler(inner http.Handler, c Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		path := routedPath(req)
+		if isTokenRefresh(req, path) {
+			inner.ServeHTTP(w, forwardedCopy(req))
+			return
+		}
 		adm, ok := admitProxied(w, req, c, path)
 		if !ok {
 			return
 		}
 
-		// Clone already deep-copies the URL, so the three branches that copied it
-		// again are gone: two of them could not run, because net/http never hands
-		// a server handler a request without one. An empty path is not a valid
-		// request-target, so that default stays.
-		req2 := req.Clone(req.Context())
-		if req2.URL.Path == "" {
-			req2.URL.Path = "/"
-		}
-
-		// Before any branch, so no path through the proxy carries a browser's
-		// own claim about who it is.
-		stripStudioIdentity(req2.Header)
-
+		req2 := forwardedCopy(req)
 		mode, ok := forwardIdentity(w, req, req2, c, adm, path)
 		if !ok {
 			return
@@ -188,6 +180,36 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 		w.Header().Set(ActingModeHeader, mode)
 		inner.ServeHTTP(w, req2)
 	})
+}
+
+// forwardedCopy is the request the proxy sends upstream.
+//
+// Clone already deep-copies the URL. An empty path is not a valid
+// request-target, so it becomes the root. The Studio identity headers go before
+// anything else, so no path through the proxy carries a browser's own claim
+// about who it is.
+func forwardedCopy(req *http.Request) *http.Request {
+	req2 := req.Clone(req.Context())
+	if req2.URL.Path == "" {
+		req2.URL.Path = "/"
+	}
+	stripStudioIdentity(req2.Header)
+	return req2
+}
+
+// isTokenRefresh reports whether a request is GoTrue's refresh grant.
+//
+// Studio's client sends every auth call through the proxy, its token refresh
+// included. A refresh carries no access token, only the refresh token, so
+// admission refused it, and the client then cleared the session it shares with
+// the sign-in client: the next reload showed the sign-in screen. The grant is
+// the same public endpoint the gateway serves at /auth/v1/token, its credential
+// is the refresh token itself, and it is forwarded with the caller's own
+// headers, so passing it through grants nothing the caller did not already have.
+func isTokenRefresh(req *http.Request, path string) bool {
+	return req.Method == http.MethodPost &&
+		path == "/auth/v1/token" &&
+		req.URL.Query().Get("grant_type") == "refresh_token"
 }
 
 // forwardIdentity puts the credentials and identity headers for one admitted
@@ -295,9 +317,17 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 // recorded as elevated. So is the read-only metadata catalogue (RQ3), which needs
 // the service role to reach the runner's connection; being read-only, it is not
 // recorded as elevated.
+//
+// An upstream that admits only the service role (isServiceRoleOnly) acts
+// elevated for a caller who may elevate, whichever mode they chose: acting as
+// yourself applies to project rows, not to administration the role holds. A
+// role that cannot elevate is not elevated by these routes either.
 func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
 	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms}
 	if under(path, "/sql") || under(path, "/metadata") || under(path, "/studio-admin") {
+		return adm, true
+	}
+	if perms.ElevatedSQL && isServiceRoleOnly(req.Method, path) {
 		return adm, true
 	}
 	mode, ok := resolveActingMode(req, perms)

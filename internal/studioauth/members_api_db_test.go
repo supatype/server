@@ -161,8 +161,8 @@ func TestMembersAPI(t *testing.T) {
 	t.Run("self-change is refused", func(t *testing.T) {
 		code, body := call(apiAdmin, http.MethodPatch,
 			"/admin/studio-members/"+apiAdmin, `{"role":"editor"}`)
-		if code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", code, body)
+		if code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d: %s", code, body)
 		}
 	})
 

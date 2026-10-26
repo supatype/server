@@ -58,3 +58,18 @@ func (s Store) TargetRoles(ctx context.Context, kind TargetKind, value string) (
 	}
 	return roles, rows.Err()
 }
+
+// SameUser reports whether two user ids name the same user as Postgres reads
+// a uuid: case, braces and hyphens do not make a different id, so an id
+// written in capitals is still the caller's own.
+func SameUser(a, b string) bool {
+	id := canonicalUserID(a)
+	return id != "" && id == canonicalUserID(b)
+}
+
+// canonicalUserID is an id in lower case without braces or hyphens.
+func canonicalUserID(id string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	id = strings.TrimSuffix(strings.TrimPrefix(id, "{"), "}")
+	return strings.ReplaceAll(id, "-", "")
+}

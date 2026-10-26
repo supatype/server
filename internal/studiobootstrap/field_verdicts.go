@@ -5,17 +5,17 @@ import "encoding/json"
 // FieldVerdict is what this caller may do with one column, resolved as far as it can be
 // without a row.
 //
-// Three answers rather than one because the three paths genuinely differ. The clearest case
-// is a required column with an ownership write rule: readable, updatable by its owner, and
-// creatable by nobody — so a create form that renders it as a required input is asking for
-// something no caller can supply.
+// Three answers rather than one because the paths are judged against different rows. The
+// clearest case is a required column whose only rule is an ownership read rule: on an existing
+// record a caller who does not own it gets a padlock and cannot change it, while on a new record
+// the rule is judged against the row being stored, so the form must still ask for the value.
 type FieldVerdict struct {
 	Read Verdict `json:"read"`
 	// Write is the UPDATE path.
 	Write Verdict `json:"write"`
-	// Create is the INSERT path, which is stricter: there is no row yet, so the masking
-	// extension evaluates the write predicate against `NULL::t` and a rule that reads the
-	// row yields NULL for every caller.
+	// Create is the INSERT path. The masking extension (MASK-N1) and the tier 2 view trigger
+	// both judge the write predicate against the new row, as an RLS `WITH CHECK` does, so a
+	// rule that reads the row is answered per row here too, never refused outright.
 	Create Verdict `json:"create"`
 }
 
@@ -23,7 +23,7 @@ type FieldVerdict struct {
 //
 // Studio's use for it is not decoration: a masked cell should show a lock rather than an
 // empty string, a readable-but-not-writable input should be disabled rather than silently
-// rejected on save, and a required column nobody can create should be absent from a create
+// rejected on save, and a column no caller could ever create should be absent from a create
 // form rather than block it. All three need the answer before any row is fetched.
 //
 // Advisory, like everything else Studio is told. The enforcement is the security labels and
@@ -66,24 +66,18 @@ func resolveField(readRule, writeRule json.RawMessage, caller Caller) FieldVerdi
 		read = Evaluate(readRule, caller)
 	}
 
-	// No write rule means writable exactly when readable — the same invariant the engine
+	// No write rule means writable exactly when readable: the same invariant the engine
 	// bakes in by conjoining a field's write rule with its read rule, which is what makes
 	// write-without-read unrepresentable.
 	write := read
-	governing := readRule
 	if len(writeRule) > 0 {
 		write = conjoin(Evaluate(writeRule, caller), read)
-		governing = writeRule
 	}
 
-	create := write
-	if write != VerdictDeny && IsRowDependent(governing) {
-		// Unsatisfiable on INSERT for every caller, so this is settled rather than "ask per
-		// row" — which is exactly what lets a create form leave the field out.
-		create = VerdictDeny
-	}
-
-	return FieldVerdict{Read: read, Write: write, Create: create}
+	// INSERT runs the same predicate as UPDATE, against the new row instead of the stored
+	// one. A rule that reads the row is therefore `row` on both paths: the caller may create
+	// a record their rule accepts, such as one they own, and the database refuses the rest.
+	return FieldVerdict{Read: read, Write: write, Create: write}
 }
 
 // conjoin is `AND` over verdicts: certain when both are certain, denied if either denies, and

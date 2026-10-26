@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/studiomembers"
@@ -28,10 +30,20 @@ func (c Config) auditor() ElevatedAuditor {
 	return c.Members
 }
 
-// auditBodyHashLimit bounds the body the proxy reads to digest. A larger body,
-// or one of unknown length (an upload), is recorded by its size and type only,
-// so auditing never buffers a file in memory.
+// auditBodyHashLimit bounds the body the proxy reads to digest. A larger body
+// is recorded by its size and type only, so auditing never buffers a file in
+// memory. A body of unknown length (chunked) is read up to the limit to find
+// out which it is.
 const auditBodyHashLimit = 1 << 20
+
+// auditStatementLimit bounds the SQL editor statement an audit row keeps.
+const auditStatementLimit = 16 << 10
+
+// truncatedStatement marks a statement the audit row kept only the start of.
+const truncatedStatement = "\n-- [statement truncated in the audit log]"
+
+// refusedUnrecordableSQL answers a SQL editor request too large to record.
+const refusedUnrecordableSQL = "This statement was not run: it is too large for Studio to record in the audit log."
 
 // refusedUnaudited is the answer to a write that could not be recorded.
 const refusedUnaudited = "This change was not made: Studio could not record it in the audit log. Try again, " +
@@ -45,8 +57,9 @@ type proxyAudit struct {
 }
 
 // auditForward records a request that skipped the app's row rules, with who
-// made it, their Studio role, the method, path, query and a digest of the body,
-// so a change made through Studio is attributable.
+// made it, their Studio role, the method, path, query, a digest of the body and,
+// for the SQL editor, the statement, so a change made through Studio is
+// attributable.
 //
 // Reads are logged only: Studio polls, and an audit row per read would bury the
 // membership trail in noise. A write gets a durable row before it is sent, and
@@ -58,11 +71,15 @@ func auditForward(w http.ResponseWriter, req2 *http.Request, c Config, adm admis
 	if mode == ModeSelf || under(path, "/metadata") {
 		return nil, true
 	}
-	logElevated(req2, adm, mode)
+	logElevated(req2, adm, mode, path)
 	if isReadOnly(req2.Method) {
 		return nil, true
 	}
-	record := elevatedRecord(req2, adm, mode)
+	record, recordable := elevatedRecord(req2, adm, mode, path)
+	if !recordable {
+		writeError(w, http.StatusRequestEntityTooLarge, refusedUnrecordableSQL)
+		return nil, false
+	}
 	ref, err := c.auditor().AuditElevated(req2.Context(), record)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, refusedUnaudited)
@@ -71,24 +88,52 @@ func auditForward(w http.ResponseWriter, req2 *http.Request, c Config, adm admis
 	return &proxyAudit{auditor: c.auditor(), ref: ref, ctx: req2.Context()}, true
 }
 
-func elevatedRecord(req2 *http.Request, adm admission, mode string) studiomembers.ElevatedRequest {
-	return studiomembers.ElevatedRequest{
+// elevatedRecord is the audit row for one write. path is the path as routed,
+// not the decoded URL.Path, so `a%2Fb` is not recorded as `a/b`. A SQL editor
+// request also records its statement; one whose body was too large to read
+// reports false, since what it ran could not be attributed.
+func elevatedRecord(req2 *http.Request, adm admission, mode, path string) (studiomembers.ElevatedRequest, bool) {
+	summary, body := bodySummary(req2)
+	record := studiomembers.ElevatedRequest{
 		Actor:  adm.actor,
 		Role:   adm.role,
 		Mode:   mode,
 		Method: req2.Method,
-		Path:   req2.URL.Path,
+		Path:   path,
 		Query:  req2.URL.RawQuery,
-		Body:   bodySummary(req2),
+		Body:   summary,
 	}
+	if !under(path, "/sql") {
+		return record, true
+	}
+	if body == nil && summary != "" {
+		return record, false
+	}
+	record.Statement = sqlStatement(body)
+	return record, true
 }
 
-func logElevated(req2 *http.Request, adm admission, mode string) {
+// sqlStatement is the statement a SQL editor body asks the runner to execute,
+// decoded the way the runner decodes it, cut to auditStatementLimit bytes.
+func sqlStatement(body []byte) string {
+	var request struct {
+		Query string `json:"query"`
+	}
+	if json.NewDecoder(bytes.NewReader(body)).Decode(&request) != nil {
+		return ""
+	}
+	if len(request.Query) <= auditStatementLimit {
+		return request.Query
+	}
+	return strings.ToValidUTF8(request.Query[:auditStatementLimit], "") + truncatedStatement
+}
+
+func logElevated(req2 *http.Request, adm admission, mode, path string) {
 	logrus.WithFields(logrus.Fields{
 		"actor":  adm.actor,
 		"role":   adm.role,
 		"method": req2.Method,
-		"path":   req2.URL.Path,
+		"path":   path,
 		"query":  req2.URL.RawQuery,
 		"mode":   mode,
 	}).Info("studio: elevated request")
@@ -108,21 +153,25 @@ func (a *proxyAudit) finish(status int) {
 
 // bodySummary is a digest of the body and its size: enough to tell which
 // GraphQL mutation, RPC call or storage move a row records, without storing
-// content that may be personal data. A body it reads is put back for upstream.
-func bodySummary(req *http.Request) string {
+// content that may be personal data. It also returns the body when it read all
+// of it, nil otherwise. A body it reads is put back for upstream.
+func bodySummary(req *http.Request) (string, []byte) {
 	if req.Body == nil || req.Body == http.NoBody {
-		return ""
+		return "", nil
 	}
 	contentType := req.Header.Get("Content-Type")
-	if req.ContentLength < 0 || req.ContentLength > auditBodyHashLimit {
-		return fmt.Sprintf("unhashed; %d bytes; %s", req.ContentLength, contentType)
+	if req.ContentLength > auditBodyHashLimit {
+		return fmt.Sprintf("unhashed; %d bytes; %s", req.ContentLength, contentType), nil
 	}
-	body, err := io.ReadAll(io.LimitReader(req.Body, auditBodyHashLimit))
+	body, err := io.ReadAll(io.LimitReader(req.Body, auditBodyHashLimit+1))
 	req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), req.Body))
 	if err != nil {
-		return fmt.Sprintf("unreadable; %d bytes; %s", req.ContentLength, contentType)
+		return fmt.Sprintf("unreadable; %d bytes; %s", req.ContentLength, contentType), nil
 	}
-	return fmt.Sprintf("sha256:%x; %d bytes; %s", sha256.Sum256(body), len(body), contentType)
+	if len(body) > auditBodyHashLimit {
+		return fmt.Sprintf("unhashed; over %d bytes; %s", auditBodyHashLimit, contentType), nil
+	}
+	return fmt.Sprintf("sha256:%x; %d bytes; %s", sha256.Sum256(body), len(body), contentType), body
 }
 
 // statusRecorder notes the status a forwarded write was answered with. It is

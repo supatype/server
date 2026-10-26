@@ -26,33 +26,72 @@ var activeContentTypes = map[string]bool{
 	"multipart/x-mixed-replace": true,
 }
 
+// octetStream is the type of an object whose own type cannot be trusted.
+const octetStream = "application/octet-stream"
+
 // ApplySafeObjectHeaders hardens the response headers for a user-supplied
 // object so it cannot become stored XSS on the storage origin. Every object is
-// marked nosniff. An active content type is also forced to download as an
-// attachment inside a sandbox CSP. name is the object's base name, used as the
-// download filename when the response does not already name one.
+// marked nosniff, sandboxed by CSP, and served with its type as parsed rather
+// than as written. An active content type is also forced to download as an
+// attachment. name is the object's base name, used as the download filename
+// when the response does not already name one.
 func ApplySafeObjectHeaders(h http.Header, name string) {
 	h.Set("X-Content-Type-Options", "nosniff")
-	if !isActiveContentType(h.Get("Content-Type")) {
-		return
-	}
-	h.Set("Content-Disposition", attachmentDisposition(h.Get("Content-Disposition"), name))
 	h.Set("Content-Security-Policy", sandboxPolicy)
+	served, active := servedContentType(h.Get("Content-Type"))
+	if served == "" {
+		// Present but empty, so net/http does not sniff one in from the body.
+		h["Content-Type"] = nil
+	} else {
+		h.Set("Content-Type", served)
+	}
+	if active {
+		h.Set("Content-Disposition", attachmentDisposition(h.Get("Content-Disposition"), name))
+	}
 }
 
-// isActiveContentType compares the media type with parameters stripped and
-// case ignored. A missing type, or one that cannot be read at all, is treated
-// as active, because a browser left to guess may guess HTML.
-func isActiveContentType(contentType string) bool {
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		mediaType, _, _ = strings.Cut(contentType, ";")
-		mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+// parseContentType reads a Content-Type as exactly one type/subtype with its
+// parameters. A comma anywhere is refused: a browser may read
+// `text/plain, text/html` as a list and pick the type it likes.
+func parseContentType(contentType string) (string, map[string]string, bool) {
+	if strings.Contains(contentType, ",") {
+		return "", nil, false
 	}
-	if mediaType == "" {
-		return true
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || strings.Count(mediaType, "/") != 1 {
+		return "", nil, false
 	}
-	return activeContentTypes[mediaType] || strings.HasSuffix(mediaType, "+xml")
+	return mediaType, params, true
+}
+
+// servedContentType is the canonical form of contentType and whether it is
+// active. A missing type, or one that cannot be read, is active, because a
+// browser left to guess may guess HTML; an unreadable one is served as
+// octetStream, and a missing one stays missing.
+func servedContentType(contentType string) (string, bool) {
+	mediaType, params, ok := parseContentType(contentType)
+	if !ok {
+		if strings.TrimSpace(contentType) == "" {
+			return "", true
+		}
+		return octetStream, true
+	}
+	canonical := mime.FormatMediaType(mediaType, params)
+	if canonical == "" {
+		return octetStream, true
+	}
+	return canonical, activeContentTypes[mediaType] || strings.HasSuffix(mediaType, "+xml")
+}
+
+// storedContentType is the type an upload is kept under: its media type
+// without parameters, or octetStream when the header is missing, cannot be
+// read, or lists more than one type.
+func storedContentType(contentType string) string {
+	mediaType, _, ok := parseContentType(contentType)
+	if !ok {
+		return octetStream
+	}
+	return mediaType
 }
 
 // attachmentDisposition keeps a filename the response already carries,

@@ -170,3 +170,19 @@ func TestAListedFolderHasTheContractsFolderShape(t *testing.T) {
 		t.Errorf("folder = %v, want bucket avatars and name photos", entries[0])
 	}
 }
+
+// The sidecar tree that holds each object's metadata is never listed, whether
+// the prefix names it or a folder inside it.
+func TestTheSidecarTreeIsNeverListed(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	upload(t, handler, "avatars", "photos/a.txt", "four")
+
+	for _, prefix := range []string{".meta", ".meta/", ".meta/photos"} {
+		rec := do(t, handler, http.MethodPost, "/object/list/avatars", userToken(t),
+			strings.NewReader(`{"prefix":"`+prefix+`"}`))
+		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" || rec.Header().Get("X-Total-Count") != "0" {
+			t.Errorf("prefix %q: %d %s (total %q), want an empty listing", prefix, rec.Code, rec.Body.String(), rec.Header().Get("X-Total-Count"))
+		}
+	}
+}

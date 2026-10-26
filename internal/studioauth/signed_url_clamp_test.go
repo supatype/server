@@ -2,6 +2,7 @@ package studioauth
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -59,5 +60,27 @@ func TestClampedSigningBodyNeverCarriesAnUncappedExpiry(t *testing.T) {
 		if err == nil || strings.Contains(string(out), "31536000") {
 			t.Errorf("%s: forwarded %s (err %v), want a refusal", in, out, err)
 		}
+	}
+}
+
+// An expiry that is not a number, written as one or as a string, is refused
+// before anything reaches storage, rather than forwarded for it to guess at.
+func TestSigningBodyWithAnExpiryThatIsNotANumberIsRefused(t *testing.T) {
+	for _, body := range []string{`{"expiresIn":"soon"}`, `{"expiresIn":"6e"}`, `{"expiresIn":true}`} {
+		p := proxied{role: "editor", method: http.MethodPost, target: "/storage/v1/object/sign/media/a.png", body: body}
+		next, rec := sendThroughProxy(t, p, &fakeAuditor{})
+		if next.reached || rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "numeric expiresIn") {
+			t.Errorf("%s: got %d %s, reached %v", body, rec.Code, rec.Body.String(), next.reached)
+		}
+	}
+}
+
+// A signing request with no body at all is signed for the cap, not refused
+// and not left uncapped.
+func TestASigningRequestWithNoBodyIsSignedForTheCap(t *testing.T) {
+	out, err := clampedSigningBody(nil)
+	want := fmt.Sprintf(`{"expiresIn":%d}`, maxSignedURLSeconds)
+	if err != nil || string(out) != want {
+		t.Fatalf("got %s (%v), want %s", out, err, want)
 	}
 }

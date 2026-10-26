@@ -43,3 +43,12 @@ func TestTheStoreRefusesYourOwnIdHoweverWritten(t *testing.T) {
 		}
 	}
 }
+
+// A target kind the guard does not know is an unknown answer, refused before
+// the database is asked, so a store with none still says which.
+func TestTargetRolesRefusesAnUnknownKind(t *testing.T) {
+	roles, err := (Store{}).TargetRoles(context.Background(), TargetKind(99), "anything")
+	if err == nil || roles != nil || !strings.Contains(err.Error(), "unknown target kind 99") {
+		t.Fatalf("got %v, %v; want the unknown kind refused", roles, err)
+	}
+}

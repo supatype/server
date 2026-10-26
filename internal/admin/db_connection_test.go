@@ -143,3 +143,20 @@ func TestTheConnectionRouteIsReadOnly(t *testing.T) {
 		t.Errorf("POST: status = %d, want 405", rec.Code)
 	}
 }
+
+// A pooler URL that will not parse is reported under its own variable, even
+// when the direct URL beside it is fine, and no half answer is served.
+func TestAPoolerURLThatWillNotParse(t *testing.T) {
+	handler, _ := api(t, &config.Config{
+		Mode:        "dev",
+		DBPublicURL: "postgresql://supatype_admin@127.0.0.1:5432/shop",
+		DBPoolerURL: "mysql://root@127.0.0.1:3306/app",
+	}, keyspacetest.New())
+	rec := call(t, handler, http.MethodGet, "/database/connection", serviceKey, "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
+	}
+	if msg := errorOf(t, rec); !strings.Contains(msg, "SUPATYPE_DB_POOLER_URL") || strings.Contains(rec.Body.String(), "127.0.0.1") {
+		t.Errorf("error = %q, body = %s", msg, rec.Body.String())
+	}
+}

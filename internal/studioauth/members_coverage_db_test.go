@@ -224,10 +224,11 @@ func TestSettingARoleRefusals(t *testing.T) {
 		path, body string
 		want       int
 	}{
-		"no user id":              {"/admin/studio-members", `{"role":"editor"}`, http.StatusBadRequest},
-		"a body that is not JSON": {"/admin/studio-members/" + memberPlain, "{", http.StatusBadRequest},
-		"a role nobody knows":     {"/admin/studio-members/" + memberPlain, `{"role":"sudo"}`, http.StatusBadRequest},
-		"no role named":           {"/admin/studio-members/" + memberPlain, `{}`, http.StatusBadRequest},
+		"no user id":               {"/admin/studio-members", `{"role":"editor"}`, http.StatusBadRequest},
+		"a body that is not JSON":  {"/admin/studio-members/" + memberPlain, "{", http.StatusBadRequest},
+		"a role nobody knows":      {"/admin/studio-members/" + memberPlain, `{"role":"sudo"}`, http.StatusBadRequest},
+		"no role named":            {"/admin/studio-members/" + memberPlain, `{}`, http.StatusBadRequest},
+		"an id that is not a uuid": {"/admin/studio-members/not-a-uuid", `{"role":"editor"}`, http.StatusBadRequest},
 		"a user who does not exist": {
 			"/admin/studio-members/dddddddd-dddd-dddd-dddd-dddddddddddd",
 			`{"role":"editor"}`, http.StatusNotFound,

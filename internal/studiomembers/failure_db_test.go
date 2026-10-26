@@ -3,9 +3,11 @@ package studiomembers
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
 )
 
@@ -321,5 +323,72 @@ func TestARevocationTheDatabaseRefuses(t *testing.T) {
 	}
 	if role := roleOf(t, store, plainUsr); role != "editor" {
 		t.Errorf("the membership went despite the refusal: %q", role)
+	}
+}
+
+// Recording the status of a request that was recorded needs the database as
+// much as recording it did: with none, the caller is told.
+func TestAuditElevatedStatusWithoutADatabase(t *testing.T) {
+	err := (Store{}).AuditElevatedStatus(context.Background(), AuditRef{id: 1}, 201)
+	if !errors.Is(err, data.ErrNoDatabase) {
+		t.Fatalf("got %v, want ErrNoDatabase", err)
+	}
+}
+
+// A row of the outside-changes read that cannot be scanned fails the read,
+// rather than flagging some members and silently dropping the rest.
+func TestOutsideChangesWithARowItCannotScan(t *testing.T) {
+	ctx, store := setupMembership(t, "")
+	rows, err := adminPool(t, store).Query(ctx,
+		`SELECT * FROM (VALUES ('`+plainUsr+`', true), (NULL, false)) AS v(target, changed)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outside, err := collectOutsideChanges(rows); err == nil || outside != nil {
+		t.Fatalf("got %v, %v; want an error and no flags", outside, err)
+	}
+}
+
+// A membership change that cannot be marked as coming through this API would
+// reach the audit trail as one made around it. It is refused, and nothing is
+// written. The mark is made with set_config, so a connection whose search_path
+// finds a set_config that raises before the built-in one stands in for a
+// database that refuses it.
+func TestAChangeThatCannotBeMarkedIsRefused(t *testing.T) {
+	ctx, store := setupMembership(t, `INSERT INTO _supatype.studio_members (user_id, role)
+		VALUES ('`+plainUsr+`', 'editor')`)
+	pool := adminPool(t, store)
+	for _, stmt := range []string{
+		`DROP SCHEMA IF EXISTS membership_trap CASCADE`,
+		`CREATE SCHEMA membership_trap`,
+		`CREATE FUNCTION membership_trap.set_config(text, text, boolean) RETURNS text
+			LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'set_config refused'; END $$`,
+	} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			t.Fatalf("setup %q: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DROP SCHEMA IF EXISTS membership_trap CASCADE`) })
+
+	dsn := os.Getenv("SUPATYPE_TEST_DSN")
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	resources, err := data.Open(ctx, &config.Config{SQLDatabaseURL: dsn + sep + "search_path=membership_trap,pg_catalog"})
+	if err != nil {
+		t.Fatalf("open trapped resources: %v", err)
+	}
+	t.Cleanup(func() { _ = resources.Close() })
+	trapped := NewStore(resources)
+
+	if err := trapped.SetRole(ctx, adminA, plainUsr, "viewer"); err == nil || !strings.Contains(err.Error(), "mark membership change") {
+		t.Errorf("SetRole: got %v, want the unmarked change refused", err)
+	}
+	if err := trapped.Revoke(ctx, adminA, plainUsr); err == nil || !strings.Contains(err.Error(), "mark membership change") {
+		t.Errorf("Revoke: got %v, want the unmarked change refused", err)
+	}
+	if role := roleOf(t, store, plainUsr); role != "editor" {
+		t.Errorf("membership changed despite the refusal: %q", role)
 	}
 }

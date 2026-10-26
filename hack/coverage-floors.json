@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-package coverage ratchet, enforced by tools/coveragegate. 'pinned' is held at 100%: the Supatype-owned seam, plus anything else already there. 'packages' is a measured floor, meaning no worse than the day it was recorded. A package with no entry falls to 'default'. Reseed deliberately, in its own commit: make coverage-reseed. internal/studioauth is measured at 99.7 rather than pinned: two statements in it cannot be reached, the error branch on signPreviewToken, where HS256 takes a []byte key and claims that always marshal, so there is no failure to provoke.",
+  "_comment": "Per-package coverage ratchet, enforced by tools/coveragegate. 'pinned' is held at 100%: the Supatype-owned seam, plus anything else already there. 'packages' is a measured floor, meaning no worse than the day it was recorded. A package with no entry falls to 'default'. Reseed deliberately, in its own commit: make coverage-reseed. internal/studioauth is measured at 99.7 rather than pinned: two statements in it cannot be reached, the error branch on signPreviewToken, where HS256 takes a []byte key and claims that always marshal, so there is no failure to provoke. internal/objstore and internal/studiomembers are measured, not pinned, for the same reason: one statement each cannot run, the fallback in attachmentDisposition (mime.FormatMediaType with fixed literal names never returns empty) and the json.Marshal error in insertElevated (a struct of strings and ints always marshals).",
   "default": 100,
   "exclude": [
     ".",
@@ -28,7 +28,6 @@
     "internal/maskedfields",
     "internal/modelhooks",
     "internal/modes",
-    "internal/objstore",
     "internal/outerhealth",
     "internal/platform",
     "internal/platform/async",
@@ -44,7 +43,6 @@
     "internal/sqlrunner",
     "internal/static",
     "internal/studiobootstrap",
-    "internal/studiomembers",
     "internal/utilities/version"
   ],
   "packages": {
@@ -74,7 +72,9 @@
     "internal/observability": 38.18,
     "internal/platformproxy": 82.83,
     "internal/security": 77.28,
+    "internal/objstore": 99.8,
     "internal/studioauth": 99.7,
+    "internal/studiomembers": 99.4,
     "internal/auth/storage": 82.9,
     "internal/auth/tokens": 78.64,
     "internal/utilities": 74.07,

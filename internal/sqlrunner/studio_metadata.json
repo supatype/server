@@ -80,11 +80,15 @@
     },
     "migrations": {
       "params": [],
-      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, pushed_by, pushed_by_verified, pushed_via, pushed_from, renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by FROM _supatype.migrations ORDER BY id ASC"
+      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, pushed_by, pushed_by_verified, pushed_via, pushed_from, renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by, COALESCE(to_jsonb(m) ->> 'status', 'applied') AS status, to_jsonb(m) ->> 'error_message' AS error_message, to_jsonb(m) -> 'refusal' AS refusal, to_jsonb(m) ->> 'superseded_at' AS superseded_at FROM _supatype.migrations m ORDER BY id ASC"
     },
     "migrations_legacy": {
       "params": [],
-      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, NULL AS pushed_by, NULL AS pushed_by_verified, NULL AS pushed_via, NULL AS pushed_from, NULL AS renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by FROM _supatype.migrations ORDER BY id ASC"
+      "sql": "SELECT id, name, hash, applied_at::text, rolled_back, rolled_back_at::text, engine_version, schema_snapshot, (sql_up IS NOT NULL AND btrim(sql_up) <> '') AS has_sql, NULL AS pushed_by, NULL AS pushed_by_verified, NULL AS pushed_via, NULL AS pushed_from, NULL AS renames, schema_sources_manifest ->> 'pushedBy' AS manifest_pushed_by, COALESCE(to_jsonb(m) ->> 'status', 'applied') AS status, to_jsonb(m) ->> 'error_message' AS error_message, to_jsonb(m) -> 'refusal' AS refusal, to_jsonb(m) ->> 'superseded_at' AS superseded_at FROM _supatype.migrations m ORDER BY id ASC"
+    },
+    "schema_push_status": {
+      "params": [],
+      "sql": "SELECT m.id, m.name, m.applied_at::text, COALESCE(to_jsonb(m) ->> 'status', 'applied') AS status, to_jsonb(m) ->> 'error_message' AS error_message, to_jsonb(m) -> 'refusal' -> 'operations' AS operations, to_jsonb(m) -> 'refusal' -> 'hints' AS hints, to_jsonb(m) ->> 'superseded_at' AS superseded_at FROM _supatype.migrations m WHERE NOT m.rolled_back ORDER BY m.applied_at DESC, m.id DESC LIMIT 1"
     },
     "migration_sql": {
       "params": ["id"],

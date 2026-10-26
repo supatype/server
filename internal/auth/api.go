@@ -352,6 +352,12 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 
 			r.Post("/generate_link", api.adminGenerateLink)
 
+			// Active sessions: Studio's Users view lists them and revokes one.
+			r.Route("/sessions", func(r *router) {
+				r.Get("/", api.adminSessions)
+				r.Delete("/{session_id}", api.adminSessionRevoke)
+			})
+
 			// Mail templates: Studio's Authentication, Email templates view.
 			// Use Get("/{id}") here (not Route + Get("/")) so `/admin/template/confirmation`
 			// matches without a trailing slash (same pattern as /admin/users/{user_id}).

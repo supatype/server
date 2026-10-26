@@ -436,3 +436,13 @@ func (s *Session) GetScopeList() []string {
 func (s *Session) HasScope(scope string) bool {
 	return HasScope(s.GetScopeList(), scope)
 }
+
+// FindActiveSessions finds every session that has not run out by now, most
+// recently used first: what the admin API lists for Studio's Users view.
+func FindActiveSessions(tx *storage.Connection, now time.Time) ([]*Session, error) {
+	sessions := []*Session{}
+	if err := tx.Q().Where("not_after IS NULL OR not_after > ?", now).Order("updated_at DESC").All(&sessions); err != nil {
+		return nil, errors.Wrap(err, "error finding active sessions")
+	}
+	return sessions, nil
+}

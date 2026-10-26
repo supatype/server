@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,7 +21,7 @@ import (
 // queries rather than the SQL runner, so a viewer's views work and nobody with
 // schema view can run arbitrary SQL. The control plane carries the same
 // catalogue and pins the same hash.
-const studioMetadataSHA256 = "e201fa63b6e21b03e8bfeb0e1f6969b31e32fcca9464239c33080d092a83e164"
+const studioMetadataSHA256 = "561408b196b0e13152a43b6a1091f0cf68e137cf96521c9d38d1f126ec05ecec"
 
 func TestMetadataCatalogueIsTheSharedDocument(t *testing.T) {
 	raw, err := os.ReadFile("studio_metadata.json")
@@ -115,7 +116,8 @@ const ledgerSQL = `CREATE SCHEMA IF NOT EXISTS _supatype;
 	CREATE TABLE _supatype.seeds (id bigserial PRIMARY KEY, file text NOT NULL, ir_hash text NOT NULL,
 	  schema_fingerprint text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), duration_ms bigint NOT NULL DEFAULT 0,
 	  status text NOT NULL DEFAULT 'committed', rows_written jsonb NOT NULL DEFAULT '{}'::jsonb, error_message text, engine_version text);
-	INSERT INTO _supatype.seeds (file, ir_hash, schema_fingerprint) VALUES ('seed.ts', 'a', 'b')`
+	INSERT INTO _supatype.seeds (file, ir_hash, schema_fingerprint) VALUES ('seed.ts', 'a', 'b');
+	CREATE TABLE public.introspected (id int PRIMARY KEY, label text UNIQUE)`
 
 // ledgerPools connects to SUPATYPE_TEST_DSN with the engine's ledgers in
 // place, or skips the test when there is no database to run against.
@@ -131,7 +133,7 @@ func ledgerPools(t *testing.T) Pools {
 	}
 	t.Cleanup(pool.Close)
 	drop := func() {
-		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS _supatype.managed_objects, _supatype.migrations, _supatype.seeds`)
+		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS _supatype.managed_objects, _supatype.migrations, _supatype.seeds, public.introspected`)
 	}
 	drop()
 	if _, err := pool.Exec(context.Background(), ledgerSQL); err != nil {
@@ -139,4 +141,32 @@ func ledgerPools(t *testing.T) Pools {
 	}
 	t.Cleanup(drop)
 	return func() (Pool, error) { return pool, nil }
+}
+
+// Data Explorer and the schema screens read a schema's tables and columns
+// through the catalogue's introspect query.
+func TestIntrospectQueryListsColumns(t *testing.T) {
+	rec := postMetadata(t, ledgerPools(t), `{"name":"introspect","params":{"schema":"public"}}`, serviceKey)
+	var got struct {
+		Rows []struct {
+			Table     string `json:"table_name"`
+			Column    string `json:"column_name"`
+			Type      string `json:"udt_name"`
+			IsPrimary bool   `json:"is_primary"`
+			IsUnique  bool   `json:"is_unique"`
+		} `json:"rows"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var columns []string
+	for _, row := range got.Rows {
+		if row.Table == "introspected" {
+			columns = append(columns, fmt.Sprintf("%s %s pk=%t unique=%t", row.Column, row.Type, row.IsPrimary, row.IsUnique))
+		}
+	}
+	want := "[id int4 pk=true unique=false label text pk=false unique=true]"
+	if fmt.Sprint(columns) != want {
+		t.Fatalf("columns = %v, want %s", columns, want)
+	}
 }

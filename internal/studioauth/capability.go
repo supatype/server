@@ -111,6 +111,12 @@ func AllowsRequest(perms StudioPermissions, method, path string) bool {
 	case under(path, "/sql"):
 		return perms.SQLEditor
 
+	// The catalogue's introspect query alone: the tables and columns behind Data
+	// Explorer and the schema screens, for every role that may read rows. Editors
+	// use those screens without holding schema view.
+	case under(path, "/metadata/introspect"):
+		return perms.Read
+
 	// Studio's named, read-only schema queries (RQ3): catalogs and the ledger,
 	// never rows, for every role that may see the schema.
 	case under(path, "/metadata"):

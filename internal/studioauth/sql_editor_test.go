@@ -100,3 +100,20 @@ func TestMetadataIsOpenToSchemaViewers(t *testing.T) {
 		t.Fatalf("editor: expected 403, got %d", got.code)
 	}
 }
+
+// The tables and columns behind Data Explorer and the schema screens are for
+// every role that may read rows, editors included, who have no schema view.
+// Only the introspection query is open to them, on its own path.
+func TestIntrospectionIsOpenToEveryReader(t *testing.T) {
+	for _, role := range []string{"admin", "developer", "editor", "viewer"} {
+		_, call := proxyCapturing(t, role)
+		got := call(http.MethodPost, "/studio/proxy/metadata/introspect", nil)
+		if got.code != http.StatusOK || got.header.Get("Authorization") != "Bearer service-role-key" {
+			t.Fatalf("%s: got %d %q", role, got.code, got.header.Get("Authorization"))
+		}
+	}
+	_, editor := proxyCapturing(t, "editor")
+	if got := editor(http.MethodPost, "/studio/proxy/metadata", nil); got.code != http.StatusForbidden {
+		t.Fatalf("editor on the rest of the catalogue: expected 403, got %d", got.code)
+	}
+}

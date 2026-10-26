@@ -22,7 +22,7 @@ import (
 // queries rather than the SQL runner, so a viewer's views work and nobody with
 // schema view can run arbitrary SQL. The control plane carries the same
 // catalogue and pins the same hash.
-const studioMetadataSHA256 = "4341cd6df2367377f8621182ece7dc8840b5430ca259ed0a69aaff670cadc685"
+const studioMetadataSHA256 = "3087273d375e362089a476d9b7a3e4b3f402bf1fe0d9ca773ccb10046487bbb9"
 
 func TestMetadataCatalogueIsTheSharedDocument(t *testing.T) {
 	raw, err := os.ReadFile("studio_metadata.json")
@@ -326,5 +326,78 @@ func TestAMetadataQueryDoesNotRunOnAWritableTransaction(t *testing.T) {
 	}
 	if !tx.rolledBack {
 		t.Fatal("the transaction was not rolled back")
+	}
+}
+
+// Two schemas whose names differ only in case: the real storage schema and an
+// impostor named "Storage", each with one table under row security and one
+// policy on it.
+const caseTwinSQL = `CREATE SCHEMA storage; CREATE SCHEMA "Storage";
+	CREATE TABLE storage.objects (id int); ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+	CREATE POLICY objects_read ON storage.objects FOR SELECT USING (true);
+	CREATE TABLE "Storage".impostor (id int); ALTER TABLE "Storage".impostor ENABLE ROW LEVEL SECURITY;
+	CREATE POLICY impostor_read ON "Storage".impostor FOR SELECT USING (true)`
+
+// caseTwinPools connects to SUPATYPE_TEST_DSN with the two schemas in place,
+// or skips when there is no database, or when a storage schema already exists
+// there and dropping it afterwards would take someone else's.
+func caseTwinPools(t *testing.T) Pools {
+	t.Helper()
+	pools := ledgerPools(t)
+	served, _ := pools()
+	pool, ok := served.(*pgxpool.Pool)
+	if !ok {
+		t.Fatalf("ledgerPools served a %T, want a *pgxpool.Pool", served)
+	}
+	ctx := context.Background()
+	var taken bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname IN ('storage', 'Storage'))`).Scan(&taken); err != nil {
+		t.Fatalf("schema check: %v", err)
+	}
+	if taken {
+		t.Skip("this database already has a storage schema; run against a throwaway one")
+	}
+	if _, err := pool.Exec(ctx, caseTwinSQL); err != nil {
+		t.Fatalf("case twins: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DROP SCHEMA storage, "Storage" CASCADE`) })
+	return pools
+}
+
+// metadataColumn runs a named query for one schema and returns one column of
+// every row it answered.
+func metadataColumn(t *testing.T, pools Pools, name, schema, column string) []string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"name": name, "params": map[string]any{"schema": schema}})
+	rec := postMetadata(t, pools, string(body), serviceKey)
+	var got struct {
+		Rows []map[string]any `json:"rows"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("%s %s: %d %s", name, schema, rec.Code, rec.Body.String())
+	}
+	values := []string{}
+	for _, row := range got.Rows {
+		values = append(values, fmt.Sprint(row[column]))
+	}
+	return values
+}
+
+// Studio names a schema exactly as the catalogue lists it, so a schema whose
+// name differs only in case is another schema: its policies and tables are
+// not the real storage schema's, and are not shown with them.
+func TestPoliciesAndRowSecurityMatchTheSchemaNameExactly(t *testing.T) {
+	pools := caseTwinPools(t)
+	cases := []struct{ name, schema, column, want string }{
+		{"policies", "storage", "policyname", "[objects_read]"},
+		{"policies", "Storage", "policyname", "[impostor_read]"},
+		{"rls_status", "storage", "tablename", "[objects]"},
+		{"rls_status", "Storage", "tablename", "[impostor]"},
+		{"policies", "STORAGE", "policyname", "[]"},
+	}
+	for _, c := range cases {
+		if got := fmt.Sprint(metadataColumn(t, pools, c.name, c.schema, c.column)); got != c.want {
+			t.Errorf("%s for %q: got %s, want %s", c.name, c.schema, got, c.want)
+		}
 	}
 }

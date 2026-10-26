@@ -114,6 +114,11 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 		tc := templatemailer.NewCache()
 		api.mailer = templatemailer.FromConfig(globalConfig, tc)
 	}
+	// Templates saved from Studio live in the database, so a restart or another
+	// replica sends the same edit this one saved.
+	if tm, ok := api.mailer.(*templatemailer.Mailer); ok && db != nil {
+		tm.UseSavedTemplates(mailTemplateStore{db: db})
+	}
 
 	// Connect token service to API's time function (supports test overrides)
 	api.tokenService.SetTimeFunc(api.Now)
@@ -347,18 +352,17 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 
 			r.Post("/generate_link", api.adminGenerateLink)
 
-			// Mail templates — Studio Authentication → Email templates.
+			// Mail templates: Studio's Authentication, Email templates view.
 			// Use Get("/{id}") here (not Route + Get("/")) so `/admin/template/confirmation`
 			// matches without a trailing slash (same pattern as /admin/users/{user_id}).
-			r.Route("/template", func(r *router) {
-				r.Get("/{template_type}", api.adminMailTemplateGet)
-				r.Put("/{template_type}", api.adminMailTemplatePut)
-			})
-			// Some upstream tooling also exposes the plural segment in some tooling.
-			r.Route("/templates", func(r *router) {
-				r.Get("/{template_type}", api.adminMailTemplateGet)
-				r.Put("/{template_type}", api.adminMailTemplatePut)
-			})
+			// The plural segment is the spelling some upstream tooling uses.
+			for _, segment := range []string{"/template", "/templates"} {
+				r.Route(segment, func(r *router) {
+					r.Get("/{template_type}", api.adminMailTemplateGet)
+					r.Put("/{template_type}", api.adminMailTemplatePut)
+					r.Delete("/{template_type}", api.adminMailTemplateDelete)
+				})
+			}
 
 			r.Route("/sso", func(r *router) {
 				r.Route("/providers", func(r *router) {

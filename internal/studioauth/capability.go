@@ -2,6 +2,7 @@ package studioauth
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ import (
 //	SQL editor (as the acting user's role)        yes      yes       no
 //	Elevated SQL / DDL / destructive              yes      no        no
 //	Studio members + keys                         yes      no        no
+//	Realtime Inspector (channels, stream, test)   yes      yes       no
 //
 // Unknown roles get nothing. A typo in a `studio_members` row must fail closed
 // rather than inherit whatever the nearest known role allows.
@@ -40,6 +42,9 @@ type StudioPermissions struct {
 	ElevatedSQL bool `json:"elevatedSql"`
 	// ManageMembers covers Studio membership and project API keys.
 	ManageMembers bool `json:"manageMembers"`
+	// RealtimeInspect covers the Realtime Inspector: channels, connections,
+	// the live message stream and test broadcasts. Not realtime settings.
+	RealtimeInspect bool `json:"realtimeInspect"`
 }
 
 // RoleAdmin is the only role that can grant or revoke Studio access.
@@ -49,9 +54,11 @@ var studioRolePermissions = map[string]StudioPermissions{
 	RoleAdmin: {
 		Read: true, Write: true, SchemaView: true,
 		SQLEditor: true, ElevatedSQL: true, ManageMembers: true,
+		RealtimeInspect: true,
 	},
 	"developer": {
 		Read: true, Write: true, SchemaView: true, SQLEditor: true,
+		RealtimeInspect: true,
 	},
 	"editor": {
 		Read: true, Write: true,
@@ -119,8 +126,38 @@ func AllowsRequest(perms StudioPermissions, method, path string) bool {
 		}
 		return perms.Write
 
+	// The one named exception to "the control plane is admin only".
+	case IsRealtimeInspectorRoute(method, path):
+		return perms.RealtimeInspect
+
 	default:
 		return perms.ElevatedSQL
+	}
+}
+
+// The Realtime Inspector's control-plane routes. Whole-path patterns, so a
+// tail such as `/channels/../../schema/push` is not one of them. The ref is
+// one segment that is neither a dot segment nor percent-encoded, so nothing a
+// URL parser would later resolve differently can pass for one.
+var (
+	realtimeInspectorReads     = regexp.MustCompile(`^/platform/v1/projects/[^/.%][^/%]*/realtime/(channels|connections|stream)$`)
+	realtimeInspectorBroadcast = regexp.MustCompile(`^/platform/v1/projects/[^/.%][^/%]*/realtime/broadcast$`)
+)
+
+// realtimeInspectorProject is where self-host Studio learns its project ref.
+const realtimeInspectorProject = "/platform/v1/project"
+
+// IsRealtimeInspectorRoute reports whether one request is a Realtime Inspector
+// call: a GET of the project, channels, connections or the stream, or a POST of
+// a test broadcast. Realtime settings, when they exist, are not among them.
+func IsRealtimeInspectorRoute(method, path string) bool {
+	switch method {
+	case http.MethodGet:
+		return path == realtimeInspectorProject || realtimeInspectorReads.MatchString(path)
+	case http.MethodPost:
+		return realtimeInspectorBroadcast.MatchString(path)
+	default:
+		return false
 	}
 }
 

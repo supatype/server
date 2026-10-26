@@ -183,14 +183,28 @@ func RequireAdmin(c Config, next http.Handler) http.Handler {
 	})
 }
 
+// admission is who one proxied request comes from and how it will act.
+type admission struct {
+	mode  string
+	actor string
+	role  string
+	perms StudioPermissions
+}
+
+// devBypassAdmission is the dev bypass's: elevated, with no signed-in actor.
+func devBypassAdmission() admission {
+	return admission{mode: ModeElevated, role: "dev-bypass", perms: legacyAdminPermissions()}
+}
+
 // ProxyHandler forwards privileged API calls after admin JWT verification.
 // inner must be the main service mux (without /studio routes).
 func ProxyHandler(inner http.Handler, c Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		mode, actor := ModeElevated, ""
+		path := routedPath(req)
+		adm := devBypassAdmission()
 		if !c.DevBypass() {
 			var ok bool
-			if mode, actor, ok = admitProxied(w, req, c); !ok {
+			if adm, ok = admitProxied(w, req, c, path); !ok {
 				return
 			}
 		}
@@ -204,13 +218,59 @@ func ProxyHandler(inner http.Handler, c Config) http.Handler {
 			req2.URL.Path = "/"
 		}
 
-		if !setActingIdentity(w, req, req2, c, mode, actor) {
+		// Before any branch, so no path through the proxy carries a browser's
+		// own claim about who it is.
+		stripStudioIdentity(req2.Header)
+
+		mode, ok := forwardIdentity(w, req, req2, c, adm, path)
+		if !ok {
 			return
 		}
 
 		w.Header().Set(ActingModeHeader, mode)
 		inner.ServeHTTP(w, req2)
 	})
+}
+
+// forwardIdentity puts the credentials and identity headers for one admitted
+// request on its forwarded copy, and returns the mode it acts in. It reports
+// false, having written the response, when the service role is needed and no
+// key is configured.
+//
+// A caller acting as themselves on a Realtime Inspector route is mediated: the
+// platform proxy admits only the service role, so their own token could never
+// reach the control plane, and the control plane is told who they are instead.
+func forwardIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config, adm admission, path string) (string, bool) {
+	if adm.mode == ModeSelf && IsRealtimeInspectorRoute(req.Method, path) {
+		if !setServiceRole(w, req2, c) {
+			return "", false
+		}
+		setStudioIdentity(req2.Header, adm)
+		req2.Header.Set(ViewerAuthorizationHeader, req.Header.Get("Authorization"))
+		recordElevatedRequest(c.Members, req, adm.actor, req2.URL.Path, ModeMediated)
+		return ModeMediated, true
+	}
+	if !setActingIdentity(w, req, req2, c, adm.mode, adm.actor) {
+		return "", false
+	}
+	if adm.mode == ModeElevated && under(path, "/platform/v1") {
+		setStudioIdentity(req2.Header, adm)
+	}
+	return adm.mode, true
+}
+
+// setServiceRole forwards a request as the service role. It reports false,
+// having written the response, when no service role key is configured.
+func setServiceRole(w http.ResponseWriter, req2 *http.Request, c Config) bool {
+	sr := strings.TrimSpace(c.ServiceRoleKey)
+	if sr == "" {
+		utilities.WriteJSON(w, http.StatusServiceUnavailable,
+			map[string]string{"error": "service role key not configured"})
+		return false
+	}
+	req2.Header.Set("Authorization", "Bearer "+sr)
+	req2.Header.Set("apikey", sr)
+	return true
 }
 
 // setActingIdentity puts the credentials for mode on the forwarded request.
@@ -230,15 +290,10 @@ func setActingIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config,
 		return true
 	}
 
-	sr := strings.TrimSpace(c.ServiceRoleKey)
-	if sr == "" {
-		utilities.WriteJSON(w, http.StatusServiceUnavailable,
-			map[string]string{"error": "service role key not configured"})
+	if !setServiceRole(w, req2, c) {
 		return false
 	}
-	req2.Header.Set("Authorization", "Bearer "+sr)
-	req2.Header.Set("apikey", sr)
-	recordElevatedRequest(c.Members, req, actor, req2.URL.Path)
+	recordElevatedRequest(c.Members, req, actor, req2.URL.Path, ModeElevated)
 	return true
 }
 
@@ -247,7 +302,7 @@ func setActingIdentity(w http.ResponseWriter, req, req2 *http.Request, c Config,
 //
 // Admission alone is not enough: the request must also be one the caller's role
 // covers, judged on the path the router will actually route.
-func admitProxied(w http.ResponseWriter, req *http.Request, c Config) (mode, actor string, ok bool) {
+func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path string) (admission, bool) {
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
 		status := http.StatusForbidden
@@ -255,28 +310,28 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config) (mode, act
 			status = http.StatusUnauthorized
 		}
 		utilities.WriteJSON(w, status, map[string]string{"error": result.Message})
-		return "", "", false
+		return admission{}, false
 	}
 
 	perms := legacyAdminPermissions()
 	if result.Permissions != nil {
 		perms = *result.Permissions
 	}
-	if !AllowsRequest(perms, req.Method, routedPath(req)) {
+	if !AllowsRequest(perms, req.Method, path) {
 		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 			"error": "Studio role \"" + result.Role + "\" cannot perform this request",
 		})
-		return "", "", false
+		return admission{}, false
 	}
 
-	mode, ok = resolveActingMode(req, perms)
+	mode, ok := resolveActingMode(req, perms)
 	if !ok {
 		utilities.WriteJSON(w, http.StatusForbidden, map[string]string{
 			"error": "Studio role \"" + result.Role + "\" cannot act with elevated access",
 		})
-		return "", "", false
+		return admission{}, false
 	}
-	return mode, result.Sub, true
+	return admission{mode: mode, actor: result.Sub, role: result.Role, perms: perms}, true
 }
 
 // recordElevatedRequest notes that a request bypassed RLS.
@@ -284,7 +339,7 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config) (mode, act
 // Reads are logged only: Studio polls, and an audit row per read would bury the
 // membership trail in noise. Anything that could change data gets a durable row,
 // because "who edited this outside their own policies" must survive log rotation.
-func recordElevatedRequest(members studiomembers.Store, req *http.Request, actor, path string) {
+func recordElevatedRequest(members studiomembers.Store, req *http.Request, actor, path, mode string) {
 	readOnly := req.Method == http.MethodGet ||
 		req.Method == http.MethodHead ||
 		req.Method == http.MethodOptions
@@ -293,7 +348,7 @@ func recordElevatedRequest(members studiomembers.Store, req *http.Request, actor
 		"actor":  actor,
 		"method": req.Method,
 		"path":   path,
-		"mode":   ModeElevated,
+		"mode":   mode,
 	}).Info("studio: elevated request")
 
 	if readOnly {

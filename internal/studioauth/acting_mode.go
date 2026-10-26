@@ -18,14 +18,18 @@ import (
 //   - ModeElevated injects the service role key. It is the escape hatch for
 //     administration that RLS would otherwise block, gated on the `elevatedSql`
 //     capability and recorded.
+//   - ModeMediated is the Realtime Inspector's, for a caller acting as
+//     themselves: the service role key reaches the control plane, which is told
+//     who the caller is (identity.go) and shows them only what that allows.
 //
 // A caller may always ask to drop to ModeSelf. Only a role holding `elevatedSql`
 // may act elevated, and asking for it without that capability is refused rather
-// than silently downgraded — a request that would return a misleadingly empty
+// than silently downgraded, because a request that returns a misleadingly empty
 // result is worse than an error.
 const (
 	ModeSelf     = "self"
 	ModeElevated = "elevated"
+	ModeMediated = "mediated"
 )
 
 // ActingModeHeader lets the client state which identity it wants, and carries the

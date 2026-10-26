@@ -173,7 +173,6 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/russellhaering/goxmldsig v1.6.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/sourcegraph/annotate v0.0.0-20160123013949-f4cad6c6324d // indirect
@@ -195,3 +194,8 @@ require (
 )
 
 go 1.26.9
+
+// pop imports gobuffalo/envy, whose init loads ./.env over the process
+// environment before main runs. third_party/envy keeps the API pop calls and
+// drops the init; see the package comment there.
+replace github.com/gobuffalo/envy => ./third_party/envy

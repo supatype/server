@@ -20,7 +20,6 @@ type Config struct {
 	// privilege of its own.
 	AnonKey    string
 	AdminRoles []string
-	Mode       string
 	// Resources carries the process connections, for the endpoints that read the
 	// schema snapshot straight from the database.
 	Resources *data.Resources
@@ -28,13 +27,6 @@ type Config struct {
 	// resources, so a deployment with no database still yields a usable value
 	// whose every call reports that and denies.
 	Members studiomembers.Store
-	// PublicURLs are the addresses this deployment answers on. DevBypass refuses
-	// to open Studio unless every one of them is local, so convenience cannot
-	// follow a copied config into production.
-	PublicURLs []string
-	// OpenDev opens Studio without authentication. It is only honoured in dev
-	// mode on a locally addressed deployment; see Config.DevBypass.
-	OpenDev bool
 	// StudioRole resolves a verified user id to their Studio role from
 	// `_supatype.studio_members`. Studio capability deliberately does not come
 	// from a JWT claim: `app_metadata` is the developer's namespace for their own
@@ -61,9 +53,6 @@ func ConfigFromServer(cfg *config.Config) Config {
 		AnonKey:         cfg.AnonKey,
 		AdminRoles:      AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
 		AdminConfigPath: cfg.AdminConfigPath,
-		Mode:            cfg.Mode,
-		OpenDev:         cfg.StudioOpenDev.Bool(),
-		PublicURLs:      cfg.PublicURLs,
 	}
 }
 
@@ -72,14 +61,6 @@ func VerifyHandler(c Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet {
 			utilities.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-
-		if c.DevBypass() {
-			utilities.WriteJSON(w, http.StatusOK, verifyOKResponse(Result{
-				Role: "dev-bypass",
-				Sub:  "dev-bypass",
-			}, c, req))
 			return
 		}
 
@@ -149,22 +130,12 @@ func roleSeesDrafts(role string, c Config) bool {
 	if err != nil {
 		return false
 	}
-	// The dev bypass has no membership row and no role, and it exists to open
-	// Studio completely on a locally addressed deployment. Withholding drafts
-	// from it would be a strange half-measure.
-	if c.DevBypass() {
-		return true
-	}
 	return settings.RoleSeesDrafts(role)
 }
 
-// RequireAdmin wraps a handler with studio admin JWT checks (skipped when DevBypass).
+// RequireAdmin wraps a handler with studio admin JWT checks.
 func RequireAdmin(c Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if c.DevBypass() {
-			next.ServeHTTP(w, req)
-			return
-		}
 		result := ResolveAccess(req, c)
 		if !result.Allowed {
 			status := http.StatusForbidden
@@ -186,22 +157,14 @@ type admission struct {
 	perms StudioPermissions
 }
 
-// devBypassAdmission is the dev bypass's: elevated, with no signed-in actor.
-func devBypassAdmission() admission {
-	return admission{mode: ModeElevated, role: "dev-bypass", perms: legacyAdminPermissions()}
-}
-
 // ProxyHandler forwards privileged API calls after admin JWT verification.
 // inner must be the main service mux (without /studio routes).
 func ProxyHandler(inner http.Handler, c Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		path := routedPath(req)
-		adm := devBypassAdmission()
-		if !c.DevBypass() {
-			var ok bool
-			if adm, ok = admitProxied(w, req, c, path); !ok {
-				return
-			}
+		adm, ok := admitProxied(w, req, c, path)
+		if !ok {
+			return
 		}
 
 		// Clone already deep-copies the URL, so the three branches that copied it

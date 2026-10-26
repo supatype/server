@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
@@ -286,15 +287,12 @@ func TestTheStudioConfigEndpoint(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(previous) })
 
-	// Dev bypass, so the admission this endpoint sits behind is not what is
-	// under test here.
-	open := &config.Config{
-		Mode: "dev", AdminConfigPath: "admin-config.json",
-		StudioOpenDev: config.SwitchBool(true),
-	}
-	notPushed := depsFor(t, open, nil)
+	// Signed in as a Studio admin, so the admission this endpoint sits behind is
+	// not what is under test here.
+	signedIn := &config.Config{Mode: "dev", AdminConfigPath: "admin-config.json", JWTSecret: testJWTSecret}
+	notPushed := depsFor(t, signedIn, nil)
 	rec := httptest.NewRecorder()
-	buildStudioConfig(notPushed).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/studio/config", nil))
+	buildStudioConfig(notPushed).ServeHTTP(rec, studioAdminRequest(t, "/studio/config"))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("nothing pushed: status = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
@@ -304,7 +302,7 @@ func TestTheStudioConfigEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	buildStudioConfig(notPushed).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/studio/config", nil))
+	buildStudioConfig(notPushed).ServeHTTP(rec, studioAdminRequest(t, "/studio/config"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("pushed: status = %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -316,14 +314,28 @@ func TestTheStudioConfigEndpoint(t *testing.T) {
 	}
 
 	// A path that cannot be read at all is not a project that has not pushed.
-	unreadable := depsFor(t, &config.Config{
-		Mode: "dev", AdminConfigPath: "..", StudioOpenDev: config.SwitchBool(true),
-	}, nil)
+	unreadable := depsFor(t, &config.Config{Mode: "dev", AdminConfigPath: "..", JWTSecret: testJWTSecret}, nil)
 	rec = httptest.NewRecorder()
-	buildStudioConfig(unreadable).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/studio/config", nil))
+	buildStudioConfig(unreadable).ServeHTTP(rec, studioAdminRequest(t, "/studio/config"))
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("unreadable: status = %d, want 500 (%s)", rec.Code, rec.Body.String())
 	}
+}
+
+// studioAdminRequest is a GET from a signed-in Studio admin. With no database the
+// gateway falls back to the token's claims, so an admin role claim admits it.
+func studioAdminRequest(t *testing.T, path string) *http.Request {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "studio-admin", "role": "admin", "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	signed, err := token.SignedString([]byte(testJWTSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+signed)
+	return req
 }
 
 // ─── Upstreams that cannot be worked out ──────────────────────────────────────

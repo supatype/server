@@ -191,7 +191,7 @@ func mintPreviewLink(w http.ResponseWriter, req *http.Request, c Config) {
 //
 // **A record link needs only draft visibility**: if you can read the draft in
 // Studio, you can show it to someone. **A project link is `admin` or `developer`
-// only**, and the reason is not that an editor cannot see every draft — since the
+// only**, and the reason is not that an editor cannot see every draft; since the
 // visibility default widened, they can. It is that handing a URL to someone with
 // no account is a distinct authority from editing content, and one project link
 // covers every unpublished draft there is.
@@ -202,10 +202,6 @@ func requirePreviewMinter(
 	scope PreviewScope,
 	settings PublishingSettings,
 ) (string, string, bool) {
-	if c.DevBypass() {
-		return "dev-bypass", "", true
-	}
-
 	result := ResolveAccess(req, c)
 	if !result.Allowed {
 		status := http.StatusForbidden

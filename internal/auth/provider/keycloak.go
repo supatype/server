@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/supatype/server/internal/conf"
@@ -52,13 +53,21 @@ func NewKeycloakProvider(ext conf.OAuthProviderConfiguration, scopes string) (OA
 		return nil, err
 	}
 
+	// openid is required: Keycloak 26 refuses userinfo (403) for a token whose
+	// scope lacks it, and only an authorize request that asks for openid gets it.
+	// Upstream's open fix (auth PR 1867) adds it to the same default list.
 	oauthScopes := []string{
 		"profile",
 		"email",
+		"openid",
 	}
 
 	if scopes != "" {
-		oauthScopes = append(oauthScopes, strings.Split(scopes, ",")...)
+		for _, scope := range strings.Split(scopes, ",") {
+			if !slices.Contains(oauthScopes, scope) {
+				oauthScopes = append(oauthScopes, scope)
+			}
+		}
 	}
 
 	if ext.URL == "" {

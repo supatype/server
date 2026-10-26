@@ -282,7 +282,7 @@ func TestAnUnsupportedMethodOnMembership(t *testing.T) {
 
 // ─── Elevated requests are recorded ───────────────────────────────────────────
 
-// A read that bypasses RLS is logged only — Studio polls, and a row per read
+// A read that bypasses RLS is logged only: Studio polls, and a row per read
 // would bury the membership trail. Anything that could change data gets a
 // durable row, because "who edited this outside their own policies" has to
 // survive log rotation.
@@ -390,21 +390,5 @@ func TestRevokingNeedsTheCapability(t *testing.T) {
 	}
 	if _, ok := c.Members.Lookup(memberSecond); !ok {
 		t.Error("the membership was revoked despite the refusal")
-	}
-}
-
-// Under the bypass there is no caller to check, and the change is recorded with
-// no actor rather than a made-up one.
-func TestMembershipUnderDevBypass(t *testing.T) {
-	c := membersConfig(t, "admin")
-	c.Mode = "dev"
-	c.OpenDev = true
-
-	rec := membersCall(t, c, http.MethodPatch, "/admin/studio-members/"+memberPlain, "", `{"role":"editor"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
-	}
-	if role, ok := c.Members.Lookup(memberPlain); !ok || role != "editor" {
-		t.Errorf("role = %q, ok = %v", role, ok)
 	}
 }

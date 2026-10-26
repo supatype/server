@@ -210,7 +210,6 @@ func clearAmbientEnv(t *testing.T) {
 		"SUPATYPE_SQL_DATABASE_URL",
 		"SUPATYPE_SQL_EDITOR_DATABASE_URL",
 		"DATABASE_URL",
-		"STUDIO_OPEN_DEV",
 		"STUDIO_ADMIN_ROLES",
 	} {
 		t.Setenv(key, "")

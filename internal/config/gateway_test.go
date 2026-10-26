@@ -23,7 +23,6 @@ func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 		"SUPATYPE_DB_SCHEMA":               "app",
 		"SUPATYPE_SQLRUNNER_INSECURE":      "yes",
 		"POSTGRES_PASSWORD":                "pw",
-		"STUDIO_OPEN_DEV":                  "on",
 		"STUDIO_ADMIN_ROLES":               "admin,owner",
 		"LOG_LEVEL":                        "debug",
 	}
@@ -63,7 +62,6 @@ func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 		"SUPATYPE_NONPROD":                cfg.NonProd.Bool(),
 		"SUPATYPE_BLOCK_BOT_UA":           cfg.BlockBotUA.Bool(),
 		"SUPATYPE_SQLRUNNER_INSECURE":     cfg.SQLRunnerInsecure.Bool(),
-		"STUDIO_OPEN_DEV":                 cfg.StudioOpenDev.Bool(),
 	} {
 		if !got {
 			t.Errorf("%s: want true, got false", name)
@@ -180,13 +178,13 @@ func TestLoadRejectsAnUnparseableValue(t *testing.T) {
 // disables the feature rather than refusing to boot.
 func TestLoadAcceptsAnyValueForTheCustomBools(t *testing.T) {
 	t.Setenv("SUPATYPE_CLOUD_ACTIVITY_ENABLED", "notabool")
-	t.Setenv("STUDIO_OPEN_DEV", "notabool")
+	t.Setenv("SUPATYPE_SQLRUNNER_INSECURE", "notabool")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("custom bools should not fail to decode: %v", err)
 	}
-	if cfg.CloudActivityEnabled.Bool() || cfg.StudioOpenDev.Bool() {
+	if cfg.CloudActivityEnabled.Bool() || cfg.SQLRunnerInsecure.Bool() {
 		t.Error("an unrecognised value must leave the switch off")
 	}
 }

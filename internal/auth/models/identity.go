@@ -98,6 +98,35 @@ func FindIdentitiesByUserID(tx *storage.Connection, userID uuid.UUID) ([]*Identi
 	return identities, nil
 }
 
+// loadIdentitiesForUsers fills Identities on every user with one query for the
+// whole slice, rather than one per user. A user with no identities gets an empty
+// list, so the JSON says `[]` and not `null`.
+func loadIdentitiesForUsers(tx *storage.Connection, users []*User) error {
+	if len(users) == 0 {
+		return nil
+	}
+
+	byUser := make(map[uuid.UUID]*User, len(users))
+	ids := make([]string, 0, len(users))
+	for _, u := range users {
+		u.Identities = []Identity{}
+		byUser[u.ID] = u
+		ids = append(ids, u.ID.String())
+	}
+
+	// One array parameter rather than IN (?, ?, ...): a page of any size binds
+	// one value, never nearing Postgres's limit on bind parameters.
+	identities := []Identity{}
+	if err := tx.Q().Where("user_id = ANY(?::uuid[])", ids).Order("created_at asc").All(&identities); err != nil {
+		return errors.Wrap(err, "error finding identities")
+	}
+	for _, identity := range identities {
+		u := byUser[identity.UserID]
+		u.Identities = append(u.Identities, identity)
+	}
+	return nil
+}
+
 // FindProvidersByUser returns all providers associated to a user
 func FindProvidersByUser(tx *storage.Connection, user *User) ([]string, error) {
 	identities := []Identity{}

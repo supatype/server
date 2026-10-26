@@ -16,7 +16,7 @@ import (
 // and then calls this API on the project's gateway as the project, the way it invites users.
 func CORSAccess(c Config) func(w http.ResponseWriter, req *http.Request, mutating bool) bool {
 	return func(w http.ResponseWriter, req *http.Request, mutating bool) bool {
-		if isServiceRole(req, c) || c.DevBypass() {
+		if isServiceRole(req, c) {
 			return true
 		}
 		result := ResolveAccess(req, c)

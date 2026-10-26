@@ -66,13 +66,13 @@ func api(t *testing.T, cfg *config.Config, cache keyspace.Client) (http.Handler,
 
 // oneKeyspace mounts the admin API with a single keyspace serving both roles,
 // which is the shape every test written before the platform/project split
-// assumed — and still the shape of a self-host or dev deployment. The tests that
+// assumed, and still the shape of a self-host or dev deployment. The tests that
 // are *about* the split pass two clients to Handler directly.
 func oneKeyspace(store apiconfig.Store, cfg *config.Config, ks keyspace.Client, stats *restcache.Counter) http.Handler {
 	return Handler(Deps{
 		Store: store, Config: cfg, Cache: ks, Platform: ks, Stats: stats,
 		// A ceiling that permits what these tests ask for. They were written before the schema
-		// declared anything, and their subject is the admin API's own behaviour — not §13.2's
+		// declared anything, and their subject is the admin API's own behaviour, not §13.2's
 		// precedence rule, which internal/cacheceiling and the ceiling tests cover directly.
 		// Without this they would all fail for one reason that is not what any of them is about.
 		Declared: permissiveCeiling,
@@ -133,6 +133,7 @@ func TestEveryRouteNeedsTheServiceRole(t *testing.T) {
 		{http.MethodGet, "/database/credentials/status"},
 		{http.MethodPost, "/database/credentials/first-view"},
 		{http.MethodPost, "/database/credentials/rotate"},
+		{http.MethodGet, "/database/connection"},
 		{http.MethodGet, "/cache"},
 		{http.MethodDelete, "/cache"},
 		{http.MethodGet, "/cache/entries/abc"},
@@ -958,8 +959,8 @@ func TestAnEntryThatIsNotThere(t *testing.T) {
 	}
 }
 
-// An entry that will not decode is skipped in a listing — one bad entry must
-// not hide the rest — but reported when asked for directly.
+// An entry that will not decode is skipped in a listing (one bad entry must
+// not hide the rest) but reported when asked for directly.
 func TestACorruptEntry(t *testing.T) {
 	cache := keyspacetest.New()
 	prefix := restcache.RestKeyPrefix("local")
@@ -1428,8 +1429,8 @@ func TestCacheStatsAreScopedToTheAskingTenant(t *testing.T) {
 	}
 }
 
-// A free-tier project is exactly the one that needs these numbers — they are
-// what it is being shown it is missing — so the route is not behind the grant
+// A free-tier project is exactly the one that needs these numbers: they are
+// what it is being shown it is missing, so the route is not behind the grant
 // that refuses the entry routes.
 func TestCacheStatsAreServedToATenantWithoutTheCache(t *testing.T) {
 	denied := false
@@ -1589,6 +1590,6 @@ func TestCacheRoutesAreNotRefusedWhenTheConfigIsOnlyInThePlatformKeyspace(t *tes
 
 	rec := call(t, handler, http.MethodPatch, "/config/rest", serviceKey, `{"cache_max_ttl":60}`)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("patch: %d %s — the tenant is entitled, so this must not be refused", rec.Code, rec.Body.String())
+		t.Fatalf("patch: %d %s: the tenant is entitled, so this must not be refused", rec.Code, rec.Body.String())
 	}
 }

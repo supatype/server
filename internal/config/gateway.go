@@ -294,6 +294,16 @@ type Config struct {
 	// when AllowSecretReadback permits it.
 	PostgresPassword string `envconfig:"POSTGRES_PASSWORD"`
 
+	// DBPublicURL is the project database as the operator's own machine reaches it: host, published
+	// port, database and login, with no password. Studio's connection strings are built from it.
+	// The CLI sets it for every stack it starts; empty means the database is not published to the
+	// host, and Studio says so rather than guessing.
+	DBPublicURL string `envconfig:"SUPATYPE_DB_PUBLIC_URL"`
+
+	// DBPoolerURL is a connection pooler in front of that database, in the same form, for a
+	// deployment that runs one. Self-host ships none, so it is normally empty.
+	DBPoolerURL string `envconfig:"SUPATYPE_DB_POOLER_URL"`
+
 	// ── Studio ───────────────────────────────────────────────────────────────
 
 	// StudioAdminRoles overrides the roles treated as Studio admins,

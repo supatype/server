@@ -58,7 +58,7 @@ func inRange(name string, value, low, high int) error {
 // Two keyspaces, because the routes below want different ones. The cache routes
 // read and delete cached responses, which live in the project's own keyspace.
 // The credential routes read and write the KEK-wrapped managed password, whose
-// only copy is platform state — served from the project keyspace they would
+// only copy is platform state. Served from the project keyspace they would
 // report "no credentials" for a project that has them, and a rotation would
 // write the new secret somewhere the control plane will never look. Eligibility
 // is platform state too: it comes from the tenant configuration.
@@ -69,7 +69,7 @@ func inRange(name string, value, low, high int) error {
 // Stats may be nil, which serves the cache-statistics route with an empty
 // report rather than removing it: a screen that asks for numbers should be told
 // there are none, not given a 404 to interpret. Monitor may be nil on the same
-// principle, and for the commoner reason — a deployment with no database DSN.
+// principle, and for the commoner reason: a deployment with no database DSN.
 //
 // A struct rather than a parameter list because Cache and Platform have the
 // same type and opposite meanings. Swapping them at a call site compiles
@@ -96,7 +96,7 @@ type Deps struct {
 	// A function rather than a map because a multi-tenant pod resolves its manifest per request: a
 	// map captured at mount time would hand every tenant the first one's ceiling.
 	//
-	// Nil, or a nil return, means no declaration — which is "nothing may be cached", not "no
+	// Nil, or a nil return, means no declaration, which is "nothing may be cached", not "no
 	// constraint". See cacheceiling.Narrow.
 	Declared func(*http.Request) map[string]proxy.TableCache
 }
@@ -111,6 +111,7 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("/database/credentials/status", only(http.MethodGet, credentialStatusHandler(cfg, platform)))
 	mux.HandleFunc("/database/credentials/first-view", only(http.MethodPost, credentialFirstViewHandler(cfg, platform)))
 	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, platform)))
+	mux.HandleFunc("/database/connection", only(http.MethodGet, connectionHandler(cfg)))
 
 	mountCacheRoutes(mux, cfg, vc, platform, stats)
 	mountKeyspaceStatsRoutes(mux, cfg, d.Monitor)
@@ -235,7 +236,7 @@ type restConfigResponse struct {
 	RowCache *rowCacheReconcile `json:"row_cache,omitempty"`
 	// Declared is what the schema permits, per table: the ceiling this configuration was chosen
 	// from. Omitted when empty, which a reader must take as "nothing is permitted" rather than
-	// "no constraint" — the same direction every other reader of a missing declaration takes.
+	// "no constraint", the same direction every other reader of a missing declaration takes.
 	Declared map[string]proxy.TableCache `json:"declared,omitempty"`
 	// Adjusted is everything the schema's ceiling refused or reduced.
 	//

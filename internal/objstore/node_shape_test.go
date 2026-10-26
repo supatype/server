@@ -22,9 +22,11 @@ import (
 // packages/storage/tests/fixtures/list-entry.json, a list entry captured from
 // the Node service. Both servers are checked against it.
 
-// nodeContract is the fixture: one real entry, and the fields that may be null.
+// nodeContract is the fixture: one real file entry, one folder entry, and the fields of a file
+// entry that may be null.
 type nodeContract struct {
 	Entry    map[string]any `json:"entry"`
+	Folder   map[string]any `json:"folder"`
 	Nullable []string       `json:"nullable"`
 }
 
@@ -137,5 +139,34 @@ func TestRemoveAnswersWhatTheNodeServiceAnswers(t *testing.T) {
 	rec := do(t, handler, http.MethodDelete, "/object/avatars", userToken(t), strings.NewReader(`{"prefixes":["a.png"]}`))
 	if got := strings.TrimSpace(rec.Body.String()); got != `[{"name":"a.png","bucket_id":"avatars"}]` {
 		t.Errorf("body = %s", got)
+	}
+}
+
+// A subfolder lists as the contract's folder entry: exactly its fields, every one null but the
+// bucket and the folder's own name.
+func TestAListedFolderHasTheContractsFolderShape(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	upload(t, handler, "avatars", "photos/a.txt", "four")
+
+	contract := loadNodeContract(t)
+	if len(contract.Folder) == 0 {
+		t.Fatal("the fixture has no folder entry")
+	}
+	entries := listEntries(t, handler, "avatars")
+	if len(entries) != 1 {
+		t.Fatalf("entries = %v, want only the photos folder", entries)
+	}
+	want := slices.Sorted(maps.Keys(contract.Folder))
+	if got := slices.Sorted(maps.Keys(entries[0])); !slices.Equal(got, want) {
+		t.Fatalf("fields = %v, want %v", got, want)
+	}
+	for _, k := range want {
+		if gotKind, wantKind := kindOf(entries[0][k]), kindOf(contract.Folder[k]); gotKind != wantKind {
+			t.Errorf("%s is %s (%v), want %s", k, gotKind, entries[0][k], wantKind)
+		}
+	}
+	if entries[0]["bucket_id"] != "avatars" || entries[0]["name"] != "photos" {
+		t.Errorf("folder = %v, want bucket avatars and name photos", entries[0])
 	}
 }

@@ -37,7 +37,8 @@ import (
 // supervising a real process, and so this package does not depend on the
 // supervisor to serve a list of log lines.
 type LogSource interface {
-	RecentLogs(since time.Time, n int) []deno.LogLine
+	// FunctionLogs is up to n of the newest lines `function` wrote since the given time, oldest first.
+	FunctionLogs(function string, since time.Time, n int) []deno.LogLine
 }
 
 // Handler returns a chi.Router that serves the functions admin API.
@@ -50,7 +51,7 @@ func Handler(cfg *config.Config, functionsDir string, manager LogSource) http.Ha
 
 	r.Get("/list", listFunctions(functionsDir))
 	r.Get("/{name}/logs", functionLogs(manager))
-	// The live tail, relayed from the external worker. `RecentLogs` above only answers when this
+	// The live tail, relayed from the external worker. `FunctionLogs` above only answers when this
 	// server supervises Deno itself, which it does not in Compose or on cloud: the read API was
 	// there and nothing wrote to it.
 	r.Get("/logs/tail", tailFunctionLogs(newLogStream(cfg.FunctionsWorkerURL)))
@@ -171,6 +172,8 @@ type logEntry struct {
 	Message   string `json:"message"`
 }
 
+// functionLogs serves GET /{name}/logs: that function's newest 500 lines, oldest first. Lines that
+// name no function, such as Deno's own compile errors, are not any one function's and are left out.
 func functionLogs(manager LogSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if manager == nil {
@@ -179,7 +182,7 @@ func functionLogs(manager LogSource) http.HandlerFunc {
 		}
 
 		since := parseSince(r.URL.Query().Get("since"))
-		raw := manager.RecentLogs(since, 500)
+		raw := manager.FunctionLogs(chi.URLParam(r, "name"), since, 500)
 
 		entries := make([]logEntry, len(raw))
 		for i, l := range raw {

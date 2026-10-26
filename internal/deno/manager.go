@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,8 +25,8 @@ const (
 
 // command builds the child process.
 //
-// A seam: the supervisor's behaviour — draining both streams into the ring
-// buffer, restarting on a crash, stopping on cancellation — is worth testing,
+// A seam: the supervisor's behaviour (draining both streams into the ring
+// buffer, restarting on a crash, stopping on cancellation) is worth testing,
 // and requiring a Deno installation to test it would mean not testing it.
 //
 // #nosec G204 -- the path is validated by validateCommandPath before this is
@@ -39,11 +40,14 @@ type LogLine struct {
 	Timestamp time.Time
 	Level     string // "info" or "error"
 	Message   string
+	// Function is the function whose invocation wrote the line, from the router's `function`
+	// field, or empty when the line names none.
+	Function string
 }
 
 // Manager supervises a Deno process that serves edge functions.
 // It spawns `deno run [--watch] --allow-net --allow-env --allow-read {serveEntry}` where
-// serveEntry is the generated router (uses `Deno.serve` internally — equivalent role to a
+// serveEntry is the generated router (uses `Deno.serve` internally, the same role as a
 // dedicated `deno serve` file server, but `deno run` is required for our multi-route TS entry).
 // Restarts on crash with exponential backoff (1s → 2s → 4s → … → 30s cap).
 // PORT must be communicated via environment; the child's PORT is overridden so it cannot
@@ -59,7 +63,7 @@ type Manager struct {
 	cancel  context.CancelFunc
 	stopped bool
 
-	// Log ring buffer — capped at logRingSize entries.
+	// Log ring buffer, capped at logRingSize entries.
 	logMu  sync.RWMutex
 	logBuf []LogLine
 }
@@ -105,23 +109,32 @@ func (m *Manager) Stop() {
 	}
 }
 
-// RecentLogs returns up to n log lines captured since the given time.
-// If since is zero, all buffered lines are returned.
+// RecentLogs returns up to n log lines captured since the given time, oldest first, keeping the
+// newest when there are more. If since is zero, all buffered lines are candidates.
 func (m *Manager) RecentLogs(since time.Time, n int) []LogLine {
+	return m.recentLogs(since, n, func(LogLine) bool { return true })
+}
+
+// FunctionLogs is RecentLogs narrowed to the lines attributed to one function. A line that names
+// no function (Deno's own output, the router starting up) is not that function's and is left out.
+func (m *Manager) FunctionLogs(function string, since time.Time, n int) []LogLine {
+	return m.recentLogs(since, n, func(l LogLine) bool { return l.Function == function })
+}
+
+// recentLogs is up to n of the newest lines since the given time that `keep` accepts, oldest
+// first. Lines are filtered before they are counted, so n is n of the lines asked for.
+func (m *Manager) recentLogs(since time.Time, n int, keep func(LogLine) bool) []LogLine {
 	m.logMu.RLock()
 	defer m.logMu.RUnlock()
 
-	result := make([]LogLine, 0, n)
+	result := make([]LogLine, 0, min(max(n, 0), len(m.logBuf)))
 	for i := len(m.logBuf) - 1; i >= 0 && len(result) < n; i-- {
 		l := m.logBuf[i]
-		if since.IsZero() || l.Timestamp.After(since) {
+		if (since.IsZero() || l.Timestamp.After(since)) && keep(l) {
 			result = append(result, l)
 		}
 	}
-	// Reverse to chronological order.
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		result[i], result[j] = result[j], result[i]
-	}
+	slices.Reverse(result)
 	return result
 }
 
@@ -134,39 +147,41 @@ type structuredLine struct {
 	Timestamp string `json:"timestamp"`
 	Level     string `json:"level"`
 	Message   string `json:"message"`
+	Function  string `json:"function"`
 }
 
-// parseLine turns a router line into its parts, falling back to the whole line as the message.
+// parseLine turns a router line into a LogLine, falling back to the whole line as the message.
 //
-// The fallback is not a nicety: Deno itself writes to this stream — a compile error, a panic, a
-// warning about a permission — and none of that is JSON. Dropping those would hide exactly the
+// The fallback is not a nicety: Deno itself writes to this stream (a compile error, a panic, a
+// warning about a permission) and none of that is JSON. Dropping those would hide exactly the
 // output somebody is looking for when a function will not start.
-func parseLine(level, raw string) (string, string, time.Time) {
+func parseLine(level, raw string) LogLine {
+	whole := LogLine{Timestamp: time.Now().UTC(), Level: level, Message: raw}
 	trimmed := strings.TrimSpace(raw)
 	if !strings.HasPrefix(trimmed, "{") {
-		return level, raw, time.Now().UTC()
+		return whole
 	}
 
 	var parsed structuredLine
 	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil || parsed.Message == "" {
-		return level, raw, time.Now().UTC()
+		return whole
 	}
 
-	at := time.Now().UTC()
-	if parsed.Timestamp != "" {
-		if t, err := time.Parse(time.RFC3339, parsed.Timestamp); err == nil {
-			at = t.UTC()
-		}
+	line := LogLine{Timestamp: whole.Timestamp, Level: level, Message: parsed.Message, Function: parsed.Function}
+	if t, err := time.Parse(time.RFC3339, parsed.Timestamp); err == nil {
+		line.Timestamp = t.UTC()
 	}
 	// The router's own level is better than the stream it arrived on: it knows a warning from an
 	// error, where stdout and stderr only know two.
 	if parsed.Level != "" {
-		level = parsed.Level
+		line.Level = parsed.Level
 	}
-	return level, parsed.Message, at
+	return line
 }
 
 func (m *Manager) appendLog(level, message string) {
+	line := parseLine(level, message)
+
 	m.logMu.Lock()
 	defer m.logMu.Unlock()
 
@@ -174,12 +189,7 @@ func (m *Manager) appendLog(level, message string) {
 		// Drop oldest entry.
 		m.logBuf = m.logBuf[1:]
 	}
-	parsedLevel, parsedMessage, at := parseLine(level, message)
-	m.logBuf = append(m.logBuf, LogLine{
-		Timestamp: at,
-		Level:     parsedLevel,
-		Message:   parsedMessage,
-	})
+	m.logBuf = append(m.logBuf, line)
 }
 
 func (m *Manager) runLoop(ctx context.Context) {
@@ -205,7 +215,7 @@ func (m *Manager) runLoop(ctx context.Context) {
 
 		if err := m.run(ctx); err != nil {
 			if ctx.Err() != nil {
-				// Context cancelled — clean shutdown, not a crash.
+				// Context cancelled: a clean shutdown, not a crash.
 				return
 			}
 
@@ -219,7 +229,7 @@ func (m *Manager) runLoop(ctx context.Context) {
 
 			backoff = min(backoff*2, backoffMax)
 		} else {
-			// Clean exit — reset backoff.
+			// Clean exit: reset the backoff.
 			backoff = backoffInitial
 		}
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/models"
 )
 
@@ -78,4 +79,59 @@ func (ts *AdminTestSuite) TestAdminSessionsNeedAdminCredentials() {
 	w := httptest.NewRecorder()
 	ts.API.handler.ServeHTTP(w, req)
 	require.Equal(ts.T(), http.StatusUnauthorized, w.Code)
+}
+
+// sessionForUser makes a session for an existing user, last used at `usedAt`.
+func (ts *AdminTestSuite) sessionForUser(userID uuid.UUID, notAfter *time.Time, usedAt time.Time) *models.Session {
+	s, err := models.NewSession(userID, nil)
+	require.NoError(ts.T(), err)
+	s.NotAfter = notAfter
+	require.NoError(ts.T(), ts.API.db.Create(s))
+	require.NoError(ts.T(), ts.API.db.RawQuery("UPDATE auth.sessions SET updated_at = ? WHERE id = ?", usedAt, s.ID).Exec())
+	return s
+}
+
+// listedSessionIDs is the session ids a `{"sessions": [...]}` answer lists, in order.
+func (ts *AdminTestSuite) listedSessionIDs(w *httptest.ResponseRecorder) []uuid.UUID {
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+	var got struct {
+		Sessions []struct {
+			ID     uuid.UUID `json:"id"`
+			UserID uuid.UUID `json:"user_id"`
+		} `json:"sessions"`
+	}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&got))
+	require.NotNil(ts.T(), got.Sessions, "sessions must be a list, not null")
+	ids := make([]uuid.UUID, 0, len(got.Sessions))
+	for _, s := range got.Sessions {
+		ids = append(ids, s.ID)
+	}
+	return ids
+}
+
+// A user's page in Studio lists only that user's sessions that have not run out, most recently
+// used first.
+func (ts *AdminTestSuite) TestAdminUserSessionsListsOnlyThatUsersActiveSessions() {
+	other := ts.sessionFor("other@example.com", nil)
+	mine := ts.sessionFor("mine@example.com", nil)
+	now, past := time.Now(), time.Now().Add(-time.Hour)
+	ts.sessionForUser(mine.UserID, &past, now)
+	newest := ts.sessionForUser(mine.UserID, nil, now.Add(time.Minute))
+	ts.execSQL("UPDATE auth.sessions SET updated_at = ? WHERE id IN (?, ?)", now.Add(-time.Minute), mine.ID, other.ID)
+
+	w := ts.adminSessionsRequest(http.MethodGet, "/admin/users/"+mine.UserID.String()+"/sessions")
+	require.Equal(ts.T(), []uuid.UUID{newest.ID, mine.ID}, ts.listedSessionIDs(w))
+
+	u := ts.createFilterUser("nosessions@example.com", "", "")
+	w = ts.adminSessionsRequest(http.MethodGet, "/admin/users/"+u.ID.String()+"/sessions")
+	require.Empty(ts.T(), ts.listedSessionIDs(w))
+}
+
+// An unknown user is the user lookup's 404, not a missing route's.
+func (ts *AdminTestSuite) TestAdminUserSessionsUnknownUser() {
+	w := ts.adminSessionsRequest(http.MethodGet, "/admin/users/"+uuid.Must(uuid.NewV4()).String()+"/sessions")
+	require.Equal(ts.T(), http.StatusNotFound, w.Code, w.Body.String())
+	data := map[string]interface{}{}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+	require.Equal(ts.T(), string(apierrors.ErrorCodeUserNotFound), data["error_code"])
 }

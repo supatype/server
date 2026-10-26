@@ -446,3 +446,14 @@ func FindActiveSessions(tx *storage.Connection, now time.Time) ([]*Session, erro
 	}
 	return sessions, nil
 }
+
+// FindActiveSessionsForUser is FindActiveSessions narrowed to one user's sessions, for the admin
+// API's view of a single user.
+func FindActiveSessionsForUser(tx *storage.Connection, userID uuid.UUID, now time.Time) ([]*Session, error) {
+	sessions := []*Session{}
+	q := tx.Q().Where("user_id = ? AND (not_after IS NULL OR not_after > ?)", userID, now)
+	if err := q.Order("updated_at DESC").All(&sessions); err != nil {
+		return nil, errors.Wrap(err, "error finding the user's active sessions")
+	}
+	return sessions, nil
+}

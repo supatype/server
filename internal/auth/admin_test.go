@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,6 +275,166 @@ func (ts *AdminTestSuite) TestAdminUsers_FilterName() {
 
 	require.Len(ts.T(), data.Users, 1)
 	assert.Equal(ts.T(), "test1@example.com", data.Users[0].GetEmail())
+}
+
+// filterUserEmails creates one user per email, with the metadata given for it, and returns the
+// emails `GET /admin/users?filter=<filter>` answers with.
+func (ts *AdminTestSuite) filterUserEmails(users map[string]map[string]interface{}, filter string) []string {
+	for email, meta := range users {
+		u, err := models.NewUser("", email, "test", ts.Config.JWT.Aud, meta)
+		require.NoError(ts.T(), err, "Error making new user")
+		require.NoError(ts.T(), ts.API.db.Create(u), "Error creating user")
+	}
+
+	return ts.listedEmails(ts.getAdminUsers("filter=" + url.QueryEscape(filter)))
+}
+
+// Studio searches users by the name an OAuth provider stores, which is `name`, not `full_name`.
+func (ts *AdminTestSuite) TestAdminUsers_FilterMetadataName() {
+	emails := ts.filterUserEmails(map[string]map[string]interface{}{
+		"grace@example.com": {"name": "Grace Hopper"},
+		"other@example.com": {"name": "Someone Else"},
+	}, "hopper")
+	assert.Equal(ts.T(), []string{"grace@example.com"}, emails)
+}
+
+// An email stored with capitals, by SQL or an import, is found by a lower case search.
+func (ts *AdminTestSuite) TestAdminUsers_FilterEmailIgnoresCase() {
+	u, err := models.NewUser("", "mixed@example.com", "test", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err, "Error making new user")
+	require.NoError(ts.T(), ts.API.db.Create(u), "Error creating user")
+	require.NoError(ts.T(), ts.API.db.RawQuery("UPDATE auth.users SET email = ? WHERE id = ?", "Mixed.Case@Example.com", u.ID).Exec())
+
+	emails := ts.filterUserEmails(nil, "mixed.case@")
+	assert.Equal(ts.T(), []string{"Mixed.Case@Example.com"}, emails)
+}
+
+// `%` and `_` typed into the search are the characters themselves, not LIKE wildcards.
+func (ts *AdminTestSuite) TestAdminUsers_FilterWildcardsAreLiteral() {
+	users := map[string]map[string]interface{}{
+		"a_b@example.com": nil,
+		"axb@example.com": nil,
+		"pct@example.com": {"full_name": "100% Done"},
+		"num@example.com": {"full_name": "1000 Done"},
+	}
+	assert.Equal(ts.T(), []string{"a_b@example.com"}, ts.filterUserEmails(users, "a_b"))
+	assert.Equal(ts.T(), []string{"pct@example.com"}, ts.filterUserEmails(nil, "100%"))
+}
+
+// seedFilterUsers makes three users that differ in role, ban, confirmation and provider:
+//
+//	alice: role editor, email confirmed, banned for a day, a github identity
+//	bob:   default role, unconfirmed, ban already over, an email identity
+//	carol: role editor, phone confirmed only, never banned, no identity
+func (ts *AdminTestSuite) seedFilterUsers() {
+	now := time.Now()
+	future, past := now.Add(24*time.Hour), now.Add(-time.Hour)
+	alice := ts.createFilterUser("alice@example.com", "editor", "github")
+	bob := ts.createFilterUser("bob@example.com", "", "email")
+	carol := ts.createFilterUser("carol@example.com", "editor", "")
+	ts.execSQL("UPDATE auth.users SET email_confirmed_at = ?, banned_until = ? WHERE id = ?", now, future, alice.ID)
+	ts.execSQL("UPDATE auth.users SET email_confirmed_at = NULL, phone_confirmed_at = NULL, banned_until = ? WHERE id = ?", past, bob.ID)
+	ts.execSQL("UPDATE auth.users SET email_confirmed_at = NULL, phone = '15550001111', phone_confirmed_at = ?, banned_until = NULL WHERE id = ?", now, carol.ID)
+}
+
+// createFilterUser saves a user with the role given (the default when empty) and, when a
+// provider is given, one identity from that provider.
+func (ts *AdminTestSuite) createFilterUser(email, role, provider string) *models.User {
+	u, err := models.NewUser("", email, "test", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err, "Error making new user")
+	if role != "" {
+		u.Role = role
+	}
+	require.NoError(ts.T(), ts.API.db.Create(u), "Error creating user")
+	if provider != "" {
+		i, err := models.NewIdentity(u, provider, map[string]interface{}{"sub": u.ID.String()})
+		require.NoError(ts.T(), err)
+		require.NoError(ts.T(), ts.API.db.Create(i), "Error creating identity")
+	}
+	return u
+}
+
+func (ts *AdminTestSuite) execSQL(sql string, args ...interface{}) {
+	require.NoError(ts.T(), ts.API.db.RawQuery(sql, args...).Exec())
+}
+
+// getAdminUsers answers `GET /admin/users?<query>` as the admin.
+func (ts *AdminTestSuite) getAdminUsers(query string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/users?"+query, nil)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ts.token))
+	ts.API.handler.ServeHTTP(w, req)
+	return w
+}
+
+// listedEmails is the sorted emails of the users in a `GET /admin/users` answer.
+func (ts *AdminTestSuite) listedEmails(w *httptest.ResponseRecorder) []string {
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+	data := struct {
+		Users []*models.User `json:"users"`
+	}{}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+	emails := make([]string, 0, len(data.Users))
+	for _, u := range data.Users {
+		emails = append(emails, u.GetEmail())
+	}
+	slices.Sort(emails)
+	return emails
+}
+
+// assertListed checks the users `GET /admin/users?<query>` lists and the total it counts.
+func (ts *AdminTestSuite) assertListed(query string, want ...string) {
+	w := ts.getAdminUsers(query)
+	assert.Equal(ts.T(), append([]string{}, want...), ts.listedEmails(w), query)
+	assert.Equal(ts.T(), strconv.Itoa(len(want)), w.Header().Get("X-Total-Count"), query)
+}
+
+func (ts *AdminTestSuite) TestAdminUsers_FilterRole() {
+	ts.seedFilterUsers()
+	ts.assertListed("role=editor", "alice@example.com", "carol@example.com")
+	ts.assertListed("role=", "alice@example.com", "bob@example.com", "carol@example.com")
+}
+
+func (ts *AdminTestSuite) TestAdminUsers_FilterBanned() {
+	ts.seedFilterUsers()
+	ts.assertListed("banned=true", "alice@example.com")
+	ts.assertListed("banned=false", "bob@example.com", "carol@example.com")
+}
+
+func (ts *AdminTestSuite) TestAdminUsers_FilterConfirmed() {
+	ts.seedFilterUsers()
+	ts.assertListed("confirmed=true", "alice@example.com", "carol@example.com")
+	ts.assertListed("confirmed=false", "bob@example.com")
+}
+
+func (ts *AdminTestSuite) TestAdminUsers_FilterProvider() {
+	ts.seedFilterUsers()
+	ts.assertListed("provider=github", "alice@example.com")
+	ts.assertListed("provider=email", "bob@example.com")
+	ts.assertListed("provider=google")
+}
+
+// The filters combine with each other and with the text search, and the count and the Link
+// header follow the filtered list.
+func (ts *AdminTestSuite) TestAdminUsers_FiltersCombine() {
+	ts.seedFilterUsers()
+	ts.assertListed("role=editor&confirmed=true&banned=false", "carol@example.com")
+	ts.assertListed("filter=alice&role=editor", "alice@example.com")
+	ts.assertListed("filter=bob&role=editor")
+
+	w := ts.getAdminUsers("role=editor&per_page=1")
+	assert.Equal(ts.T(), "2", w.Header().Get("X-Total-Count"))
+	assert.Equal(ts.T(), `</admin/users?page=2&per_page=1&role=editor>; rel="next", </admin/users?page=2&per_page=1&role=editor>; rel="last"`, w.Header().Get("Link"))
+}
+
+func (ts *AdminTestSuite) TestAdminUsers_FilterBadBoolean() {
+	for _, query := range []string{"banned=maybe", "confirmed=yes please"} {
+		w := ts.getAdminUsers(strings.ReplaceAll(query, " ", "+"))
+		require.Equal(ts.T(), http.StatusBadRequest, w.Code, query)
+		data := map[string]interface{}{}
+		require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+		assert.Equal(ts.T(), apierrors.ErrorCodeValidationFailed, data["error_code"], query)
+	}
 }
 
 // TestAdminUserCreate tests API /admin/user route (POST)

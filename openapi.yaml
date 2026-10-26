@@ -1564,9 +1564,36 @@ paths:
             type: integer
             minimum: 1
             default: 50
+        - name: filter
+          in: query
+          description: Text the email, full_name or name contains, ignoring case. % and _ are literal.
+          schema:
+            type: string
+        - name: role
+          in: query
+          description: Only users with exactly this role.
+          schema:
+            type: string
+        - name: banned
+          in: query
+          description: true lists only users banned right now, false only users who are not.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: confirmed
+          in: query
+          description: true lists only users with a confirmed email or phone, false only users with neither.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: provider
+          in: query
+          description: Only users with an identity from this provider.
+          schema:
+            type: string
       responses:
         200:
-          description: A page of users.
+          description: A page of users. Every filter given must hold; X-Total-Count and Link count the filtered users.
           content:
             application/json:
               schema:
@@ -1579,6 +1606,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/UserSchema"
+        400:
+          $ref: "#/components/responses/BadRequestResponse"
         401:
           $ref: "#/components/responses/UnauthorizedResponse"
         403:
@@ -1694,6 +1723,67 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/MFAFactorSchema"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          description: There is no such user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorSchema"
+
+  /admin/users/{userId}/sessions:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: List the sessions of a user that have not run out, most recently used first.
+      tags:
+        - admin
+      security:
+        - APIKeyAuth: []
+          AdminAuth: []
+      responses:
+        200:
+          description: The user's active sessions, in the same shape as GET /admin/sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        user_id:
+                          type: string
+                          format: uuid
+                        ip:
+                          type: string
+                          nullable: true
+                        user_agent:
+                          type: string
+                          nullable: true
+                        created_at:
+                          type: string
+                          format: date-time
+                        updated_at:
+                          type: string
+                          format: date-time
+                        not_after:
+                          type: string
+                          format: date-time
+                          nullable: true
         401:
           $ref: "#/components/responses/UnauthorizedResponse"
         403:

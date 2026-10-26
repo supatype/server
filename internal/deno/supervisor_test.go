@@ -46,7 +46,7 @@ func TestChildProcess(t *testing.T) {
 // childCommand replaces the seam with a run of TestChildProcess.
 //
 // The behaviour is chosen through the Manager's own extra environment rather
-// than the command's, because run sets cmd.Env itself — which is the whole
+// than the command's, because run sets cmd.Env itself, and that is the whole
 // point of envForDenoProcess and would otherwise be bypassed here.
 // The counter is atomic because the supervisor starts children from its own
 // goroutine while the test reads the count from this one.
@@ -400,6 +400,47 @@ func TestRecentLogsSince(t *testing.T) {
 func TestRecentLogsOnAQuietWorker(t *testing.T) {
 	if got := manager(t, "").RecentLogs(time.Time{}, 10); len(got) != 0 {
 		t.Errorf("logs = %v", got)
+	}
+}
+
+// routerLine is a line as the functions router writes it during an invocation of `function`.
+func routerLine(function, message string) string {
+	return fmt.Sprintf(`{"timestamp":%q,"level":"info","function":%q,"message":%q}`,
+		time.Now().UTC().Format(time.RFC3339Nano), function, message)
+}
+
+// A function's log is that function's lines only: not another function's, and not the lines that
+// name no function at all, which cannot be said to be its.
+func TestFunctionLogsKeepOnlyThatFunction(t *testing.T) {
+	m := manager(t, "")
+	m.appendLog("info", routerLine("hello", "hello 1"))
+	m.appendLog("info", routerLine("other", "other 1"))
+	m.appendLog("error", "error: Uncaught TypeError: x is not a function")
+	m.appendLog("info", `{"level":"info","message":"functions router listening"}`)
+	m.appendLog("info", routerLine("hello", "hello 2"))
+
+	got := m.FunctionLogs("hello", time.Time{}, 10)
+	if len(got) != 2 || got[0].Message != "hello 1" || got[1].Message != "hello 2" {
+		t.Fatalf("logs = %v, want hello's two lines in order", got)
+	}
+	if got := m.FunctionLogs("nobody", time.Time{}, 10); len(got) != 0 {
+		t.Errorf("logs = %v, want none for a function that logged nothing", got)
+	}
+}
+
+// The limit counts the function's own lines, so a busy neighbour cannot push them out of the answer.
+func TestFunctionLogsLimitCountsOnlyThatFunction(t *testing.T) {
+	m := manager(t, "")
+	for i := 0; i < 3; i++ {
+		m.appendLog("info", routerLine("hello", fmt.Sprintf("hello %d", i)))
+		for j := 0; j < 10; j++ {
+			m.appendLog("info", routerLine("other", "noise"))
+		}
+	}
+
+	got := m.FunctionLogs("hello", time.Time{}, 2)
+	if len(got) != 2 || got[0].Message != "hello 1" || got[1].Message != "hello 2" {
+		t.Fatalf("logs = %v, want hello's newest two in order", got)
 	}
 }
 

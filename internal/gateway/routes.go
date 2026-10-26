@@ -97,6 +97,14 @@ func Routes() []Route {
 		// Revoking one link and listing them both live under the collection, so the subtree is
 		// mounted rather than each verb being named here.
 		{Pattern: "/admin/preview-links/*", Verb: HandleExact, Build: buildPreviewLinks},
+		// Which browser origins may call the API. Beside the other Studio APIs, authenticated as a
+		// project user with a Studio role, or as the project by the Cloud control plane.
+		{
+			Pattern: "/admin/cors-origins",
+			Verb:    HandleExact,
+			Build:   buildCORSOrigins,
+			Log:     "mux: CORS origins API mounted at /admin/cors-origins",
+		},
 		// Exchanging a link for a short-lived token. Deliberately NOT under /admin: the whole point
 		// of a preview link is that its holder has no account, so this is the one preview route that
 		// cannot require one. The code is the credential.

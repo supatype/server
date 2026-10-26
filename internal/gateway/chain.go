@@ -5,6 +5,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/corsorigins"
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/proxy"
 )
@@ -32,7 +33,23 @@ func (c Chain) Then(h http.Handler) http.Handler {
 	return h
 }
 
-// ModeChain is the middleware a deployment mode puts in front of the mux.
+// ModeChain is the per-mode stack with the CORS policy cfg alone describes: what is configured,
+// nothing saved and no site URL. The server builds its policy with both (see ModeChainWithPolicy).
+func ModeChain(cfg *config.Config, manifestFor func(*http.Request) *proxy.RouteManifest) Chain {
+	return ModeChainWithPolicy(cfg, manifestFor, DefaultCORSPolicy(cfg, nil, ""))
+}
+
+// DefaultCORSPolicy is the CORS policy for cfg: its configured and platform origins, the site URL,
+// and store for a list saved from Studio (nil when there is no database).
+func DefaultCORSPolicy(cfg *config.Config, store corsorigins.Store, siteURL string) *corsorigins.Policy {
+	return corsorigins.NewPolicy(store, corsorigins.Defaults{
+		SiteURL:    siteURL,
+		Configured: corsorigins.ParseList(cfg.CorsAllowOrigins),
+		Platform:   corsorigins.ParseList(cfg.CorsPlatformOrigins),
+	})
+}
+
+// ModeChainWithPolicy is the middleware a deployment mode puts in front of the mux.
 //
 // In dev it is permissive CORS, reflecting any origin.
 //
@@ -42,11 +59,16 @@ func (c Chain) Then(h http.Handler) http.Handler {
 // origin and answers the OPTIONS itself, before either gate sees it. Nest these
 // the other way round and every preflight becomes a 401.
 //
-// In standalone mode it is the configured CORS allowlist, if there is one.
+// In standalone mode it is the CORS policy alone, always: before SHb there was
+// no layer at all when no origin was configured, and the auth service's own
+// `*` went out to every origin.
 //
 // Misconfiguration is logged here rather than in the mounting code, because this
 // is where the consequence lives.
-func ModeChain(cfg *config.Config, manifestFor func(*http.Request) *proxy.RouteManifest) Chain {
+func ModeChainWithPolicy(cfg *config.Config, manifestFor func(*http.Request) *proxy.RouteManifest, policy *corsorigins.Policy) Chain {
+	corsLayer := func(next http.Handler) http.Handler {
+		return modes.PolicyCORSMiddleware(policy, manifestFor, next)
+	}
 	switch cfg.Mode {
 	case "dev":
 		return Chain{modes.DevMiddleware}
@@ -55,11 +77,7 @@ func ModeChain(cfg *config.Config, manifestFor func(*http.Request) *proxy.RouteM
 		if cfg.JWTSecret == "" {
 			logrus.Error("mux: managed mode but JWT secret is unset, data-plane requests will be refused")
 		}
-		chain := Chain{
-			func(next http.Handler) http.Handler {
-				return modes.ManagedCORSMiddleware(cfg.CorsAllowOrigins, manifestFor, next)
-			},
-		}
+		chain := Chain{corsLayer}
 		if cfg.TenantHMACSecret != "" {
 			chain = append(chain, func(next http.Handler) http.Handler {
 				return modes.TenantMiddleware(cfg.TenantHMACSecret, next)
@@ -72,13 +90,7 @@ func ModeChain(cfg *config.Config, manifestFor func(*http.Request) *proxy.RouteM
 		})
 
 	case "standalone":
-		origins := modes.ParseCSV(cfg.CorsAllowOrigins)
-		if len(origins) == 0 {
-			return nil
-		}
-		return Chain{func(next http.Handler) http.Handler {
-			return modes.AllowlistCORSMiddleware(func(*http.Request) []string { return origins }, next)
-		}}
+		return Chain{corsLayer}
 	}
 	return nil
 }

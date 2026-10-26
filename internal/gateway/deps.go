@@ -9,6 +9,7 @@ import (
 	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/apiconfig"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/corsorigins"
 	"github.com/supatype/server/internal/data"
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/deno"
@@ -45,17 +46,17 @@ type Deps struct {
 	// APIStore is the on-disk API configuration the admin API edits and the REST
 	// mount reads.
 	APIStore apiconfig.Store
-	// Cache is the project's keyspace — where cached responses are stored. Never
+	// Cache is the project's keyspace, where cached responses are stored. Never
 	// nil; see data.Resources.Cache.
 	Cache keyspace.Client
-	// PlatformCache is the platform keyspace — where the tenant configuration and
+	// PlatformCache is the platform keyspace: where the tenant configuration and
 	// the wrapped DB credentials live. Never nil.
 	//
 	// Both are here because the response cache needs both and for different
 	// reasons: what it stores belongs to the project, while whether it is allowed
 	// to store anything at all is read from the tenant configuration, which is
 	// platform state. Handing it one client for both is the mistake this field
-	// exists to prevent — on a split deployment the tenant config simply is not in
+	// exists to prevent: on a split deployment the tenant config simply is not in
 	// the project keyspace, and a miss there is indistinguishable from a tenant
 	// nobody ever published, which turns the cache off for every paid project.
 	PlatformCache keyspace.Client
@@ -79,6 +80,19 @@ type Deps struct {
 	// so it needs the router it is itself mounted on. Set by Build before the
 	// mounts run.
 	Router http.Handler
+
+	// CORS decides which browser origins may call the API outside dev mode, and is what the
+	// origins API reads and edits. Without WithCORSPolicy it is the configured origins alone.
+	CORS *corsorigins.Policy
+}
+
+// DepsOption sets something NewDeps cannot derive from its arguments.
+type DepsOption func(*Deps)
+
+// WithCORSPolicy gives the gateway the CORS policy the server built: the site URL and the
+// database the saved list lives in, which only the bootstrap holds.
+func WithCORSPolicy(policy *corsorigins.Policy) DepsOption {
+	return func(d *Deps) { d.CORS = policy }
 }
 
 // NewDeps resolves everything the mounts share.
@@ -91,6 +105,7 @@ func NewDeps(
 	version string,
 	resources *data.Resources,
 	sendEmailHook http.Handler,
+	opts ...DepsOption,
 ) *Deps {
 	d := &Deps{
 		Config:        cfg,
@@ -110,6 +125,12 @@ func NewDeps(
 	d.Studio = newStudioConfig(cfg, resources)
 	d.HookCallback = newHookCallback(d)
 	d.Hooks = newHookMiddleware(d)
+	for _, opt := range opts {
+		opt(d)
+	}
+	if d.CORS == nil {
+		d.CORS = DefaultCORSPolicy(cfg, nil, "")
+	}
 	return d
 }
 
@@ -197,7 +218,7 @@ func (d *Deps) AdminPool() (sqlrunner.Pool, error) {
 // The file is still right for dev and self-host, where the working directory persists and is the
 // thing a developer expects to edit.
 //
-// Both conditions are required. Without a project ref there is no key to write under — a
+// Both conditions are required. Without a project ref there is no key to write under; a
 // multi-tenant pod resolves its tenant per request, and one shared api_config key would give every
 // tenant the last one's settings. Without a reachable keyspace there is nothing to write to, and a
 // store that errors on every read is worse than a file that merely forgets.
@@ -213,7 +234,7 @@ func apiConfigStore(cfg *config.Config, platform keyspace.Client) apiconfig.Stor
 // monitoring views, or nothing when this deployment has no database.
 //
 // Resolved at mount time rather than per request, because the routes it feeds
-// render "unavailable" as a first-class state — a deployment without the
+// render "unavailable" as a first-class state: a deployment without the
 // extension is a supported deployment, not a 503 to explain.
 //
 // The nil is returned explicitly, for the same reason AdminPool converts

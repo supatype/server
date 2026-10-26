@@ -24,6 +24,13 @@ const defaultUpstreamHTTPTimeout = 2 * time.Minute
 // exists and how it attaches are properties of the entry in Routes; the only
 // thing expressed here is that they are applied in order.
 func Build(d *Deps) http.Handler {
+	// The per-mode stack, outermost first. See ModeChainWithPolicy for why the managed
+	// order is load-bearing.
+	return ModeChainWithPolicy(d.Config, d.ManifestFor, d.CORS).Then(buildRouter(d))
+}
+
+// buildRouter is the mux with every route attached and no per-mode stack in front of it.
+func buildRouter(d *Deps) *chi.Mux {
 	r := chi.NewRouter()
 	for _, mw := range baseMiddleware(d.Config) {
 		r.Use(mw)
@@ -37,10 +44,7 @@ func Build(d *Deps) http.Handler {
 	for _, route := range Routes() {
 		attach(r, route, d)
 	}
-
-	// The per-mode stack, outermost first. See ModeChain for why the managed
-	// order is load-bearing.
-	return ModeChain(d.Config, d.ManifestFor).Then(r)
+	return r
 }
 
 // baseMiddleware runs on every request, whatever the mode.
@@ -65,9 +69,10 @@ func buildOuterMux(
 	version string,
 	resources *data.Resources,
 	sendEmailHook http.Handler,
+	opts ...DepsOption,
 ) http.Handler {
 	return Build(NewDeps(
 		cfg, manifestFor, healthProbes, authHandler,
-		denoManager, version, resources, sendEmailHook,
+		denoManager, version, resources, sendEmailHook, opts...,
 	))
 }

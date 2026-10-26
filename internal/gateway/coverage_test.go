@@ -53,8 +53,8 @@ func depsFor(t *testing.T, cfg *config.Config, manifest *proxy.RouteManifest) *D
 
 // ─── The per-mode middleware stack ────────────────────────────────────────────
 
-// Standalone puts the configured allowlist in front of the mux, and nothing at
-// all when there is no allowlist to enforce.
+// Standalone always puts the CORS layer in front of the mux, with or without an allowlist: with
+// none it still refuses every origin but the site URL, where it used to stand aside (SHb).
 func TestTheStandaloneChain(t *testing.T) {
 	withOrigins := ModeChain(&config.Config{Mode: "standalone", CorsAllowOrigins: "https://app.example"}, nil)
 	if len(withOrigins) != 1 {
@@ -72,8 +72,8 @@ func TestTheStandaloneChain(t *testing.T) {
 		t.Errorf("allow-origin = %q, want the configured origin reflected", got)
 	}
 
-	if got := ModeChain(&config.Config{Mode: "standalone"}, nil); len(got) != 0 {
-		t.Errorf("with no allowlist: %d middleware, want none", len(got))
+	if got := ModeChain(&config.Config{Mode: "standalone"}, nil); len(got) != 1 {
+		t.Errorf("with no allowlist: %d middleware, want the CORS layer", len(got))
 	}
 }
 

@@ -29,8 +29,9 @@ type landing struct {
 }
 
 // proxyCapturing is proxyThroughRouter, keeping the headers each request
-// arrived upstream with and the headers the proxy answered with.
-func proxyCapturing(t *testing.T, role string) (token string, call func(method, target string, extra http.Header) landing) {
+// arrived upstream with and the headers the proxy answered with. Each adjust
+// changes the proxy's configuration before it is built.
+func proxyCapturing(t *testing.T, role string, adjust ...func(*Config)) (token string, call func(method, target string, extra http.Header) landing) {
 	t.Helper()
 	token = signClaims(jwt.MapClaims{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
 	cfg := Config{
@@ -39,6 +40,9 @@ func proxyCapturing(t *testing.T, role string) (token string, call func(method, 
 		AnonKey:        "anon-key",
 		AdminRoles:     DefaultAdminRoles,
 		StudioRole:     func(string) (string, bool) { return role, true },
+	}
+	for _, change := range adjust {
+		change(&cfg)
 	}
 
 	var got landing
@@ -183,5 +187,16 @@ func TestProxyNamesAdminsToTheControlPlane(t *testing.T) {
 		if got.header.Get("X-Supatype-Viewer-Authorization") != "" {
 			t.Errorf("admin %s: an elevated caller has no viewer token to pass on", path)
 		}
+	}
+}
+
+// Mediating the inspector needs the service role. Without a key the request is
+// refused as unavailable, and the developer's own token is not sent on in its
+// place.
+func TestProxyRefusesToMediateWithoutAServiceRoleKey(t *testing.T) {
+	_, developer := proxyCapturing(t, "developer", func(c *Config) { c.ServiceRoleKey = "" })
+	got := developer(http.MethodGet, inspectorChannels, nil)
+	if got.code != http.StatusServiceUnavailable || got.upstream != "" {
+		t.Fatalf("got %d at %q, want 503 and no upstream", got.code, got.upstream)
 	}
 }

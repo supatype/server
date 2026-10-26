@@ -139,3 +139,66 @@ func TestSignedURLsThroughStudioAreCappedAtAnHour(t *testing.T) {
 		t.Errorf("unreadable signing body: status %d, reached %v, want 400", rec.Code, next.reached)
 	}
 }
+
+// sendWrite sends an editor's write through the proxy to upstream, with audit.
+func sendWrite(t *testing.T, upstream http.Handler, audit *fakeAuditor, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	token := bearer(t, jwt.MapClaims{"sub": "user-1", "role": "authenticated"})
+	req := httptest.NewRequest(http.MethodPost, "/rest/v1/posts", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	cfg := membershipConfig("editor")
+	cfg.Audit = audit
+	rec := httptest.NewRecorder()
+	ProxyHandler(upstream, cfg).ServeHTTP(rec, req)
+	return rec
+}
+
+// An upstream that writes its body without a status first answered 200, and
+// that is the status recorded. It can still flush through the recorder.
+func TestAnImplicitOKIsTheStatusRecorded(t *testing.T) {
+	audit := &fakeAuditor{}
+	var flushErr error
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":1}`))
+		_, _ = w.Write([]byte("\n"))
+		flushErr = http.NewResponseController(w).Flush()
+	})
+	rec := sendWrite(t, upstream, audit, strings.NewReader(`{"title":"x"}`))
+	if rec.Code != http.StatusOK || rec.Body.String() != "{\"id\":1}\n" {
+		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
+	}
+	if len(audit.statuses) != 1 || audit.statuses[0] != http.StatusOK {
+		t.Errorf("statuses recorded %v, want [200]", audit.statuses)
+	}
+	if flushErr != nil || !rec.Flushed {
+		t.Errorf("flush through the recorder: %v, flushed %v", flushErr, rec.Flushed)
+	}
+}
+
+// The write has happened by the time its status is recorded, so failing to
+// record the status leaves the response the caller gets as it was.
+func TestAStatusThatCannotBeRecordedLeavesTheResponseAlone(t *testing.T) {
+	audit := &fakeAuditor{failStatus: true}
+	next := &bodyUpstream{status: http.StatusCreated}
+	rec := sendWrite(t, next, audit, strings.NewReader(`{"title":"x"}`))
+	if !next.reached || rec.Code != http.StatusCreated || len(audit.records) != 1 || len(audit.statuses) != 1 {
+		t.Fatalf("reached %v, status %d, records %d, statuses %v", next.reached, rec.Code, len(audit.records), audit.statuses)
+	}
+}
+
+// A body the proxy cannot read to digest is recorded as unreadable, with its
+// type, rather than as a digest of whatever part arrived.
+func TestABodyThatCannotBeReadIsRecordedAsUnreadable(t *testing.T) {
+	audit := &fakeAuditor{}
+	sendWrite(t, &bodyUpstream{status: http.StatusBadRequest}, audit, io.MultiReader(strings.NewReader(`{"ti`), failingBody{}))
+	if len(audit.records) != 1 || !strings.HasPrefix(audit.records[0].Body, "unreadable; ") || !strings.HasSuffix(audit.records[0].Body, "application/json") {
+		t.Fatalf("records %+v, want one marked unreadable with its type", audit.records)
+	}
+}
+
+// Recording the status of a request that was never recorded does nothing.
+func TestFinishingAnUnrecordedRequestIsANoOp(t *testing.T) {
+	var audit *proxyAudit
+	audit.finish(http.StatusOK)
+}

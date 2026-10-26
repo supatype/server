@@ -104,3 +104,55 @@ func TestAnEditorRunsGraphQLMutations(t *testing.T) {
 		}
 	}
 }
+
+// Strings are skipped as the GraphQL lexer skips them, block strings and
+// escaped quotes included, so a brace or keyword inside one changes nothing.
+func TestAViewerRunsGraphQLQueriesWithStrings(t *testing.T) {
+	for name, body := range map[string]string{
+		"block string":         graphQLBody(`query A { posts(filter: """} mutation { x }""") { id } }`, ""),
+		"escaped block quotes": graphQLBody(`query A { posts(filter: """a \""" } mutation { x }""") { id } }`, ""),
+		"escaped quote":        graphQLBody(`{ posts(filter: "a \" } mutation { x }") { id } }`, ""),
+	} {
+		if next, rec := sendGraphQL(t, "viewer", http.MethodPost, "/graphql/v1", body); !next.reached {
+			t.Errorf("%s: viewer refused with %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	for name, target := range map[string]string{
+		"GET, selected query": "/graphql/v1?query=" + url.QueryEscape(`query A { a } mutation B { x }`) + "&operationName=A",
+		"GET, no document":    "/graphql/v1",
+	} {
+		if next, rec := sendGraphQL(t, "viewer", http.MethodGet, target, ""); !next.reached {
+			t.Errorf("%s: viewer refused with %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// A document or request the classifier cannot read the way GraphQL would is
+// not a read, so a viewer is refused it.
+func TestAViewerCannotRunGraphQLItCannotRead(t *testing.T) {
+	for name, body := range map[string]string{
+		"unterminated block string": graphQLBody(`{ a(s: """x) }`, ""),
+		"newline in a string":       graphQLBody("{ a(s: \"x\ny\") }", ""),
+		"mismatched brackets":       graphQLBody(`{ a(s: 1 } }`, ""),
+		"character the lexer drops": graphQLBody(`{ a ? }`, ""),
+		"operationName not a name":  `{"query":"{ a }","operationName":1}`,
+		"value missing":             `{"query":}`,
+		"object closed as an array": `{"query":"{ a }"]`,
+	} {
+		if next, rec := sendGraphQL(t, "viewer", http.MethodPost, "/graphql/v1", body); next.reached || rec.Code != http.StatusForbidden {
+			t.Errorf("%s: viewer got %d, reached %v", name, rec.Code, next.reached)
+		}
+	}
+	q := url.QueryEscape(`{ a }`)
+	for name, target := range map[string]string{
+		"GET, repeated query":         "/graphql/v1?query=" + q + "&query=" + q,
+		"GET, repeated operationName": "/graphql/v1?query=" + q + "&operationName=A&operationName=B",
+	} {
+		if next, rec := sendGraphQL(t, "viewer", http.MethodGet, target, ""); next.reached || rec.Code != http.StatusForbidden {
+			t.Errorf("%s: viewer got %d, reached %v", name, rec.Code, next.reached)
+		}
+	}
+	if next, rec := sendGraphQL(t, "viewer", http.MethodPut, "/graphql/v1", graphQLBody(`{ a }`, "")); next.reached || rec.Code != http.StatusForbidden {
+		t.Errorf("PUT: viewer got %d, reached %v", rec.Code, next.reached)
+	}
+}

@@ -449,3 +449,19 @@ func TestATokenWithNoSubject(t *testing.T) {
 		}
 	}
 }
+
+// Acting as Studio forwards the caller's verified claims with the Studio claim
+// added. An admission with no claims to act for cannot be forwarded as Studio,
+// so it is refused as unavailable and the forwarded copy keeps no credential.
+func TestActingAsStudioWithNoClaimsToActForIsRefused(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
+	req2 := req.Clone(req.Context())
+	rec := httptest.NewRecorder()
+	mode, ok := forwardIdentity(rec, req, req2, membershipConfig("editor"), admission{mode: ModeStudio, role: "editor"}, "/rest/v1/posts")
+	if ok || mode != "" || rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), errNoCallerClaims.Error()) {
+		t.Fatalf("got (%q, %v) %d %s", mode, ok, rec.Code, rec.Body.String())
+	}
+	if got := req2.Header.Get("Authorization"); got != "" {
+		t.Errorf("forwarded copy carries %q, want no credential", got)
+	}
+}

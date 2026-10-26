@@ -209,3 +209,14 @@ func TestProxyRefusesToMediateWithoutAServiceRoleKey(t *testing.T) {
 		t.Fatalf("got %d at %q, want 503 and no upstream", got.code, got.upstream)
 	}
 }
+
+// A caller acting as themselves is mediated on the inspector, which needs the
+// service role too: without a key it is refused as unavailable, not sent on
+// with their own token.
+func TestProxyRefusesToMediateASelfCallerWithoutAServiceRoleKey(t *testing.T) {
+	_, developer := proxyCapturing(t, "developer", func(c *Config) { c.ServiceRoleKey = "" })
+	got := developer(http.MethodGet, inspectorChannels, http.Header{ActingModeHeader: {ModeSelf}})
+	if got.code != http.StatusServiceUnavailable || got.upstream != "" {
+		t.Fatalf("got %d at %q, want 503 and no upstream", got.code, got.upstream)
+	}
+}

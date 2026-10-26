@@ -212,3 +212,12 @@ func TestVerifyReportsTheDefaultForAModeTheCallerCannotHave(t *testing.T) {
 		}
 	}
 }
+
+// A capability set that neither elevates nor reads content has nothing to act
+// with but the caller's own identity, so that is its default.
+func TestACapabilitySetThatReadsNothingActsAsSelf(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/rest/v1/posts", nil)
+	if mode, ok := resolveActingMode(req, StudioPermissions{SchemaView: true}); !ok || mode != ModeSelf {
+		t.Fatalf("got (%q, %v), want self", mode, ok)
+	}
+}

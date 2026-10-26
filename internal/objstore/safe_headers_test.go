@@ -146,6 +146,8 @@ func servedTypeCases() []servedTypeCase {
 		{"application/json", "application/json", false},
 		{"text/plain", "text/plain", false},
 		{"Application/Atom+XML", "application/atom+xml", true},
+		// Parses, but its only parameter has no name, so it cannot be written back out.
+		{"text/html; *0=x", octetStream, true},
 	}
 	for active := range activeContentTypes {
 		cases = append(cases, servedTypeCase{active, active, true})
@@ -193,5 +195,32 @@ func TestUploadStoresOnlyAParsedType(t *testing.T) {
 		if got := rec.Header().Get("Content-Security-Policy"); got != sandboxCSP {
 			t.Errorf("%q: csp = %q", in, got)
 		}
+	}
+}
+
+// A handler that writes the body without a status first still sends the
+// object with safe headers, applied once, and the writer underneath stays
+// reachable for flushing.
+func TestSafeObjectWriterHardensABodyWrittenWithoutAStatus(t *testing.T) {
+	rec := httptest.NewRecorder()
+	w := SafeObjectWriter(rec, "page.html")
+	w.Header().Set("Content-Type", "text/html")
+	if _, err := w.Write([]byte("<p>one</p>")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("<p>two</p>")); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || rec.Body.String() != "<p>one</p><p>two</p>" {
+		t.Errorf("got %d %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Disposition"); got != "attachment; filename=page.html" {
+		t.Errorf("disposition = %q", got)
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); got != sandboxCSP {
+		t.Errorf("csp = %q", got)
+	}
+	if err := http.NewResponseController(w).Flush(); err != nil || !rec.Flushed {
+		t.Errorf("flush through the wrapper: %v, flushed %v", err, rec.Flushed)
 	}
 }

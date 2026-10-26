@@ -85,3 +85,14 @@ func TestSigningThroughStudioIsCappedInTheStore(t *testing.T) {
 		t.Errorf("null expiry: signed for %ds, want the default", ttl)
 	}
 }
+
+// An expiry that is not a whole number of seconds is refused rather than read
+// as no expiry and given the default hour.
+func TestSigningRefusesAnExpiryThatIsNotWholeSeconds(t *testing.T) {
+	handler := signingStore(t)
+	for _, body := range []string{`{"expiresIn":"3600"}`, `{"expiresIn":1.5}`, `{"expiresIn":true}`} {
+		if rec := signFor(t, handler, context.Background(), body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d %s, want 400", body, rec.Code, rec.Body.String())
+		}
+	}
+}

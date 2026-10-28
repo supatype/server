@@ -488,3 +488,25 @@ func TestALimitedUploadWhoseBodyFails(t *testing.T) {
 		t.Errorf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// A custom bucket recorded public, by an older build or by hand, is written
+// not public on its next update, whatever the update names, as the storage
+// service rewrites a stale pair.
+func TestAnUpdateCorrectsAPublicCustomBucket(t *testing.T) {
+	for _, update := range []string{`{"public":true}`, `{"file_size_limit":10}`} {
+		t.Run(update, func(t *testing.T) {
+			handler, root := newStore(t)
+			written := `[{"id":"m","name":"m","public":true,"access_mode":"custom","created_at":"x","updated_at":"x"}]`
+			if err := os.WriteFile(filepath.Join(root, ".supatype", "buckets.json"), []byte(written), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if rec := do(t, handler, http.MethodPut, "/bucket/m", serviceToken(t), strings.NewReader(update)); rec.Code != http.StatusOK {
+				t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+			}
+			got := getBucketJSON(t, handler, "m")
+			if got["access_mode"] != "custom" || got["public"] != false {
+				t.Errorf("access_mode = %v, public = %v; want custom, false", got["access_mode"], got["public"])
+			}
+		})
+	}
+}

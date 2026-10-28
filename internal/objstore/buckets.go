@@ -232,18 +232,12 @@ func decodeBucketUpdate(r io.Reader) (bucketUpdate, error) {
 	return body, checkAccessMode(body.AccessMode)
 }
 
-// apply changes the bucket as the body says. A mode the body names is stored
-// as named and public follows it, so it wins over a public flag sent with it.
-// Otherwise a public or private mode follows public, as it would have been
-// derived from it, while a custom mode stays until it is named and the flag
-// is ignored.
+// apply changes the bucket as the body says. Every update writes the mode and
+// public together, so a pair recorded out of step (a custom bucket marked
+// public by an older build or by hand, or no mode at all) is corrected by the
+// next update, whatever it names.
 func (body bucketUpdate) apply(b *Bucket) {
-	if body.Public != nil && b.AccessMode != "custom" {
-		b.setAccessMode(accessModeOf(*body.Public))
-	}
-	if body.AccessMode != nil {
-		b.setAccessMode(*body.AccessMode)
-	}
+	b.setAccessMode(body.nextAccessMode(b))
 	if body.S3BucketPolicy != nil {
 		b.S3BucketPolicy = body.policy
 	}
@@ -253,6 +247,25 @@ func (body bucketUpdate) apply(b *Bucket) {
 	if body.AllowedMimeTypes != nil {
 		b.AllowedMimeTypes = body.AllowedMimeTypes
 	}
+}
+
+// nextAccessMode is the bucket's mode after the update. A mode the body names
+// wins over a public flag sent with it. Otherwise a public or private mode
+// follows public, as it would have been derived from it, while a custom mode
+// stays until it is named and the flag is ignored. A bucket recorded without a
+// mode goes by public first.
+func (body bucketUpdate) nextAccessMode(b *Bucket) string {
+	if body.AccessMode != nil {
+		return *body.AccessMode
+	}
+	mode := b.AccessMode
+	if mode == "" {
+		mode = accessModeOf(b.Public)
+	}
+	if body.Public != nil && mode != "custom" {
+		return accessModeOf(*body.Public)
+	}
+	return mode
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────

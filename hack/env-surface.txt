@@ -877,6 +877,7 @@ SUPATYPE_MFA_WEB_AUTHN_ENROLL_ENABLED
 SUPATYPE_MFA_WEB_AUTHN_VERIFY_ENABLED
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MODE
+    struct internal/conf.GlobalConfiguration
     struct internal/config.Config
 SUPATYPE_NONPROD
     struct internal/config.Config

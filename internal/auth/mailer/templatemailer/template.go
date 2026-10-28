@@ -47,7 +47,8 @@ type Mailer struct {
 // The provider is selected by globalConfig.Mailer.MailerProvider (set from
 // SUPATYPE_MAILER_MAILER_PROVIDER, e.g. via supatype.config.ts `email.provider` in dev):
 //   - "" or "smtp": SMTP via mailmeclient (falls back to noop if SMTP host is unset)
-//   - "console": log structured metadata to stdout (no network delivery)
+//   - "console": log structured metadata to stdout (no network delivery), and
+//     the body too when SUPATYPE_MODE=dev
 //   - "resend": Resend API (requires RESEND_API_KEY and RESEND_FROM env vars)
 //   - "ses": AWS SES v2 (ambient AWS credentials; SES_FROM env var required)
 func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
@@ -56,7 +57,7 @@ func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
 	switch globalConfig.Mailer.MailerProvider {
 	case "console":
 		logrus.Infof("templatemailer: using console (log-only) mailer for %v", globalConfig.SiteURL)
-		mc = consoleclient.New()
+		mc = consoleclient.New(strings.TrimSpace(globalConfig.Mode) == "dev")
 
 	case "resend":
 		apiKey := globalConfig.Mailer.ResendAPIKey

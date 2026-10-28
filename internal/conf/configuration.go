@@ -393,6 +393,12 @@ type GlobalConfiguration struct {
 	// Same story as the captcha timeout: it used to be read in a package init.
 	InternalHTTPTimeout time.Duration `split_words:"true" default:"10s"`
 
+	// Mode is SUPATYPE_MODE, the same variable the gateway reads. The auth
+	// service only asks whether it is "dev", and unset is not dev here: what
+	// hangs off it (the console mailer logging live sign-in links) must be
+	// asked for.
+	Mode string
+
 	RateLimitHeader                     string  `split_words:"true"`
 	RateLimitEmailSent                  Rate    `split_words:"true" default:"30"`
 	RateLimitSmsSent                    Rate    `split_words:"true" default:"30"`

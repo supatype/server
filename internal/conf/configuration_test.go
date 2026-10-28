@@ -33,9 +33,12 @@ func TestGlobal(t *testing.T) {
 	os.Setenv("SUPATYPE_SMTP_HEADERS", `{"X-PM-Metadata-project-ref":["project_ref"],"X-SES-Message-Tags":["ses:feedback-id-a=project_ref,ses:feedback-id-b=$messageType"]}`)
 	os.Setenv("SUPATYPE_MAILER_EMAIL_VALIDATION_SERVICE_HEADERS", `{"apikey":["test"]}`)
 	os.Setenv("SUPATYPE_SMTP_LOGGING_ENABLED", "true")
+	os.Setenv("SUPATYPE_MODE", "dev")
 	gc, err := LoadGlobal("")
 	require.NoError(t, err)
 	assert.Equal(t, true, gc.SMTP.LoggingEnabled)
+	// The console mailer logs bodies only in dev, read from the gateway's variable.
+	assert.Equal(t, "dev", gc.Mode)
 	assert.Equal(t, "project_ref", gc.SMTP.NormalizedHeaders()["X-PM-Metadata-project-ref"][0])
 	require.NotNil(t, gc)
 	assert.Equal(t, "X-Request-ID", gc.API.RequestIDHeader)

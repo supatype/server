@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -59,19 +60,50 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 			return
 		}
 
-		// Splice bidirectionally until both directions finish.
-		errc := make(chan error, 2)
-		cp := func(dst io.Writer, src io.Reader) {
-			_, err := io.Copy(dst, src)
-			errc <- err
-		}
-		go cp(backendConn, clientConn)
-		go cp(clientConn, backendConn)
-		<-errc
-		<-errc
-		_ = clientConn.Close()
-		_ = backendConn.Close()
+		splice(clientConn, backendConn)
 	})
+}
+
+// spliceDrainTime is how long the second direction of a spliced connection
+// may keep going once the first has ended.
+const spliceDrainTime = 5 * time.Second
+
+// splice copies bytes both ways between client and backend until both
+// directions have ended, then closes both connections.
+//
+// When one side hangs up, the end has to reach the other side: a WebSocket
+// client waits for the server to close TCP after a close frame, and realtime
+// keeps a socket for a client that is gone. So the first direction to end
+// half-closes the connection it was writing to, passing the end along while
+// the other direction still delivers what is in flight. The other direction
+// then gets spliceDrainTime to finish before both are closed regardless, so
+// a peer that never answers the end cannot hold the pair open.
+func splice(client, backend net.Conn) {
+	done := make(chan struct{}, 2)
+	cp := func(dst, src net.Conn) {
+		_, _ = io.Copy(dst, src)
+		closeWrite(dst)
+		done <- struct{}{}
+	}
+	go cp(backend, client)
+	go cp(client, backend)
+	<-done
+	deadline := time.Now().Add(spliceDrainTime)
+	_ = client.SetDeadline(deadline)
+	_ = backend.SetDeadline(deadline)
+	<-done
+	_ = client.Close()
+	_ = backend.Close()
+}
+
+// closeWrite ends the write side of conn, or the whole connection when it
+// cannot be half-closed.
+func closeWrite(conn net.Conn) {
+	if hc, ok := conn.(interface{ CloseWrite() error }); ok {
+		_ = hc.CloseWrite()
+		return
+	}
+	_ = conn.Close()
 }
 
 // prepareUpstreamWebSocketRequest rewrites r for forwarding over a raw TCP dial,

@@ -17,9 +17,9 @@ import (
 // Bucket mirrors the StorageBucketMeta shape expected by @supatype/client.
 //
 // AccessMode and S3BucketPolicy are written by the CLI when it provisions the
-// schema's buckets. Nothing here enforces them yet, but every update rewrites
-// buckets.json from this struct, so a field missing from it is a field the
-// first update deletes.
+// schema's buckets. AccessMode decides anonymous reads; the policy is kept but
+// not enforced. Every update rewrites buckets.json from this struct, so a field
+// missing from it is a field the first update deletes.
 type Bucket struct {
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
@@ -39,6 +39,32 @@ func accessModeOf(public bool) string {
 		return "public"
 	}
 	return "private"
+}
+
+// setAccessMode stores a mode and brings public into line with it, so the two
+// never disagree about whether the bucket is public. A custom mode says
+// nothing about that and leaves public as it is.
+func (b *Bucket) setAccessMode(mode string) {
+	b.AccessMode = mode
+	switch mode {
+	case "public":
+		b.Public = true
+	case "private":
+		b.Public = false
+	}
+}
+
+// servesAnonymously reports whether the bucket's objects may be read without a
+// token. The mode decides, as in the storage service's checkReadAccess
+// (middleware/access-control.ts): only a public mode does, and a custom mode is
+// asked about as a private one is, whatever public says. A bucket recorded
+// without a mode goes by public.
+func (b *Bucket) servesAnonymously() bool {
+	mode := b.AccessMode
+	if mode == "" {
+		mode = accessModeOf(b.Public)
+	}
+	return mode == "public"
 }
 
 // bucketsPath returns the path to the bucket metadata JSON file.
@@ -162,23 +188,25 @@ func decodeBucketCreate(r io.Reader) (bucketCreate, error) {
 	return body, checkAccessMode(body.AccessMode)
 }
 
-// bucket is the new bucket the body describes.
+// bucket is the new bucket the body describes. A mode the body names wins
+// over its public flag.
 func (body bucketCreate) bucket(now string) Bucket {
 	mode := accessModeOf(body.Public)
 	if body.AccessMode != nil {
 		mode = *body.AccessMode
 	}
-	return Bucket{
+	b := Bucket{
 		ID:               body.ID,
 		Name:             body.Name,
 		Public:           body.Public,
 		FileSizeLimit:    body.FileSizeLimit,
 		AllowedMimeTypes: body.AllowedMimeTypes,
-		AccessMode:       mode,
 		S3BucketPolicy:   body.S3BucketPolicy,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	b.setAccessMode(mode)
+	return b
 }
 
 // bucketUpdate is the body of PUT /bucket/{id}. Only what the body names
@@ -209,8 +237,9 @@ func decodeBucketUpdate(r io.Reader) (bucketUpdate, error) {
 }
 
 // apply changes the bucket as the body says. A mode the body names is stored
-// as named. Otherwise a public or private mode follows public, as it would
-// have been derived from it, while a custom mode stays until it is named.
+// as named and public follows it, so it wins over a public flag sent with it.
+// Otherwise a public or private mode follows public, as it would have been
+// derived from it, while a custom mode stays until it is named.
 func (body bucketUpdate) apply(b *Bucket) {
 	if body.Public != nil {
 		b.Public = *body.Public
@@ -219,7 +248,7 @@ func (body bucketUpdate) apply(b *Bucket) {
 		}
 	}
 	if body.AccessMode != nil {
-		b.AccessMode = *body.AccessMode
+		b.setAccessMode(*body.AccessMode)
 	}
 	if body.S3BucketPolicy != nil {
 		b.S3BucketPolicy = body.policy

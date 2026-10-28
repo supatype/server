@@ -98,20 +98,21 @@ func (c *countingBody) Read(p []byte) (int, error) {
 	return int(n), nil
 }
 
-// An upload over the limit is refused once the limit is passed: the rest of
-// the body is not read, so a client cannot make the server swallow an
-// unbounded stream to learn its size. A declared length over the limit is
-// refused before any of the body is read.
+// An upload over the limit is refused once the limit is passed. The rest of a
+// body of unknown length is read and dropped only up to the drain cap, so a
+// client cannot make the server swallow an unbounded stream; past it the
+// connection is closed. A declared length over the limit is refused before any
+// of the body is read.
 func TestAnOversizedUploadIsRefusedWithoutReadingTheRest(t *testing.T) {
 	handler, _ := newStore(t)
 	makeLimitedBucket(t, handler, `{"name":"small","file_size_limit":4}`)
 
 	for name, tc := range map[string]struct {
-		declared, maxRead int64
-		want              string
+		declared, minRead, maxRead int64
+		connection, want           string
 	}{
-		"unknown length":  {-1, 5, "File size exceeds the maximum allowed size of 4 B"},
-		"declared length": {64 << 20, 0, "File size 64.0 MB exceeds the maximum allowed size of 4 B"},
+		"unknown length":  {-1, drainCap, 5 + drainCap + 1, "close", "File size exceeds the maximum allowed size of 4 B"},
+		"declared length": {64 << 20, 0, 0, "", "File size 64.0 MB exceeds the maximum allowed size of 4 B"},
 	} {
 		body := &countingBody{remaining: 64 << 20}
 		req := httptest.NewRequest(http.MethodPost, "/object/small/big.bin", body)
@@ -123,8 +124,11 @@ func TestAnOversizedUploadIsRefusedWithoutReadingTheRest(t *testing.T) {
 		if rec.Code != http.StatusRequestEntityTooLarge {
 			t.Fatalf("%s: status = %d, want 413 (%s)", name, rec.Code, rec.Body.String())
 		}
-		if body.read > tc.maxRead {
-			t.Errorf("%s: read %d bytes of the body, want at most %d", name, body.read, tc.maxRead)
+		if body.read < tc.minRead || body.read > tc.maxRead {
+			t.Errorf("%s: read %d bytes of the body, want %d to %d", name, body.read, tc.minRead, tc.maxRead)
+		}
+		if got := rec.Header().Get("Connection"); got != tc.connection {
+			t.Errorf("%s: Connection = %q, want %q", name, got, tc.connection)
 		}
 		var got map[string]string
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -133,6 +137,37 @@ func TestAnOversizedUploadIsRefusedWithoutReadingTheRest(t *testing.T) {
 		if got["error"] != tc.want {
 			t.Errorf("%s: error = %q, want %q", name, got["error"], tc.want)
 		}
+	}
+}
+
+// A chunked upload a little over the limit, sent through a real server, gets
+// its 413. Left unread, a body this far past the 256 KB Go's server discards
+// on its own makes the server close mid-send, and the client sees a reset
+// instead of the refusal.
+func TestAChunkedUploadOverTheLimitGetsItsRefusal(t *testing.T) {
+	handler, _ := newStore(t)
+	makeLimitedBucket(t, handler, `{"name":"small","file_size_limit":1024}`)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/object/small/big.bin", &countingBody{remaining: 8 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer "+userToken(t))
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("the client got a transport error instead of the 413: %v", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
+	}
+	if resp.Close {
+		t.Error("the connection was closed after a body within the drain cap")
 	}
 }
 
@@ -301,7 +336,7 @@ func TestABucketUpdateKeepsTheAccessModeConsistent(t *testing.T) {
 		"public follows":     {`{"name":"m","public":false}`, `{"public":true}`, "public", true},
 		"private follows":    {`{"name":"m","public":true}`, `{"public":false}`, "private", false},
 		"named mode wins":    {`{"name":"m","public":false}`, `{"public":true,"access_mode":"custom"}`, "custom", true},
-		"mode alone":         {`{"name":"m","public":true}`, `{"access_mode":"private"}`, "private", true},
+		"mode alone":         {`{"name":"m","public":true}`, `{"access_mode":"private"}`, "private", false},
 		"custom is kept":     {`{"name":"m","access_mode":"custom"}`, `{"public":true}`, "custom", true},
 		"other fields alone": {`{"name":"m","access_mode":"custom"}`, `{"file_size_limit":10}`, "custom", false},
 	} {
@@ -314,6 +349,108 @@ func TestABucketUpdateKeepsTheAccessModeConsistent(t *testing.T) {
 			got := getBucketJSON(t, handler, "m")
 			if got["access_mode"] != tc.wantMode || got["public"] != tc.wantPublic {
 				t.Errorf("access_mode = %v, public = %v; want %s, %t", got["access_mode"], got["public"], tc.wantMode, tc.wantPublic)
+			}
+		})
+	}
+}
+
+// bucketOutcome is what a bucket ends up as: its stored public flag and access
+// mode, and the status an anonymous public download of one of its objects gets.
+type bucketOutcome struct {
+	public bool
+	mode   string
+	status int
+}
+
+// outcomeOf reads a bucket's outcome, uploading the object it downloads.
+func outcomeOf(t *testing.T, handler http.Handler, id string) bucketOutcome {
+	t.Helper()
+	upload(t, handler, id, "a.txt", "contents")
+	got := getBucketJSON(t, handler, id)
+	public, _ := got["public"].(bool)
+	mode, _ := got["access_mode"].(string)
+	rec := do(t, handler, http.MethodGet, "/object/public/"+id+"/a.txt", "", nil)
+	return bucketOutcome{public, mode, rec.Code}
+}
+
+// The access mode decides who may read, as it does in the storage service: a
+// public mode serves anonymously and makes the bucket public, a private one
+// does neither, and a custom one is asked about as a private one is, keeping
+// public as given. A mode the create body names wins over its public flag.
+func TestACreatedBucketIsReadAsItsAccessModeSays(t *testing.T) {
+	for name, tc := range map[string]struct {
+		create string
+		want   bucketOutcome
+	}{
+		"public mode, private flag": {`{"name":"m","public":false,"access_mode":"public"}`, bucketOutcome{true, "public", http.StatusOK}},
+		"private mode, public flag": {`{"name":"m","public":true,"access_mode":"private"}`, bucketOutcome{false, "private", http.StatusForbidden}},
+		"custom mode, public flag":  {`{"name":"m","public":true,"access_mode":"custom"}`, bucketOutcome{true, "custom", http.StatusForbidden}},
+		"no mode, public flag":      {`{"name":"m","public":true}`, bucketOutcome{true, "public", http.StatusOK}},
+		"no mode, no flag":          {`{"name":"m"}`, bucketOutcome{false, "private", http.StatusForbidden}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler, _ := newStore(t)
+			makeLimitedBucket(t, handler, tc.create)
+			if got := outcomeOf(t, handler, "m"); got != tc.want {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Naming a mode on update moves the bucket either way, and the public flag and
+// anonymous reads move with it.
+func TestABucketUpdateIsReadAsItsAccessModeSays(t *testing.T) {
+	for name, tc := range map[string]struct {
+		create, update string
+		want           bucketOutcome
+	}{
+		"private to public":       {`{"name":"m","public":false}`, `{"access_mode":"public"}`, bucketOutcome{true, "public", http.StatusOK}},
+		"public to private":       {`{"name":"m","public":true}`, `{"access_mode":"private"}`, bucketOutcome{false, "private", http.StatusForbidden}},
+		"public to custom":        {`{"name":"m","public":true}`, `{"access_mode":"custom"}`, bucketOutcome{true, "custom", http.StatusForbidden}},
+		"custom to public":        {`{"name":"m","access_mode":"custom"}`, `{"access_mode":"public"}`, bucketOutcome{true, "public", http.StatusOK}},
+		"mode wins over the flag": {`{"name":"m","public":false}`, `{"public":true,"access_mode":"private"}`, bucketOutcome{false, "private", http.StatusForbidden}},
+		"flag on a custom bucket": {`{"name":"m","access_mode":"custom"}`, `{"public":true}`, bucketOutcome{true, "custom", http.StatusForbidden}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler, _ := newStore(t)
+			makeLimitedBucket(t, handler, tc.create)
+			if rec := do(t, handler, http.MethodPut, "/bucket/m", serviceToken(t), strings.NewReader(tc.update)); rec.Code != http.StatusOK {
+				t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+			}
+			if got := outcomeOf(t, handler, "m"); got != tc.want {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// buckets.json is also written by the CLI and by hand, so it may name no mode,
+// or one that disagrees with public. A public download goes by the mode when
+// there is one and by public when there is not.
+func TestAPublicDownloadGoesByTheModeTheFileRecords(t *testing.T) {
+	for name, tc := range map[string]struct {
+		fields string
+		want   int
+	}{
+		"no mode, public":      {`"public":true`, http.StatusOK},
+		"no mode, private":     {`"public":false`, http.StatusForbidden},
+		"private mode, public": {`"public":true,"access_mode":"private"`, http.StatusForbidden},
+		"public mode, private": {`"public":false,"access_mode":"public"`, http.StatusOK},
+		"custom mode, public":  {`"public":true,"access_mode":"custom"`, http.StatusForbidden},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler, root := newStore(t)
+			written := `[{"id":"m","name":"m",` + tc.fields + `,"created_at":"x","updated_at":"x"}]`
+			if err := os.WriteFile(filepath.Join(root, ".supatype", "buckets.json"), []byte(written), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(root, "m"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			upload(t, handler, "m", "a.txt", "contents")
+			if rec := do(t, handler, http.MethodGet, "/object/public/m/a.txt", "", nil); rec.Code != tc.want {
+				t.Errorf("status = %d, want %d", rec.Code, tc.want)
 			}
 		})
 	}

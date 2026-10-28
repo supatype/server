@@ -278,7 +278,7 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 // ─── Download ─────────────────────────────────────────────────────────────────
 
 // downloadPublic: GET /object/public/{bucket}/*
-// No auth required. Bucket must be public.
+// No auth required. The bucket's access mode must be public.
 func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
 	bucket, objPath, ok := objectRoute(w, r)
 	if !ok {
@@ -288,7 +288,7 @@ func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !b.Public {
+	if !b.servesAnonymously() {
 		writeError(w, http.StatusForbidden, "bucket is not public")
 		return
 	}

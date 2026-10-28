@@ -41,8 +41,8 @@ func acceptUpload(w http.ResponseWriter, r *http.Request, b *Bucket, objPath, co
 // limitedBody reads a body of at most limit bytes into memory before anything
 // is written, so a refused overwrite leaves the old object in place. A declared
 // length over the limit is refused before any of the body is read, and a body
-// that runs past the limit is refused as soon as it does: the rest is never
-// read, so a client cannot make the server swallow an unbounded stream.
+// that runs past the limit is refused as soon as it does, after what is left
+// of it has been drained up to drainCap.
 func limitedBody(w http.ResponseWriter, r *http.Request, limit int64) (io.Reader, bool) {
 	if r.ContentLength > limit {
 		refuseSize(w, r.ContentLength, limit)
@@ -54,11 +54,33 @@ func limitedBody(w http.ResponseWriter, r *http.Request, limit int64) (io.Reader
 		return nil, false
 	}
 	if int64(len(body)) > limit {
+		drainRefused(w, r.Body)
 		refuseSize(w, unknownSize, limit)
 		return nil, false
 	}
 	return bytes.NewReader(body), true
 }
+
+// drainRefused reads and drops the rest of a refused body, up to drainCap, so
+// a client still sending finishes and then reads the refusal. Go's server
+// discards at most 256 KB of an unread body itself and then closes the
+// connection, which a client still sending sees as a reset rather than a 413.
+// A body that runs past the cap, or fails to read, is abandoned and the
+// connection closed after the response.
+func drainRefused(w http.ResponseWriter, body io.Reader) {
+	n, err := io.Copy(io.Discard, io.LimitReader(body, drainCap+1))
+	if err != nil || n > drainCap {
+		w.Header().Set("Connection", "close")
+	}
+}
+
+// drainCap is how much of a refused body is read and dropped so the client
+// can finish sending and read the 413. 32 MiB covers the ordinary case, a file
+// somewhat too big for a bucket's limit, and reads in well under a second on
+// the local connections native dev serves. It also bounds what a client can
+// make the server read: nothing past it is read, so a stream with no end costs
+// at most this much before the connection is closed.
+const drainCap = 32 << 20
 
 // typeAllowed reports whether a media type is one the bucket allows: any when
 // it lists none, otherwise an exact match or a "type/*" wildcard, ignoring case.

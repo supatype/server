@@ -1042,9 +1042,8 @@ func TestASignedURLEscapesTheObjectName(t *testing.T) {
 		t.Fatalf("signed URL = %q", u)
 	}
 
-	// "?" cannot be in a filename on Windows, so the round trip uses the rest.
-	upload(t, handler, "private", "dir/my%20file%23.png", "odd name")
-	u = signURL(t, handler, "dir/my%20file%23.png")
+	upload(t, handler, "private", "dir/my%20file%3F%23.png", "odd name")
+	u = signURL(t, handler, "dir/my%20file%3F%23.png")
 	rec := do(t, handler, http.MethodGet, strings.TrimPrefix(u.RequestURI(), "/storage/v1"), "", nil)
 	if rec.Code != http.StatusOK || rec.Body.String() != "odd name" {
 		t.Errorf("serve %q: %d %q", u, rec.Code, rec.Body.String())
@@ -1667,15 +1666,12 @@ func TestAnUploadThatCannotMakeItsDirectory(t *testing.T) {
 // A file that exists and still cannot be opened is not a missing object, and
 // answering 404 would send someone looking for a file that is right there.
 func TestServingAFileThatCannotBeOpened(t *testing.T) {
-	handler, root := newStore(t)
+	handler, _ := newStore(t)
 	makeBucket(t, handler, "avatars", true)
 	upload(t, handler, "avatars", "a.png", "x")
+	failing(t, &openIn, func(*os.Root, string) (*os.File, error) { return nil, errDisk })
 
-	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
-	rec := httptest.NewRecorder()
-	// A name no filesystem will open, and not one that is merely absent.
-	s.serveFile(rec, httptest.NewRequest(http.MethodGet, "/", nil), "avatars", "a\x00.png")
-
+	rec := do(t, handler, http.MethodGet, "/object/public/avatars/a.png", "", nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
 	}

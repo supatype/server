@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -326,7 +327,7 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 
 	// http.ServeContent handles Range, ETag, and Last-Modified negotiation. The
 	// wrapper hardens the headers once ServeContent has settled the type.
-	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, info.Name(), info.ModTime(), f)
+	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, path.Base(objPath), info.ModTime(), f)
 }
 
 // openObject opens a stored object for reading, answering the request itself
@@ -346,7 +347,7 @@ func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.F
 		_ = root.Close()
 	}()
 
-	f, err := root.Open(fileRel)
+	f, err := openIn(root, fileRel)
 	if os.IsNotExist(err) {
 		writeError(w, http.StatusNotFound, "object not found")
 		return nil, false
@@ -460,16 +461,18 @@ func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error
 	if err != nil {
 		return "", "", err
 	}
-	rel, err := cleanObjectPath(strings.Trim(prefix, "/"), true)
+	folder = strings.Trim(prefix, "/")
+	rel, err := cleanObjectPath(folder, true)
 	if err != nil {
 		return "", "", err
 	}
-	return filepath.Join(bucketDir, rel), filepath.ToSlash(rel), nil
+	return filepath.Join(bucketDir, rel), folder, nil
 }
 
 // folderChildren is the folder's direct children: an entry for each subfolder with an object
 // somewhere below it, then one for each file, each group in byte order by name. A folder that is
-// not there, or is a file, has none, and the sidecar tree is never listed.
+// not there, or is a file, has none, and the sidecar tree is never listed. Each child is named
+// by the object name its file name holds, which is also what the order is by.
 func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 	if folder == ".meta" || strings.HasPrefix(folder, ".meta/") {
 		return []listItem{}
@@ -485,7 +488,7 @@ func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 			// The sidecar tree, not a folder of objects.
 		case e.IsDir():
 			if holdsAnObject(filepath.Join(dir, e.Name())) {
-				folders = append(folders, folderItem(bucket, e.Name()))
+				folders = append(folders, folderItem(bucket, objectSegment(e.Name())))
 			}
 		default:
 			// A file removed since the directory was read has no info and is no longer a child.
@@ -494,6 +497,9 @@ func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 			}
 		}
 	}
+	byName := func(a, b listItem) int { return strings.Compare(a.Name, b.Name) }
+	slices.SortFunc(folders, byName)
+	slices.SortFunc(files, byName)
 	return append(append(make([]listItem, 0, len(folders)+len(files)), folders...), files...)
 }
 
@@ -512,14 +518,15 @@ func holdsAnObject(dir string) bool {
 
 // fileItem is the list entry of a file directly in the folder, named by its own name.
 func (s *store) fileItem(bucket, folder string, info os.FileInfo) listItem {
-	objPath := path.Join(folder, info.Name())
+	name := objectSegment(info.Name())
+	objPath := path.Join(folder, name)
 	meta, err := s.loadObjectMeta(bucket, objPath)
 	if err != nil {
 		fallback := sidecarlessMeta(bucket, objPath, info)
 		meta = &fallback
 	}
 	item := metaToListItem(*meta)
-	item.Name = info.Name()
+	item.Name = name
 	return item
 }
 

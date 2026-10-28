@@ -42,16 +42,12 @@ func accessModeOf(public bool) string {
 }
 
 // setAccessMode stores a mode and brings public into line with it, so the two
-// never disagree about whether the bucket is public. A custom mode says
-// nothing about that and leaves public as it is.
+// never disagree about whether the bucket is public. A custom bucket is not
+// public, as in the storage service: its rules decide who reads it, and a
+// public flag kept beside them claimed otherwise.
 func (b *Bucket) setAccessMode(mode string) {
 	b.AccessMode = mode
-	switch mode {
-	case "public":
-		b.Public = true
-	case "private":
-		b.Public = false
-	}
+	b.Public = mode == "public"
 }
 
 // servesAnonymously reports whether the bucket's objects may be read without a
@@ -239,13 +235,11 @@ func decodeBucketUpdate(r io.Reader) (bucketUpdate, error) {
 // apply changes the bucket as the body says. A mode the body names is stored
 // as named and public follows it, so it wins over a public flag sent with it.
 // Otherwise a public or private mode follows public, as it would have been
-// derived from it, while a custom mode stays until it is named.
+// derived from it, while a custom mode stays until it is named and the flag
+// is ignored.
 func (body bucketUpdate) apply(b *Bucket) {
-	if body.Public != nil {
-		b.Public = *body.Public
-		if b.AccessMode != "custom" {
-			b.AccessMode = accessModeOf(b.Public)
-		}
+	if body.Public != nil && b.AccessMode != "custom" {
+		b.setAccessMode(accessModeOf(*body.Public))
 	}
 	if body.AccessMode != nil {
 		b.setAccessMode(*body.AccessMode)

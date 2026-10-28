@@ -327,7 +327,7 @@ func TestABucketWithAnUnknownAccessModeIsRefused(t *testing.T) {
 
 // An update keeps public and the access mode consistent: a named mode is
 // stored, a mode that only followed public follows it again, and a custom mode
-// is the caller's to change.
+// is the caller's to change and never public.
 func TestABucketUpdateKeepsTheAccessModeConsistent(t *testing.T) {
 	for name, tc := range map[string]struct {
 		create, update, wantMode string
@@ -335,9 +335,9 @@ func TestABucketUpdateKeepsTheAccessModeConsistent(t *testing.T) {
 	}{
 		"public follows":     {`{"name":"m","public":false}`, `{"public":true}`, "public", true},
 		"private follows":    {`{"name":"m","public":true}`, `{"public":false}`, "private", false},
-		"named mode wins":    {`{"name":"m","public":false}`, `{"public":true,"access_mode":"custom"}`, "custom", true},
+		"named mode wins":    {`{"name":"m","public":false}`, `{"public":true,"access_mode":"custom"}`, "custom", false},
 		"mode alone":         {`{"name":"m","public":true}`, `{"access_mode":"private"}`, "private", false},
-		"custom is kept":     {`{"name":"m","access_mode":"custom"}`, `{"public":true}`, "custom", true},
+		"custom is kept":     {`{"name":"m","access_mode":"custom"}`, `{"public":true}`, "custom", false},
 		"other fields alone": {`{"name":"m","access_mode":"custom"}`, `{"file_size_limit":10}`, "custom", false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -375,8 +375,8 @@ func outcomeOf(t *testing.T, handler http.Handler, id string) bucketOutcome {
 
 // The access mode decides who may read, as it does in the storage service: a
 // public mode serves anonymously and makes the bucket public, a private one
-// does neither, and a custom one is asked about as a private one is, keeping
-// public as given. A mode the create body names wins over its public flag.
+// does neither, and a custom one is asked about as a private one is and is
+// never public. A mode the create body names wins over its public flag.
 func TestACreatedBucketIsReadAsItsAccessModeSays(t *testing.T) {
 	for name, tc := range map[string]struct {
 		create string
@@ -384,7 +384,7 @@ func TestACreatedBucketIsReadAsItsAccessModeSays(t *testing.T) {
 	}{
 		"public mode, private flag": {`{"name":"m","public":false,"access_mode":"public"}`, bucketOutcome{true, "public", http.StatusOK}},
 		"private mode, public flag": {`{"name":"m","public":true,"access_mode":"private"}`, bucketOutcome{false, "private", http.StatusForbidden}},
-		"custom mode, public flag":  {`{"name":"m","public":true,"access_mode":"custom"}`, bucketOutcome{true, "custom", http.StatusForbidden}},
+		"custom mode, public flag":  {`{"name":"m","public":true,"access_mode":"custom"}`, bucketOutcome{false, "custom", http.StatusForbidden}},
 		"no mode, public flag":      {`{"name":"m","public":true}`, bucketOutcome{true, "public", http.StatusOK}},
 		"no mode, no flag":          {`{"name":"m"}`, bucketOutcome{false, "private", http.StatusForbidden}},
 	} {
@@ -407,10 +407,10 @@ func TestABucketUpdateIsReadAsItsAccessModeSays(t *testing.T) {
 	}{
 		"private to public":       {`{"name":"m","public":false}`, `{"access_mode":"public"}`, bucketOutcome{true, "public", http.StatusOK}},
 		"public to private":       {`{"name":"m","public":true}`, `{"access_mode":"private"}`, bucketOutcome{false, "private", http.StatusForbidden}},
-		"public to custom":        {`{"name":"m","public":true}`, `{"access_mode":"custom"}`, bucketOutcome{true, "custom", http.StatusForbidden}},
+		"public to custom":        {`{"name":"m","public":true}`, `{"access_mode":"custom"}`, bucketOutcome{false, "custom", http.StatusForbidden}},
 		"custom to public":        {`{"name":"m","access_mode":"custom"}`, `{"access_mode":"public"}`, bucketOutcome{true, "public", http.StatusOK}},
 		"mode wins over the flag": {`{"name":"m","public":false}`, `{"public":true,"access_mode":"private"}`, bucketOutcome{false, "private", http.StatusForbidden}},
-		"flag on a custom bucket": {`{"name":"m","access_mode":"custom"}`, `{"public":true}`, bucketOutcome{true, "custom", http.StatusForbidden}},
+		"flag on a custom bucket": {`{"name":"m","access_mode":"custom"}`, `{"public":true}`, bucketOutcome{false, "custom", http.StatusForbidden}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			handler, _ := newStore(t)

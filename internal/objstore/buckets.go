@@ -56,11 +56,16 @@ func (b *Bucket) setAccessMode(mode string) {
 // asked about as a private one is, whatever public says. A bucket recorded
 // without a mode goes by public.
 func (b *Bucket) servesAnonymously() bool {
-	mode := b.AccessMode
-	if mode == "" {
-		mode = accessModeOf(b.Public)
+	return b.mode() == "public"
+}
+
+// mode is the bucket's access mode. A bucket recorded without one goes by
+// public.
+func (b *Bucket) mode() string {
+	if b.AccessMode == "" {
+		return accessModeOf(b.Public)
 	}
-	return mode == "public"
+	return b.AccessMode
 }
 
 // bucketsPath returns the path to the bucket metadata JSON file.
@@ -252,16 +257,12 @@ func (body bucketUpdate) apply(b *Bucket) {
 // nextAccessMode is the bucket's mode after the update. A mode the body names
 // wins over a public flag sent with it. Otherwise a public or private mode
 // follows public, as it would have been derived from it, while a custom mode
-// stays until it is named and the flag is ignored. A bucket recorded without a
-// mode goes by public first.
+// stays until it is named and the flag is ignored.
 func (body bucketUpdate) nextAccessMode(b *Bucket) string {
 	if body.AccessMode != nil {
 		return *body.AccessMode
 	}
-	mode := b.AccessMode
-	if mode == "" {
-		mode = accessModeOf(b.Public)
-	}
+	mode := b.mode()
 	if body.Public != nil && mode != "custom" {
 		return accessModeOf(*body.Public)
 	}

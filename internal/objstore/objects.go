@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -624,10 +625,22 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
+	// The token is base64url and a dot, so it needs no escaping; the names do.
 	signedURL := fmt.Sprintf("%s://%s/storage/v1/object/sign/%s/%s?token=%s",
-		scheme, r.Host, bucket, objPath, token)
+		scheme, r.Host, url.PathEscape(bucket), escapeSegments(objPath), token)
 
 	utilities.WriteJSON(w, http.StatusOK, map[string]string{"signedURL": signedURL})
+}
+
+// escapeSegments escapes each segment of an object path for use in a URL,
+// keeping the slashes between them. Serving reads the path from the token, so
+// the router only has to decode it back to the same route.
+func escapeSegments(objPath string) string {
+	segments := strings.Split(objPath, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
 }
 
 // defaultSignedURLSeconds is the life of a signed URL that names none.

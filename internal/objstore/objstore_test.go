@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1007,6 +1008,46 @@ func TestSignedURLRoundTrip(t *testing.T) {
 	}
 	if rec.Body.String() != "secret bytes" {
 		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+// signURL signs an object through the handler and parses the URL it returns.
+func signURL(t *testing.T, handler http.Handler, escaped string) *url.URL {
+	t.Helper()
+	rec := do(t, handler, http.MethodPost, "/object/sign/private/"+escaped, userToken(t), strings.NewReader(`{"expiresIn":60}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sign: %d %s", rec.Code, rec.Body.String())
+	}
+	var signed struct {
+		SignedURL string `json:"signedURL"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &signed); err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(signed.SignedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// A signed URL is a URL: a name holding a space, "?" or "#" is escaped in it,
+// or the token ends up in the path or the fragment and the link answers 400.
+func TestASignedURLEscapesTheObjectName(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "private", false)
+
+	u := signURL(t, handler, "dir/my%20file%3F%23.png")
+	if u.Path != "/storage/v1/object/sign/private/dir/my file?#.png" || u.Fragment != "" || u.Query().Get("token") == "" {
+		t.Fatalf("signed URL = %q", u)
+	}
+
+	// "?" cannot be in a filename on Windows, so the round trip uses the rest.
+	upload(t, handler, "private", "dir/my%20file%23.png", "odd name")
+	u = signURL(t, handler, "dir/my%20file%23.png")
+	rec := do(t, handler, http.MethodGet, strings.TrimPrefix(u.RequestURI(), "/storage/v1"), "", nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "odd name" {
+		t.Errorf("serve %q: %d %q", u, rec.Code, rec.Body.String())
 	}
 }
 

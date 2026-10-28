@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/supatype/server/internal/studioctx"
 	"github.com/supatype/server/internal/utilities"
 )
@@ -199,11 +198,6 @@ func formatUUID(b []byte, version byte) string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:])
 }
 
-// urlPath extracts the wildcard portion from a chi route (strips leading slash).
-func urlPath(r *http.Request) string {
-	return strings.TrimPrefix(chi.URLParam(r, "*"), "/")
-}
-
 // ─── Upload ───────────────────────────────────────────────────────────────────
 
 // uploadObject: POST /object/{bucket}/*
@@ -212,9 +206,10 @@ func urlPath(r *http.Request) string {
 func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r.Context())
 
-	bucket := chi.URLParam(r, "bucket")
-	objPath := urlPath(r)
-
+	bucket, objPath, ok := objectRoute(w, r)
+	if !ok {
+		return
+	}
 	b, ok := s.resolveBucket(w, bucket)
 	if !ok {
 		return
@@ -285,9 +280,10 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 // downloadPublic: GET /object/public/{bucket}/*
 // No auth required. Bucket must be public.
 func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
-	bucket := chi.URLParam(r, "bucket")
-	objPath := urlPath(r)
-
+	bucket, objPath, ok := objectRoute(w, r)
+	if !ok {
+		return
+	}
 	b, ok := s.resolveBucket(w, bucket)
 	if !ok {
 		return
@@ -302,7 +298,9 @@ func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
 // downloadAuthenticated: GET /object/authenticated/{bucket}/*
 // Requires a valid JWT.
 func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
-	s.serveFile(w, r, chi.URLParam(r, "bucket"), urlPath(r))
+	if bucket, objPath, ok := objectRoute(w, r); ok {
+		s.serveFile(w, r, bucket, objPath)
+	}
 }
 
 // serveFile opens and streams a stored object. Content-Type is set from the
@@ -381,7 +379,10 @@ func (s *store) applyObjectMeta(w http.ResponseWriter, bucket, objPath string) {
 // Answers each removed object's name and bucket, as the storage service does.
 // An object with no sidecar is removed and reported like any other.
 func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
-	bucket := chi.URLParam(r, "bucket")
+	bucket, ok := routeParam(w, r, "bucket")
+	if !ok {
+		return
+	}
 
 	var body struct {
 		Prefixes []string `json:"prefixes"`
@@ -432,7 +433,10 @@ type listRequest struct {
 // the files, each named relative to the folder. X-Total-Count is how many matched the search
 // before the page was cut.
 func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
-	bucket := chi.URLParam(r, "bucket")
+	bucket, ok := routeParam(w, r, "bucket")
+	if !ok {
+		return
+	}
 
 	var body listRequest
 	_ = json.NewDecoder(r.Body).Decode(&body)
@@ -605,8 +609,10 @@ func (s *store) verifyToken(token string) (*signedPayload, bool) {
 // Requires a valid JWT. Body: { expiresIn: number (seconds) }
 // Returns: { signedURL: string }
 func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
-	bucket := chi.URLParam(r, "bucket")
-	objPath := urlPath(r)
+	bucket, objPath, ok := objectRoute(w, r)
+	if !ok {
+		return
+	}
 
 	expiresIn, err := signingExpiry(r)
 	if err != nil {

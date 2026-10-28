@@ -2,12 +2,13 @@ package objstore
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -78,10 +79,10 @@ func (s *store) findBucket(buckets []Bucket, id string) (int, *Bucket) {
 
 // lookupBucket reads one bucket under the read lock.
 //
-// The error used to be dropped at three call sites — upload, public download
-// and empty — so a buckets.json that could not be read answered "bucket not
-// found". That tells the caller their bucket is gone when in fact the store is
-// broken, and it is the kind of 404 someone acts on by recreating things.
+// Upload, public download and empty used to drop the error, so a buckets.json
+// that could not be read answered "bucket not found". That tells the caller
+// their bucket is gone when in fact the store is broken, and it is the kind of
+// 404 someone acts on by recreating things.
 func (s *store) lookupBucket(id string) (*Bucket, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -109,6 +110,128 @@ func (s *store) resolveBucket(w http.ResponseWriter, id string) (*Bucket, bool) 
 	return bucket, true
 }
 
+// ─── Request bodies ───────────────────────────────────────────────────────────
+
+// errAccessMode refuses an access mode the storage service does not know.
+var errAccessMode = errors.New("access_mode must be public, private or custom")
+
+// checkAccessMode accepts an absent mode or one of the three the storage
+// service knows.
+func checkAccessMode(mode *string) error {
+	if mode == nil {
+		return nil
+	}
+	switch *mode {
+	case "public", "private", "custom":
+		return nil
+	}
+	return errAccessMode
+}
+
+// bucketCreate is the body of POST /bucket. `supatype push` sends the schema's
+// access mode and bucket policy with it; a body naming no mode gets the one
+// public implies.
+type bucketCreate struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Public           bool     `json:"public"`
+	FileSizeLimit    *int64   `json:"file_size_limit"`
+	AllowedMimeTypes []string `json:"allowed_mime_types"`
+	AccessMode       *string  `json:"access_mode"`
+	S3BucketPolicy   *string  `json:"s3_bucket_policy"`
+}
+
+// decodeBucketCreate reads and checks a create body, defaulting the id to the
+// name.
+func decodeBucketCreate(r io.Reader) (bucketCreate, error) {
+	var body bucketCreate
+	if err := json.NewDecoder(r).Decode(&body); err != nil {
+		return body, errors.New("invalid request body")
+	}
+	if body.Name == "" {
+		return body, errors.New("name is required")
+	}
+	if body.ID == "" {
+		body.ID = body.Name
+	}
+	id, err := cleanBucketID(body.ID)
+	if err != nil {
+		return body, err
+	}
+	body.ID = id
+	return body, checkAccessMode(body.AccessMode)
+}
+
+// bucket is the new bucket the body describes.
+func (body bucketCreate) bucket(now string) Bucket {
+	mode := accessModeOf(body.Public)
+	if body.AccessMode != nil {
+		mode = *body.AccessMode
+	}
+	return Bucket{
+		ID:               body.ID,
+		Name:             body.Name,
+		Public:           body.Public,
+		FileSizeLimit:    body.FileSizeLimit,
+		AllowedMimeTypes: body.AllowedMimeTypes,
+		AccessMode:       mode,
+		S3BucketPolicy:   body.S3BucketPolicy,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+}
+
+// bucketUpdate is the body of PUT /bucket/{id}. Only what the body names
+// changes: a PUT that mentions nothing changes nothing, rather than resetting
+// the fields it omitted. The policy is kept raw so that null, which clears it,
+// can be told apart from absent, which keeps it.
+type bucketUpdate struct {
+	Public           *bool           `json:"public"`
+	FileSizeLimit    *int64          `json:"file_size_limit"`
+	AllowedMimeTypes []string        `json:"allowed_mime_types"`
+	AccessMode       *string         `json:"access_mode"`
+	S3BucketPolicy   json.RawMessage `json:"s3_bucket_policy"`
+	policy           *string
+}
+
+// decodeBucketUpdate reads and checks an update body.
+func decodeBucketUpdate(r io.Reader) (bucketUpdate, error) {
+	var body bucketUpdate
+	if err := json.NewDecoder(r).Decode(&body); err != nil {
+		return body, errors.New("invalid request body")
+	}
+	if body.S3BucketPolicy != nil {
+		if err := json.Unmarshal(body.S3BucketPolicy, &body.policy); err != nil {
+			return body, errors.New("s3_bucket_policy must be a string or null")
+		}
+	}
+	return body, checkAccessMode(body.AccessMode)
+}
+
+// apply changes the bucket as the body says. A mode the body names is stored
+// as named. Otherwise a public or private mode follows public, as it would
+// have been derived from it, while a custom mode stays until it is named.
+func (body bucketUpdate) apply(b *Bucket) {
+	if body.Public != nil {
+		b.Public = *body.Public
+		if b.AccessMode != "custom" {
+			b.AccessMode = accessModeOf(b.Public)
+		}
+	}
+	if body.AccessMode != nil {
+		b.AccessMode = *body.AccessMode
+	}
+	if body.S3BucketPolicy != nil {
+		b.S3BucketPolicy = body.policy
+	}
+	if body.FileSizeLimit != nil {
+		b.FileSizeLimit = body.FileSizeLimit
+	}
+	if body.AllowedMimeTypes != nil {
+		b.AllowedMimeTypes = body.AllowedMimeTypes
+	}
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 // listBuckets: GET /bucket
@@ -124,32 +247,14 @@ func (s *store) listBuckets(w http.ResponseWriter, _ *http.Request) {
 }
 
 // createBucket: POST /bucket
-// Body: { id?, name, public?, file_size_limit?, allowed_mime_types? }
+// Body: { id?, name, public?, file_size_limit?, allowed_mime_types?,
+// access_mode?, s3_bucket_policy? }
 func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		ID               string   `json:"id"`
-		Name             string   `json:"name"`
-		Public           bool     `json:"public"`
-		FileSizeLimit    *int64   `json:"file_size_limit"`
-		AllowedMimeTypes []string `json:"allowed_mime_types"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	if body.ID == "" {
-		body.ID = body.Name
-	}
-	bucketID, err := cleanBucketID(body.ID)
+	body, err := decodeBucketCreate(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	body.ID = bucketID
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,17 +269,7 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-	bucket := Bucket{
-		ID:               body.ID,
-		Name:             body.Name,
-		Public:           body.Public,
-		FileSizeLimit:    body.FileSizeLimit,
-		AllowedMimeTypes: body.AllowedMimeTypes,
-		AccessMode:       accessModeOf(body.Public),
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}
+	bucket := body.bucket(time.Now().UTC().Format(time.RFC3339))
 	buckets = append(buckets, bucket)
 
 	if err := s.saveBuckets(buckets); err != nil {
@@ -191,7 +286,11 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 
 // getBucket: GET /bucket/{id}
 func (s *store) getBucket(w http.ResponseWriter, r *http.Request) {
-	bucket, ok := s.resolveBucket(w, chi.URLParam(r, "id"))
+	id, ok := routeParam(w, r, "id")
+	if !ok {
+		return
+	}
+	bucket, ok := s.resolveBucket(w, id)
 	if !ok {
 		return
 	}
@@ -199,17 +298,17 @@ func (s *store) getBucket(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateBucket: PUT /bucket/{id}
-// Body: { public?, file_size_limit?, allowed_mime_types? }
+// Body: { public?, file_size_limit?, allowed_mime_types?, access_mode?,
+// s3_bucket_policy? }
 func (s *store) updateBucket(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-
-	var body struct {
-		Public           *bool    `json:"public"`
-		FileSizeLimit    *int64   `json:"file_size_limit"`
-		AllowedMimeTypes []string `json:"allowed_mime_types"`
+	id, ok := routeParam(w, r, "id")
+	if !ok {
+		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+
+	body, err := decodeBucketUpdate(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -226,17 +325,7 @@ func (s *store) updateBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "bucket not found")
 		return
 	}
-	// Only what the body actually named: a PUT that mentions nothing changes
-	// nothing, rather than resetting the fields it omitted.
-	if body.Public != nil {
-		buckets[i].Public = *body.Public
-	}
-	if body.FileSizeLimit != nil {
-		buckets[i].FileSizeLimit = body.FileSizeLimit
-	}
-	if body.AllowedMimeTypes != nil {
-		buckets[i].AllowedMimeTypes = body.AllowedMimeTypes
-	}
+	body.apply(&buckets[i])
 	buckets[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	if err := s.saveBuckets(buckets); err != nil {
@@ -249,7 +338,10 @@ func (s *store) updateBucket(w http.ResponseWriter, r *http.Request) {
 // deleteBucket: DELETE /bucket/{id}
 // The bucket must be empty.
 func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := routeParam(w, r, "id")
+	if !ok {
+		return
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -299,7 +391,10 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 // emptyBucket: POST /bucket/{id}/empty
 // Deletes everything in the bucket, including the sidecars.
 func (s *store) emptyBucket(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id, ok := routeParam(w, r, "id")
+	if !ok {
+		return
+	}
 
 	if _, ok := s.resolveBucket(w, id); !ok {
 		return

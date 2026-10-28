@@ -39,7 +39,10 @@ func acceptUpload(w http.ResponseWriter, r *http.Request, b *Bucket, objPath, co
 }
 
 // limitedBody reads a body of at most limit bytes into memory before anything
-// is written, so a refused overwrite leaves the old object in place.
+// is written, so a refused overwrite leaves the old object in place. A declared
+// length over the limit is refused before any of the body is read, and a body
+// that runs past the limit is refused as soon as it does: the rest is never
+// read, so a client cannot make the server swallow an unbounded stream.
 func limitedBody(w http.ResponseWriter, r *http.Request, limit int64) (io.Reader, bool) {
 	if r.ContentLength > limit {
 		refuseSize(w, r.ContentLength, limit)
@@ -50,10 +53,8 @@ func limitedBody(w http.ResponseWriter, r *http.Request, limit int64) (io.Reader
 		writeError(w, http.StatusInternalServerError, "failed to read request body")
 		return nil, false
 	}
-	if size := int64(len(body)); size > limit {
-		// The rest is read only to say how large the file was.
-		rest, _ := io.Copy(io.Discard, r.Body)
-		refuseSize(w, size+rest, limit)
+	if int64(len(body)) > limit {
+		refuseSize(w, unknownSize, limit)
 		return nil, false
 	}
 	return bytes.NewReader(body), true
@@ -75,11 +76,17 @@ func typeAllowed(allowed []string, mediaType string) bool {
 	return false
 }
 
-// refuseSize answers an upload over the bucket's size limit.
+// unknownSize stands for the size of a body refused before its end was read.
+const unknownSize = -1
+
+// refuseSize answers an upload over the bucket's size limit. The size is
+// stated when it is known, as the storage service states it.
 func refuseSize(w http.ResponseWriter, size, limit int64) {
-	utilities.WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-		"error": fmt.Sprintf("File size %s exceeds the maximum allowed size of %s", formatBytes(size), formatBytes(limit)),
-	})
+	msg := fmt.Sprintf("File size exceeds the maximum allowed size of %s", formatBytes(limit))
+	if size != unknownSize {
+		msg = fmt.Sprintf("File size %s exceeds the maximum allowed size of %s", formatBytes(size), formatBytes(limit))
+	}
+	utilities.WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": msg})
 }
 
 // formatBytes renders a size the way the storage service's messages do.

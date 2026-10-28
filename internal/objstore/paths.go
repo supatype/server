@@ -2,8 +2,12 @@ package objstore
 
 import (
 	"fmt"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func cleanBucketID(bucket string) (string, error) {
@@ -43,7 +47,7 @@ func (s *store) bucketDir(bucket string) (string, error) {
 //
 // The two used to be built by separate functions that each validated the same
 // two strings. Any caller wanting both therefore validated twice and had to
-// handle a second failure that could not happen — if the first call refused the
+// handle a second failure that could not happen: if the first call refused the
 // input, the second never ran.
 func (s *store) objectPaths(bucket, objPath string) (fileRel, metaRel string, err error) {
 	bucket, err = cleanBucketID(bucket)
@@ -66,4 +70,37 @@ func (s *store) objectFileRel(bucket, objPath string) (string, error) {
 func (s *store) objectMetaRel(bucket, objPath string) (string, error) {
 	_, metaRel, err := s.objectPaths(bucket, objPath)
 	return metaRel, err
+}
+
+// routeParam returns a route parameter as the caller meant it, answering the
+// request itself when it cannot be decoded.
+//
+// The client escapes each segment of a name with encodeURIComponent, which
+// escapes characters Go leaves alone in a path (':' '@' '+' and others). Go
+// then keeps that spelling as RawPath, chi routes on it, and the parameter
+// arrives still escaped. With no RawPath chi routed on the decoded Path, so
+// the parameter is already decoded, and decoding it again would read a name
+// containing a literal "%41" as "A".
+func routeParam(w http.ResponseWriter, r *http.Request, key string) (string, bool) {
+	value := chi.URLParam(r, key)
+	if r.URL.RawPath == "" {
+		return value, true
+	}
+	decoded, err := url.PathUnescape(value)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return "", false
+	}
+	return decoded, true
+}
+
+// objectRoute returns the bucket and object path of an object route.
+func objectRoute(w http.ResponseWriter, r *http.Request) (bucket, objPath string, ok bool) {
+	if bucket, ok = routeParam(w, r, "bucket"); !ok {
+		return "", "", false
+	}
+	if objPath, ok = routeParam(w, r, "*"); !ok {
+		return "", "", false
+	}
+	return bucket, strings.TrimPrefix(objPath, "/"), true
 }

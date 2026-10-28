@@ -214,7 +214,8 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	objPath := urlPath(r)
 
-	if _, ok := s.resolveBucket(w, bucket); !ok {
+	b, ok := s.resolveBucket(w, bucket)
+	if !ok {
 		return
 	}
 
@@ -222,6 +223,12 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	fileRel, err := s.objectFileRel(bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Keep the parsed media type only, never the header as written.
+	contentType := storedContentType(r.Header.Get("Content-Type"))
+	body, ok := acceptUpload(w, r, b, objPath, contentType)
+	if !ok {
 		return
 	}
 	filePath := filepath.Join(s.root, fileRel)
@@ -241,15 +248,12 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Keep the parsed media type only, never the header as written.
-	contentType := storedContentType(r.Header.Get("Content-Type"))
-
 	if err := mkdirAll(filepath.Dir(filePath), 0o700); err != nil { // #nosec G703 -- filePath is built from validated bucket and object paths under storageRoot.
 		writeError(w, http.StatusInternalServerError, "failed to create directory")
 		return
 	}
 
-	size, err := writeTo(root, fileRel, r.Body)
+	size, err := writeTo(root, fileRel, body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to write file")
 		return

@@ -14,14 +14,30 @@ import (
 // ─── Bucket metadata ──────────────────────────────────────────────────────────
 
 // Bucket mirrors the StorageBucketMeta shape expected by @supatype/client.
+//
+// AccessMode and S3BucketPolicy are written by the CLI when it provisions the
+// schema's buckets. Nothing here enforces them yet, but every update rewrites
+// buckets.json from this struct, so a field missing from it is a field the
+// first update deletes.
 type Bucket struct {
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
 	Public           bool     `json:"public"`
 	FileSizeLimit    *int64   `json:"file_size_limit"`
 	AllowedMimeTypes []string `json:"allowed_mime_types"`
+	AccessMode       string   `json:"access_mode,omitempty"`
+	S3BucketPolicy   *string  `json:"s3_bucket_policy"`
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
+}
+
+// accessModeOf is the access mode of a bucket that names none, the same default
+// the CLI and the storage service use.
+func accessModeOf(public bool) string {
+	if public {
+		return "public"
+	}
+	return "private"
 }
 
 // bucketsPath returns the path to the bucket metadata JSON file.
@@ -155,6 +171,7 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		Public:           body.Public,
 		FileSizeLimit:    body.FileSizeLimit,
 		AllowedMimeTypes: body.AllowedMimeTypes,
+		AccessMode:       accessModeOf(body.Public),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}

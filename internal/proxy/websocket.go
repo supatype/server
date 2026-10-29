@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
@@ -23,7 +24,7 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 			return
 		}
 
-		backendConn, err := net.Dial("tcp", targetAddr(target))
+		backendConn, err := dialTarget(target)
 		if err != nil {
 			logrus.WithError(err).Error("websocket proxy: dial upstream failed")
 			http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -46,14 +47,44 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 	})
 }
 
+// dialTarget connects to target: over TLS for https and wss, and over plain
+// TCP for anything else.
+func dialTarget(target *url.URL) (net.Conn, error) {
+	if !isTLSTarget(target) {
+		return net.Dial("tcp", targetAddr(target))
+	}
+	return tls.Dial("tcp", targetAddr(target), upstreamTLSConfig(target.Hostname()))
+}
+
+// isTLSTarget reports whether target is reached over TLS.
+func isTLSTarget(target *url.URL) bool {
+	return target.Scheme == "https" || target.Scheme == "wss"
+}
+
 // targetAddr is the host and port to dial for target, with the scheme's
 // default port when the URL names none.
 func targetAddr(target *url.URL) string {
 	port := "80"
-	if target.Scheme == "https" || target.Scheme == "wss" {
+	if isTLSTarget(target) {
 		port = "443"
 	}
 	return net.JoinHostPort(target.Hostname(), portOrDefault(target, port))
+}
+
+// upstreamTLSConfig is the TLS configuration for an upstream named
+// serverName. The HTTP proxy leaves its transport unset, so its upstreams are
+// reached through http.DefaultTransport; this takes that transport's TLS
+// settings too, so both paths trust the same roots, and fills in the server
+// name as the transport would.
+func upstreamTLSConfig(serverName string) *tls.Config {
+	config := &tls.Config{MinVersion: tls.VersionTLS12}
+	if shared, ok := http.DefaultTransport.(*http.Transport); ok && shared.TLSClientConfig != nil {
+		config = shared.TLSClientConfig.Clone()
+	}
+	if config.ServerName == "" {
+		config.ServerName = serverName
+	}
+	return config
 }
 
 // hijackClient takes over the client connection, answering the request itself

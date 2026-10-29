@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"unsafe"
 )
@@ -63,4 +64,29 @@ func TestListingOrdersByTheDecodedName(t *testing.T) {
 	if want := []string{"b/", "y\x00/", "m.txt", "z\x00.txt"}; !slices.Equal(names, want) {
 		t.Fatalf("listed %q, want %q", names, want)
 	}
+}
+
+// mapSegments maps each slash-separated segment and nothing else, wherever
+// the first changed segment falls and however the slashes are placed.
+func TestMapSegmentsMapsEverySegment(t *testing.T) {
+	upper := func(s string) string {
+		if s == "x" {
+			return "X!"
+		}
+		return s
+	}
+	for _, objPath := range []string{"", "x", "a", "/", "x/", "/x", "a/x", "x/a", "a//x", "x//", "a/b/x/c/x", "a/b/c", "x/x/x"} {
+		want := strings.Join(slicesMap(strings.Split(objPath, "/"), upper), "/")
+		if got := mapSegments(objPath, upper); got != want {
+			t.Errorf("mapSegments(%q) = %q, want %q", objPath, got, want)
+		}
+	}
+}
+
+func slicesMap(in []string, f func(string) string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = f(s)
+	}
+	return out
 }

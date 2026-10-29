@@ -199,36 +199,42 @@ func storedSegment(segment string) string {
 // allocated; otherwise the result is built once, from the first segment that
 // changed.
 func mapSegments(objPath string, f func(string) string) string {
-	var b strings.Builder
-	changed := false
 	for start := 0; ; {
-		end := strings.IndexByte(objPath[start:], '/')
-		last := end < 0
-		if last {
-			end = len(objPath)
-		} else {
-			end += start
-		}
+		end, last := segmentEnd(objPath, start)
 		segment := objPath[start:end]
-		mapped := f(segment)
-		if !changed && mapped != segment {
-			changed = true
-			b.Grow(len(objPath) + len(mapped) - len(segment))
-			b.WriteString(objPath[:start])
-		}
-		if changed {
-			b.WriteString(mapped)
-			if !last {
-				b.WriteByte('/')
-			}
+		if mapped := f(segment); mapped != segment {
+			return remapFrom(objPath, start, end, mapped, f)
 		}
 		if last {
-			break
+			return objPath
 		}
 		start = end + 1
 	}
-	if !changed {
-		return objPath
+}
+
+// segmentEnd is where the segment of objPath that begins at start ends, and
+// whether it is the last one.
+func segmentEnd(objPath string, start int) (end int, last bool) {
+	i := strings.IndexByte(objPath[start:], '/')
+	if i < 0 {
+		return len(objPath), true
+	}
+	return start + i, false
+}
+
+// remapFrom builds mapSegments' result once the segment objPath[start:end]
+// has mapped to something else: the path before it as it is, then mapped,
+// then every later segment through f.
+func remapFrom(objPath string, start, end int, mapped string, f func(string) string) string {
+	var b strings.Builder
+	b.Grow(len(objPath) + len(mapped) - (end - start))
+	b.WriteString(objPath[:start])
+	b.WriteString(mapped)
+	for end < len(objPath) {
+		start = end + 1
+		end, _ = segmentEnd(objPath, start)
+		b.WriteByte('/')
+		b.WriteString(f(objPath[start:end]))
 	}
 	return b.String()
 }

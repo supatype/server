@@ -1235,7 +1235,7 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	upload(t, handler, "avatars", "a.png", "png bytes")
 
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
-	before, err := s.loadObjectMeta("avatars", "a.png")
+	before, err := loadMeta(t, s, "avatars", "a.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1243,7 +1243,7 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond) // RFC3339 has second resolution.
 	do(t, handler, http.MethodGet, "/object/public/avatars/a.png", "", nil)
 
-	after, err := s.loadObjectMeta("avatars", "a.png")
+	after, err := loadMeta(t, s, "avatars", "a.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1255,20 +1255,30 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	}
 }
 
+// loadMeta reads the sidecar of objPath in bucket from s's storage root.
+func loadMeta(t *testing.T, s *store, bucket, objPath string) (*ObjectMeta, error) {
+	t.Helper()
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+	return s.loadObjectMeta(root, bucket, objPath)
+}
+
 func TestLoadObjectMetaRefusals(t *testing.T) {
 	s := &store{root: t.TempDir(), mu: &sync.RWMutex{}}
 
-	if _, err := s.loadObjectMeta("..", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "..", "a.png"); err == nil {
 		t.Error("a bucket that escapes was accepted")
 	}
-	if _, err := s.loadObjectMeta("avatars", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "avatars", "a.png"); err == nil {
 		t.Error("a sidecar that is not there was read")
 	}
 
 	absent := &store{root: filepath.Join(t.TempDir(), "gone"), mu: &sync.RWMutex{}}
-	if _, err := absent.loadObjectMeta("avatars", "a.png"); err == nil {
-		t.Error("a storage root that is not there was read")
-	}
 	// Writing creates what it needs, root included, so a first upload into a
 	// freshly configured directory works rather than failing once.
 	if err := absent.saveObjectMeta(&ObjectMeta{}, "avatars", "a.png"); err != nil {
@@ -1418,6 +1428,7 @@ func TestAStorageRootThatCannotBeOpened(t *testing.T) {
 		"upload":   {http.MethodPost, "/object/avatars/b.png", userToken(t), "x"},
 		"download": {http.MethodGet, "/object/public/avatars/a.png", "", ""},
 		"remove":   {http.MethodDelete, "/object/avatars", userToken(t), `{"prefixes":["a.png"]}`},
+		"list":     {http.MethodPost, "/object/list/avatars", userToken(t), `{"prefix":""}`},
 	} {
 		rec := do(t, handler, tc.method, tc.path, tc.bearer, strings.NewReader(tc.body))
 		if rec.Code != http.StatusInternalServerError {
@@ -1480,7 +1491,7 @@ func TestASidecarThatCannotBeRead(t *testing.T) {
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
 	failing(t, &readAll, func(io.Reader) ([]byte, error) { return nil, errDisk })
 
-	if _, err := s.loadObjectMeta("avatars", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "avatars", "a.png"); err == nil {
 		t.Error("want an error")
 	}
 }

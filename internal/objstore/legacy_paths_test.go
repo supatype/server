@@ -105,14 +105,14 @@ func TestALegacyLocationStaysInItsBucket(t *testing.T) {
 // Without it, a "%%x" stored then, or placed by hand and listed as "%%x", is
 // listed but answers 404.
 func TestAMarkerNameStoredAsWrittenIsFoundUnderEitherRules(t *testing.T) {
-	for _, windows := range []bool{false, true} {
+	for rulesName, rules := range bothRules {
 		for _, name := range []string{"%%x", "a/%%100%25"} {
-			fileRel, metaRel, ok := legacyPathsUnder("files", name, windows)
+			fileRel, metaRel, ok := legacyUnder(rules, name)
 			wantFile := filepath.Join("files", filepath.FromSlash(name))
 			dir, file := filepath.Split(filepath.FromSlash(name))
 			wantMeta := filepath.Join("files", ".meta", dir, file+".json")
 			if !ok || fileRel != wantFile || metaRel != wantMeta {
-				t.Errorf("windows=%t %q: (%q, %q, %t), want (%q, %q, true)", windows, name, fileRel, metaRel, ok, wantFile, wantMeta)
+				t.Errorf("%s %q: (%q, %q, %t), want (%q, %q, true)", rulesName, name, fileRel, metaRel, ok, wantFile, wantMeta)
 			}
 		}
 	}
@@ -133,20 +133,16 @@ func TestAListedLookalikeIsServedUnderItsListedName(t *testing.T) {
 // another object. Elsewhere the name was stored exactly, so it is found.
 func TestATrailingDotOrSpaceNeverReachesAnotherObject(t *testing.T) {
 	for _, name := range []string{"notes.", "trailing space ", `dir/inner\c.txt.`, `dir. \x`} {
-		if fileRel, _, ok := legacyPathsUnder("files", name, true); ok {
+		if fileRel, _, ok := legacyUnder(windowsRules, name); ok {
 			t.Errorf("windows: %q falls back to %q", name, fileRel)
 		}
 	}
-	// A Windows host now encodes "notes.", so the exact name is an old location
-	// to fall back to. Any other host still stores it exactly, so the exact name
-	// is its current location and there is nothing to fall back to.
-	fileRel, _, ok := legacyPathsUnder("files", "notes.", false)
-	if onWindows && (!ok || fileRel != filepath.Join("files", "notes.")) {
-		t.Errorf("elsewhere: notes. falls back to (%q, %t), want files/notes.", fileRel, ok)
+	// Elsewhere "notes." is still stored exactly, so the exact name is its
+	// current location and there is nothing to fall back to.
+	if fileRel, _, ok := legacyUnder(posixRules, "notes."); ok {
+		t.Errorf("notes. is stored as written under posix rules, yet falls back to %q", fileRel)
 	}
-	if !onWindows && ok {
-		t.Errorf("notes. is stored as written on this host, yet falls back to %q", fileRel)
-	}
+
 	if !onWindows {
 		return
 	}

@@ -118,24 +118,28 @@ func sidecarlessMeta(bucket, objPath string, info os.FileInfo) ObjectMeta {
 
 // ─── Filesystem helpers ───────────────────────────────────────────────────────
 
-func (s *store) loadObjectMeta(bucket, objPath string) (*ObjectMeta, error) {
+// openStorageRoot opens the storage root, answering the request itself when
+// it cannot.
+func (s *store) openStorageRoot(w http.ResponseWriter) (*os.Root, bool) {
+	root, err := openRoot(s.root)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to open storage root")
+		return nil, false
+	}
+	return root, true
+}
+
+// loadObjectMeta reads the sidecar of objPath in bucket from root.
+func (s *store) loadObjectMeta(root *os.Root, bucket, objPath string) (*ObjectMeta, error) {
 	metaRel, err := s.objectMetaRel(bucket, objPath)
 	if err != nil {
 		return nil, err
 	}
-	return s.loadMetaAt(metaRel)
+	return loadMetaAt(root, metaRel)
 }
 
-// loadMetaAt reads the sidecar at metaRel, relative to the storage root.
-func (s *store) loadMetaAt(metaRel string) (*ObjectMeta, error) {
-	root, err := openRoot(s.root)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = root.Close()
-	}()
-
+// loadMetaAt reads the sidecar at metaRel under root.
+func loadMetaAt(root *os.Root, metaRel string) (*ObjectMeta, error) {
 	f, err := root.Open(metaRel)
 	if err != nil {
 		return nil, err
@@ -152,21 +156,14 @@ func (s *store) loadMetaAt(metaRel string) (*ObjectMeta, error) {
 	return &meta, json.Unmarshal(data, &meta)
 }
 
+// saveObjectMeta writes the sidecar of objPath in bucket, creating the folders
+// it goes in, the storage root included.
 func (s *store) saveObjectMeta(meta *ObjectMeta, bucket, objPath string) error {
 	metaRel, err := s.objectMetaRel(bucket, objPath)
 	if err != nil {
 		return err
 	}
-	return s.saveMetaAt(meta, metaRel)
-}
-
-// saveMetaAt writes meta to the sidecar at metaRel, relative to the storage root.
-func (s *store) saveMetaAt(meta *ObjectMeta, metaRel string) error {
 	if err := mkdirAll(filepath.Join(s.root, filepath.Dir(metaRel)), 0o700); err != nil { // #nosec G703 -- metaRel is built from validated bucket and object paths under storageRoot.
-		return err
-	}
-	data, err := marshalIndent(meta)
-	if err != nil {
 		return err
 	}
 	root, err := openRoot(s.root)
@@ -176,7 +173,16 @@ func (s *store) saveMetaAt(meta *ObjectMeta, metaRel string) error {
 	defer func() {
 		_ = root.Close()
 	}()
+	return saveMetaAt(root, meta, metaRel)
+}
 
+// saveMetaAt writes meta to the sidecar at metaRel under root, whose folder
+// is already there.
+func saveMetaAt(root *os.Root, meta *ObjectMeta, metaRel string) error {
+	data, err := marshalIndent(meta)
+	if err != nil {
+		return err
+	}
 	_, err = writeTo(root, metaRel, bytes.NewReader(data))
 	return err
 }
@@ -251,9 +257,8 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 // size, answering the request itself when it cannot. Without upsert an
 // object already there is refused rather than replaced.
 func (s *store) storeUpload(w http.ResponseWriter, fileRel string, body io.Reader, upsert bool) (int64, bool) {
-	root, err := openRoot(s.root)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to open storage root")
+	root, ok := s.openStorageRoot(w)
+	if !ok {
 		return 0, false
 	}
 	defer func() {
@@ -322,7 +327,14 @@ func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
 // Public, authenticated and signed downloads all arrive here, so this is the
 // one place the stored-XSS header policy has to be applied.
 func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPath string) {
-	f, metaRel, ok := s.openObject(w, bucket, objPath)
+	root, ok := s.openStorageRoot(w)
+	if !ok {
+		return
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+	f, metaRel, ok := openObject(w, root, bucket, objPath)
 	if !ok {
 		return
 	}
@@ -335,31 +347,21 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		writeError(w, http.StatusInternalServerError, "failed to stat file")
 		return
 	}
-	s.applyObjectMeta(w, metaRel)
+	applyObjectMeta(w, root, metaRel)
 
 	// http.ServeContent handles Range, ETag, and Last-Modified negotiation. The
 	// wrapper hardens the headers once ServeContent has settled the type.
 	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, path.Base(objPath), info.ModTime(), f)
 }
 
-// openObject opens a stored object for reading and returns where its sidecar
-// is, answering the request itself when it cannot.
-func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.File, string, bool) {
-	fileRel, metaRel, err := s.objectPaths(bucket, objPath)
+// openObject opens a stored object under root for reading and returns where
+// its sidecar is, answering the request itself when it cannot.
+func openObject(w http.ResponseWriter, root *os.Root, bucket, objPath string) (*os.File, string, bool) {
+	fileRel, metaRel, err := storedAt(root, bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return nil, "", false
 	}
-	root, err := openRoot(s.root)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to open storage root")
-		return nil, "", false
-	}
-	defer func() {
-		_ = root.Close()
-	}()
-
-	fileRel, metaRel = storedAt(root, bucket, objPath, fileRel, metaRel)
 	f, err := openIn(root, fileRel)
 	if os.IsNotExist(err) {
 		writeError(w, http.StatusNotFound, "object not found")
@@ -372,29 +374,37 @@ func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.F
 	return f, metaRel, true
 }
 
-// storedAt is where an object that should already exist and its sidecar are:
-// fileRel and metaRel, where objectPaths stores it now, or, when no file is
-// there, where it was stored before names were encoded, if a file is there
-// instead. Only reads and removals look here; an upload always writes where
-// objectPaths says.
-func storedAt(root *os.Root, bucket, objPath, fileRel, metaRel string) (string, string) {
-	legacyFile, legacyMeta, ok := legacyPaths(bucket, objPath)
+// storedAt is where an object that should already exist and its sidecar are
+// under root: where objectPaths stores it now, or, when no file is there,
+// where it was stored before names were encoded, if a file is there instead.
+// Only reads and removals look here; an upload always writes where
+// objectPaths says. It fails when the bucket or name is refused.
+func storedAt(root *os.Root, bucket, objPath string) (fileRel, metaRel string, err error) {
+	bucket, rel, err := cleanObject(bucket, objPath)
+	if err != nil {
+		return "", "", err
+	}
+	if fileRel, metaRel, err = bucketPaths(bucket, rel); err != nil {
+		return "", "", err
+	}
+	legacyFile, legacyMeta, ok := hostRules.legacyPaths(bucket, rel, objPath)
 	if !ok {
-		return fileRel, metaRel
+		return fileRel, metaRel, nil
 	}
 	if _, err := root.Stat(fileRel); !os.IsNotExist(err) {
-		return fileRel, metaRel
+		return fileRel, metaRel, nil
 	}
 	if info, err := root.Stat(legacyFile); err != nil || !info.Mode().IsRegular() {
-		return fileRel, metaRel
+		return fileRel, metaRel, nil
 	}
-	return legacyFile, legacyMeta
+	return legacyFile, legacyMeta, nil
 }
 
-// applyObjectMeta sets Content-Type from the sidecar at metaRel and records
-// the access time. Both are best effort: neither fails the download.
-func (s *store) applyObjectMeta(w http.ResponseWriter, metaRel string) {
-	meta, err := s.loadMetaAt(metaRel)
+// applyObjectMeta sets Content-Type from the sidecar at metaRel under root
+// and records the access time. Both are best effort: neither fails the
+// download.
+func applyObjectMeta(w http.ResponseWriter, root *os.Root, metaRel string) {
+	meta, err := loadMetaAt(root, metaRel)
 	if err != nil {
 		return
 	}
@@ -402,7 +412,7 @@ func (s *store) applyObjectMeta(w http.ResponseWriter, metaRel string) {
 		w.Header().Set("Content-Type", meta.ContentType)
 	}
 	meta.LastAccessedAt = time.Now().UTC().Format(time.RFC3339)
-	_ = s.saveMetaAt(meta, metaRel)
+	_ = saveMetaAt(root, meta, metaRel)
 }
 
 // ─── Remove objects ───────────────────────────────────────────────────────────
@@ -420,9 +430,8 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	root, err := openRoot(s.root)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to open storage root")
+	root, ok := s.openStorageRoot(w)
+	if !ok {
 		return
 	}
 	defer func() {
@@ -431,7 +440,7 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 
 	deleted := []removedItem{}
 	for _, prefix := range prefixes {
-		removed, err := s.removeObject(root, bucket, prefix)
+		removed, err := removeObject(root, bucket, prefix)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -458,12 +467,11 @@ func removePrefixes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 
 // removeObject removes one object and its sidecar, reporting whether there
 // was an object to remove, or an error when the name is refused.
-func (s *store) removeObject(root *os.Root, bucket, objPath string) (bool, error) {
-	fileRel, metaRel, err := s.objectPaths(bucket, objPath)
+func removeObject(root *os.Root, bucket, objPath string) (bool, error) {
+	fileRel, metaRel, err := storedAt(root, bucket, objPath)
 	if err != nil {
 		return false, err
 	}
-	fileRel, metaRel = storedAt(root, bucket, objPath, fileRel, metaRel)
 	removed := root.Remove(fileRel) == nil
 	if removed {
 		_ = root.Remove(metaRel)
@@ -501,7 +509,14 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	items := matchingItems(s.folderChildren(bucket, dir, folder), body.Search)
+	root, ok := s.openStorageRoot(w)
+	if !ok {
+		return
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+	items := matchingItems(s.folderChildren(root, bucket, dir, folder), body.Search)
 
 	w.Header().Set("X-Total-Count", strconv.Itoa(len(items)))
 	w.Header().Set("Access-Control-Expose-Headers", "X-Total-Count")
@@ -536,7 +551,7 @@ func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error
 // os.ReadDir returns entries in byte order by file name already, so the groups
 // are sorted again only when a stored name was decoded into a different one,
 // which can move it.
-func (s *store) folderChildren(bucket, dir, folder string) []listItem {
+func (s *store) folderChildren(root *os.Root, bucket, dir, folder string) []listItem {
 	if inSidecarTree(folder) {
 		return []listItem{}
 	}
@@ -547,7 +562,7 @@ func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 	var folders, files []listItem
 	decoded := false
 	for _, e := range entries {
-		item, ok := s.childItem(bucket, dir, folder, e)
+		item, ok := s.childItem(root, bucket, dir, folder, e)
 		if !ok {
 			continue
 		}
@@ -569,7 +584,7 @@ func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 // childItem is the list entry for one entry of a folder's directory, or false
 // when the entry is not a child: the sidecar tree, a subfolder with no object
 // anywhere below it, or a file removed since the directory was read.
-func (s *store) childItem(bucket, dir, folder string, e fs.DirEntry) (listItem, bool) {
+func (s *store) childItem(root *os.Root, bucket, dir, folder string, e fs.DirEntry) (listItem, bool) {
 	switch {
 	case folder == "" && inSidecarTree(e.Name()):
 		return listItem{}, false
@@ -577,13 +592,13 @@ func (s *store) childItem(bucket, dir, folder string, e fs.DirEntry) (listItem, 
 		if !holdsAnObject(filepath.Join(dir, e.Name())) {
 			return listItem{}, false
 		}
-		return folderItem(bucket, listedSegment(e.Name())), true
+		return folderItem(bucket, hostRules.objectSegment(e.Name())), true
 	}
 	info, err := e.Info()
 	if err != nil {
 		return listItem{}, false
 	}
-	return s.fileItem(bucket, folder, info), true
+	return s.fileItem(root, bucket, folder, info), true
 }
 
 // holdsAnObject reports whether a file lies anywhere below dir, so an empty tree is not a folder.
@@ -599,11 +614,12 @@ func holdsAnObject(dir string) bool {
 	return found
 }
 
-// fileItem is the list entry of a file directly in the folder, named by its own name.
-func (s *store) fileItem(bucket, folder string, info os.FileInfo) listItem {
-	name := listedSegment(info.Name())
+// fileItem is the list entry of a file directly in the folder, named by its
+// own name, with its sidecar read from root.
+func (s *store) fileItem(root *os.Root, bucket, folder string, info os.FileInfo) listItem {
+	name := hostRules.objectSegment(info.Name())
 	objPath := path.Join(folder, name)
-	meta, err := s.loadObjectMeta(bucket, objPath)
+	meta, err := s.loadObjectMeta(root, bucket, objPath)
 	if err != nil {
 		fallback := sidecarlessMeta(bucket, objPath, info)
 		meta = &fallback

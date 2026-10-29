@@ -10,14 +10,14 @@ import (
 func TestDiskNamesAreLegalOnWindowsAndDecodeBack(t *testing.T) {
 	for _, name := range awkwardNames {
 		for _, segment := range strings.Split(name, "/") {
-			disk := diskSegment(segment, true)
+			disk := windowsRules.diskSegment(segment)
 			if strings.ContainsAny(disk, `<>:"|?*\/`) || strings.ContainsFunc(disk, func(r rune) bool { return r < 0x20 }) {
 				t.Errorf("%q is stored as %q, which Windows forbids", segment, disk)
 			}
-			if strings.HasSuffix(disk, ".") || strings.HasSuffix(disk, " ") || windowsReserved(disk, true) {
+			if strings.HasSuffix(disk, ".") || strings.HasSuffix(disk, " ") || reservedDeviceName(disk) {
 				t.Errorf("%q is stored as %q, which Windows renames or reserves", segment, disk)
 			}
-			if got := objectSegment(disk, true); got != segment {
+			if got := windowsRules.objectSegment(disk); got != segment {
 				t.Errorf("%q is stored as %q, which reads back as %q", segment, disk, got)
 			}
 		}
@@ -30,23 +30,23 @@ func TestDiskNamesAreLegalOnWindowsAndDecodeBack(t *testing.T) {
 // under the other OS's rules, keeps its own name.
 func TestOnlyANameThatWouldBeStoredThereIsDecoded(t *testing.T) {
 	for _, tc := range []struct {
-		disk    string
-		windows bool
-		want    string
+		disk  string
+		rules string
+		want  string
 	}{
-		{"%%a%3Ab", true, "a:b"},
-		{"%%a%3Ab", false, "%%a%3Ab"},
-		{"%%x", true, "%%x"},
-		{"%%x", false, "%%x"},
-		{"%%100%25", true, "%%100%25"},
-		{"%%100%25", false, "%%100%25"},
-		{"%%%25%25x", false, "%%x"},
-		{"%%nul%00", false, "nul\x00"},
-		{"%%trailing dot%2E", true, "trailing dot."},
-		{"%%trailing dot%2E", false, "%%trailing dot%2E"},
+		{"%%a%3Ab", "windows", "a:b"},
+		{"%%a%3Ab", "posix", "%%a%3Ab"},
+		{"%%x", "windows", "%%x"},
+		{"%%x", "posix", "%%x"},
+		{"%%100%25", "windows", "%%100%25"},
+		{"%%100%25", "posix", "%%100%25"},
+		{"%%%25%25x", "posix", "%%x"},
+		{"%%nul%00", "posix", "nul\x00"},
+		{"%%trailing dot%2E", "windows", "trailing dot."},
+		{"%%trailing dot%2E", "posix", "%%trailing dot%2E"},
 	} {
-		if got := objectSegment(tc.disk, tc.windows); got != tc.want {
-			t.Errorf("objectSegment(%q, windows=%t) = %q, want %q", tc.disk, tc.windows, got, tc.want)
+		if got := bothRules[tc.rules].objectSegment(tc.disk); got != tc.want {
+			t.Errorf("objectSegment(%q) under %s rules = %q, want %q", tc.disk, tc.rules, got, tc.want)
 		}
 	}
 }
@@ -54,12 +54,12 @@ func TestOnlyANameThatWouldBeStoredThereIsDecoded(t *testing.T) {
 // Every name stored under either OS's rules reads back as itself under the
 // same rules.
 func TestEveryStoredNameDecodesBackUnderItsOwnRules(t *testing.T) {
-	for _, windows := range []bool{false, true} {
+	for rulesName, rules := range bothRules {
 		for _, name := range awkwardNames {
 			for _, segment := range strings.Split(name, "/") {
-				disk := diskSegment(segment, windows)
-				if got := objectSegment(disk, windows); got != segment {
-					t.Errorf("windows=%t: %q is stored as %q, which reads back as %q", windows, segment, disk, got)
+				disk := rules.diskSegment(segment)
+				if got := rules.objectSegment(disk); got != segment {
+					t.Errorf("%s: %q is stored as %q, which reads back as %q", rulesName, segment, disk, got)
 				}
 			}
 		}

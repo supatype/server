@@ -68,15 +68,23 @@ func inSidecarTree(rel string) bool {
 // handle a second failure that could not happen: if the first call refused the
 // input, the second never ran.
 func (s *store) objectPaths(bucket, objPath string) (fileRel, metaRel string, err error) {
-	bucket, err = cleanBucketID(bucket)
-	if err != nil {
-		return "", "", err
-	}
-	rel, err := cleanObjectPath(objPath, false)
+	bucket, rel, err := cleanObject(bucket, objPath)
 	if err != nil {
 		return "", "", err
 	}
 	return bucketPaths(bucket, rel)
+}
+
+// cleanObject is the bucket id and the object's path on disk relative to its
+// bucket, or an error when either is refused.
+func cleanObject(bucket, objPath string) (cleanBucket, rel string, err error) {
+	if cleanBucket, err = cleanBucketID(bucket); err != nil {
+		return "", "", err
+	}
+	if rel, err = cleanObjectPath(objPath, false); err != nil {
+		return "", "", err
+	}
+	return cleanBucket, rel, nil
 }
 
 // bucketPaths is where the object at rel in bucket and its sidecar live,
@@ -89,47 +97,26 @@ func bucketPaths(bucket, rel string) (fileRel, metaRel string, err error) {
 	return filepath.Join(bucket, rel), filepath.Join(bucket, sidecarDir, dir, file+".json"), nil
 }
 
-// legacyPaths is where an object and its sidecar were stored before names
-// were encoded, when that is somewhere other than where they are stored now.
+// legacyPaths is where the object objPath and its sidecar were stored before
+// names were encoded, when that is somewhere other than current, where the
+// object is stored now relative to its bucket. bucket is already validated.
 // On every OS a name starting with encodedMarker was stored as written, and
 // on Windows a backslash in a name split it into folders. The legacy location
 // passes the same checks as the current one, so it never leaves the bucket
 // or reaches the sidecar tree. It is only ever read from or removed: writes
 // always use the encoded name.
-func legacyPaths(bucket, objPath string) (fileRel, metaRel string, ok bool) {
-	return legacyPathsUnder(bucket, objPath, onWindows)
-}
-
-// legacyPathsUnder is legacyPaths under Windows rules when windows is set.
 //
 // Windows also dropped a trailing dot or space from a name, so the old file
 // of "notes." is "notes", which may as well be the object "notes" itself. A
 // name with such a part therefore has no legacy location under Windows rules:
 // reading or removing it must never reach another object.
-func legacyPathsUnder(bucket, objPath string, windows bool) (fileRel, metaRel string, ok bool) {
-	bucket, err := cleanBucketID(bucket)
-	if err != nil {
-		return "", "", false
-	}
-	current, err := cleanObjectPath(objPath, false)
+func (r nameRules) legacyPaths(bucket, current, objPath string) (fileRel, metaRel string, ok bool) {
 	rel := filepath.FromSlash(strings.TrimPrefix(objPath, "/"))
-	if err != nil || rel == current || !filepath.IsLocal(rel) || (windows && renamedByWindows(rel)) {
+	if rel == current || !filepath.IsLocal(rel) || (r.windows && renamesAPart(rel)) {
 		return "", "", false
 	}
-	fileRel, metaRel, err = bucketPaths(bucket, rel)
+	fileRel, metaRel, err := bucketPaths(bucket, rel)
 	return fileRel, metaRel, err == nil
-}
-
-// renamedByWindows reports whether any part of rel, split at either slash,
-// ends in a dot or a space, which Windows drops from a file name. The dot
-// segments are path structure, not names, and are left to the traversal check.
-func renamedByWindows(rel string) bool {
-	for part := range strings.FieldsFuncSeq(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if part != "." && part != ".." && (strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ")) {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *store) objectFileRel(bucket, objPath string) (string, error) {
@@ -199,67 +186,72 @@ const windowsForbidden = `<>:"|?*\`
 // onWindows is whether names are stored under Windows rules here.
 const onWindows = runtime.GOOS == "windows"
 
-// diskPath is objPath with each segment as diskSegment stores it here. A path
-// none of whose segments needs encoding, which is nearly every path, comes
-// back as the same string without being copied.
+// nameRules is how a file system judges an object name's segments as file
+// names. The rules of this OS are chosen once, as hostRules; a test builds the
+// other OS's rules to check the encoding under them.
+type nameRules struct {
+	// windows is set where Windows refuses windowsForbidden and control
+	// characters and drops a trailing dot or space from a name.
+	windows bool
+	// reserved reports whether the OS takes a name for a device rather than
+	// a file. It is consulted only under Windows rules.
+	reserved func(name string) bool
+}
+
+// hostRules are the rules of this OS. On Windows a device name is asked of
+// the OS through filepath.IsLocal, which knows that Windows 11 no longer
+// reserves "CON.txt".
+var hostRules = nameRules{windows: onWindows, reserved: func(name string) bool { return !filepath.IsLocal(name) }}
+
+// refusedByte reports whether Windows refuses c in a file name. Every byte it
+// refuses is ASCII, so no byte of a multi-byte character is refused.
+func refusedByte(c byte) bool {
+	return c < 0x20 || strings.IndexByte(windowsForbidden, c) >= 0
+}
+
+// renamedSuffix reports whether Windows renames name by dropping its end: a
+// trailing dot or space.
+func renamedSuffix(name string) bool {
+	return strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ")
+}
+
+// renamesAPart reports whether any part of rel, split at either slash, would
+// be renamed by Windows. The dot segments are path structure, not names, and
+// are left to the traversal check.
+func renamesAPart(rel string) bool {
+	for part := range strings.FieldsFuncSeq(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part != "." && part != ".." && renamedSuffix(part) {
+			return true
+		}
+	}
+	return false
+}
+
+// diskPath is objPath with each segment as hostRules store it. A path none of
+// whose segments needs encoding, which is nearly every path, comes back as
+// the same string without being copied.
 func diskPath(objPath string) string {
-	return mapSegments(objPath, storedSegment)
+	return mapSegments(objPath, hostRules.diskSegment)
 }
 
-// storedSegment is diskSegment under the rules of this OS.
-func storedSegment(segment string) string {
-	return diskSegment(segment, onWindows)
-}
-
-// mapSegments is objPath with f applied to each slash-separated segment. When
-// f returns every segment unchanged, objPath itself is returned and nothing is
-// allocated; otherwise the result is built once, from the first segment that
-// changed.
+// mapSegments is objPath with f applied to each slash-separated segment, or
+// objPath itself, uncopied, when f changes no segment.
 func mapSegments(objPath string, f func(string) string) string {
-	for start := 0; ; {
-		end, last := segmentEnd(objPath, start)
-		segment := objPath[start:end]
-		if mapped := f(segment); mapped != segment {
-			return remapFrom(objPath, start, end, mapped, f)
+	for segment := range strings.SplitSeq(objPath, "/") {
+		if f(segment) != segment {
+			segments := strings.Split(objPath, "/")
+			for i, s := range segments {
+				segments[i] = f(s)
+			}
+			return strings.Join(segments, "/")
 		}
-		if last {
-			return objPath
-		}
-		start = end + 1
 	}
+	return objPath
 }
 
-// segmentEnd is where the segment of objPath that begins at start ends, and
-// whether it is the last one.
-func segmentEnd(objPath string, start int) (end int, last bool) {
-	i := strings.IndexByte(objPath[start:], '/')
-	if i < 0 {
-		return len(objPath), true
-	}
-	return start + i, false
-}
-
-// remapFrom builds mapSegments' result once the segment objPath[start:end]
-// has mapped to something else: the path before it as it is, then mapped,
-// then every later segment through f.
-func remapFrom(objPath string, start, end int, mapped string, f func(string) string) string {
-	var b strings.Builder
-	b.Grow(len(objPath) + len(mapped) - (end - start))
-	b.WriteString(objPath[:start])
-	b.WriteString(mapped)
-	for end < len(objPath) {
-		start = end + 1
-		end, _ = segmentEnd(objPath, start)
-		b.WriteByte('/')
-		b.WriteString(f(objPath[start:end]))
-	}
-	return b.String()
-}
-
-// diskSegment is the file name a segment of an object name is stored under,
-// under Windows rules when windows is set.
-func diskSegment(segment string, windows bool) string {
-	if storableAsIs(segment, windows) {
+// diskSegment is the file name a segment of an object name is stored under.
+func (r nameRules) diskSegment(segment string) string {
+	if r.storableAsIs(segment) {
 		return segment
 	}
 	return encodedMarker + escapeSegment(segment)
@@ -268,22 +260,21 @@ func diskSegment(segment string, windows bool) string {
 // storableAsIs reports whether a segment can be its own file name. An empty
 // segment and the dot segments are path structure, not names: they are kept
 // as they are for the traversal check to judge.
-func storableAsIs(segment string, windows bool) bool {
+func (r nameRules) storableAsIs(segment string) bool {
 	switch {
 	case segment == "" || segment == "." || segment == "..":
 		return true
 	case strings.HasPrefix(segment, encodedMarker) || strings.ContainsRune(segment, 0):
 		return false
-	case !windows:
+	case !r.windows:
 		return true
 	}
-	return !strings.ContainsFunc(segment, refusedOnWindows) &&
-		!strings.HasSuffix(segment, ".") && !strings.HasSuffix(segment, " ") &&
-		!windowsReserved(segment, windows)
+	return !strings.ContainsFunc(segment, refusedRune) && !renamedSuffix(segment) && !r.reserved(segment)
 }
 
-func refusedOnWindows(r rune) bool {
-	return r < 0x20 || strings.ContainsRune(windowsForbidden, r)
+// refusedRune is refusedByte for a character of a name.
+func refusedRune(c rune) bool {
+	return c < utf8.RuneSelf && refusedByte(byte(c))
 }
 
 // upperHex is the digits a percent-encoded byte is written with.
@@ -297,7 +288,7 @@ func escapeSegment(segment string) string {
 	last := len(segment) - 1
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
-		if c == '%' || c < 0x20 || strings.IndexByte(windowsForbidden, c) >= 0 || (i == last && (c == '.' || c == ' ')) {
+		if c == '%' || refusedByte(c) || (i == last && renamedSuffix(segment)) {
 			b.WriteByte('%')
 			b.WriteByte(upperHex[c>>4])
 			b.WriteByte(upperHex[c&0x0F])
@@ -308,53 +299,19 @@ func escapeSegment(segment string) string {
 	return b.String()
 }
 
-// listedSegment is objectSegment under the rules of this OS.
-func listedSegment(diskName string) string {
-	return objectSegment(diskName, onWindows)
-}
-
-// objectSegment is the segment of an object name a stored file name holds,
-// under Windows rules when windows is set. A name is decoded only when the
-// decoded name would be stored under this very file name, so every listed
-// name leads back to the file it was listed from. Anything else, such as a
-// file placed by hand or one written under the other OS's rules, is read as
-// the name it has.
-func objectSegment(diskName string, windows bool) string {
+// objectSegment is the segment of an object name a stored file name holds. A
+// name is decoded only when the decoded name would be stored under this very
+// file name, so every listed name leads back to the file it was listed from.
+// Anything else, such as a file placed by hand or one written under the other
+// OS's rules, is read as the name it has.
+func (r nameRules) objectSegment(diskName string) string {
 	body, ok := strings.CutPrefix(diskName, encodedMarker)
 	if !ok {
 		return diskName
 	}
 	name, err := url.PathUnescape(body)
-	if err != nil || diskSegment(name, windows) != diskName {
+	if err != nil || r.diskSegment(name) != diskName {
 		return diskName
 	}
 	return name
-}
-
-// windowsReserved reports whether, under Windows rules when windows is set,
-// the OS takes name for a device rather than a file. Without Windows rules no
-// name is reserved. On Windows itself that is asked of the OS through
-// filepath.IsLocal, which knows that Windows 11 no longer reserves "CON.txt".
-// Elsewhere, where Windows rules are only applied to show the encoding, every
-// reserved base name counts, with or without an extension.
-func windowsReserved(name string, windows bool) bool {
-	switch {
-	case !windows:
-		return false
-	case onWindows:
-		return !filepath.IsLocal(name)
-	}
-	base, _, _ := strings.Cut(name, ".")
-	base = strings.ToUpper(strings.TrimRight(base, " "))
-	switch base {
-	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
-		return true
-	}
-	for _, device := range []string{"COM", "LPT"} {
-		// Over-matching only encodes a name that did not need it, which is harmless.
-		if n, ok := strings.CutPrefix(base, device); ok && utf8.RuneCountInString(n) == 1 && strings.Contains("0123456789¹²³", n) {
-			return true
-		}
-	}
-	return false
 }

@@ -10,7 +10,8 @@ import (
 
 // The plugin widget manifest says which editors this project has, so it needs a
 // Studio session, as the admin config does. The bundles it names do not: a module
-// import cannot carry the token, and what is served is first-party code by hash.
+// import cannot carry the token, and each bundle is served only by a hash the
+// manifest names, from a file checked to hash to it.
 func TestThePluginWidgetManifestNeedsAStudioSession(t *testing.T) {
 	deps := depsFor(t, &config.Config{Mode: "dev", PluginWidgetsDir: t.TempDir(), JWTSecret: testJWTSecret}, nil)
 

@@ -24,7 +24,12 @@ func Of(path string) (Stamp, error) {
 	if err != nil {
 		return Stamp{}, err
 	}
-	return Stamp{mod: info.ModTime(), size: info.Size()}, nil
+	return FromInfo(info), nil
+}
+
+// FromInfo is the stamp of a file already stat'ed, such as one held open.
+func FromInfo(info os.FileInfo) Stamp {
+	return Stamp{mod: info.ModTime(), size: info.Size()}
 }
 
 // Same reports whether two stamps name the same version of the file.

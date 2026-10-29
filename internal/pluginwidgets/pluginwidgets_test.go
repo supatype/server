@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -163,4 +165,81 @@ func TestABundleAnswersConditionalAndRangeRequests(t *testing.T) {
 	assert.Equal(t, http.StatusPartialContent, rec.Code)
 	assert.Equal(t, "export", rec.Body.String())
 	assert.Equal(t, "text/javascript; charset=utf-8", rec.Header().Get("Content-Type"))
+}
+
+// A bundle is cached for a year on the strength of its name, so a file whose bytes do
+// not hash to that name (truncated, or replaced) is refused rather than cached.
+func TestABundleWhoseBytesDoNotMatchItsNameIsNotServed(t *testing.T) {
+	dir := t.TempDir()
+	ours := writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n")
+	writeManifest(t, dir, ours)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ours.Bundle()), []byte("export default"), 0o600))
+
+	rec := get(BundleHandler(NewStore(dir)), BundlePrefix+ours.Bundle())
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NotContains(t, rec.Header().Get("Cache-Control"), "immutable")
+	assert.NotContains(t, rec.Body.String(), "export default")
+}
+
+// A manifest caught mid-write is not a reason to stop serving: the last one read
+// stands until the file changes again.
+func TestAManifestBrokenMidWriteKeepsTheLastGoodWidgets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.json")
+	store := NewStore(dir)
+	writeManifest(t, dir, writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n"))
+	entries, err := store.Entries()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"wid`), 0o600))
+	entries, err = store.Entries()
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+
+	writeManifest(t, dir)
+	later := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(path, later, later))
+	entries, err = store.Entries()
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+// With no good manifest to fall back on, a broken one is a 500, but it is read and
+// logged once, not again on every request until it changes.
+func TestABrokenManifestIsReadAndLoggedOnceUntilItChanges(t *testing.T) {
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{not json"), 0o600))
+	h := BundleHandler(NewStore(dir))
+
+	for range 2 {
+		assert.Equal(t, http.StatusInternalServerError, get(h, BundlePrefix+"0000.js").Code)
+	}
+	assert.Len(t, hook.AllEntries(), 1)
+}
+
+// A verified bundle is not hashed again until its file changes, and a changed file
+// is checked afresh.
+func TestABundleIsHashedOncePerVersionOfItsFile(t *testing.T) {
+	sums := 0
+	original := sumFile
+	t.Cleanup(func() { sumFile = original })
+	sumFile = func(f io.Reader) (string, error) { sums++; return original(f) }
+
+	dir := t.TempDir()
+	ours := writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n")
+	writeManifest(t, dir, ours)
+	h := BundleHandler(NewStore(dir))
+	for range 2 {
+		require.Equal(t, http.StatusOK, get(h, BundlePrefix+ours.Bundle()).Code)
+	}
+	assert.Equal(t, 1, sums)
+
+	bundle := filepath.Join(dir, ours.Bundle())
+	require.NoError(t, os.WriteFile(bundle, []byte("export default () => 1\n"), 0o600))
+	later := time.Now().Add(time.Hour)
+	require.NoError(t, os.Chtimes(bundle, later, later))
+	assert.Equal(t, http.StatusInternalServerError, get(h, BundlePrefix+ours.Bundle()).Code)
 }

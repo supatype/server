@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/utilities"
 )
@@ -26,7 +25,7 @@ func ManifestHandler(store *Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		entries, err := store.Entries()
 		if err != nil {
-			manifestUnreadable(w, err)
+			manifestUnreadable(w)
 			return
 		}
 		widgets := make([]published, 0, len(entries))
@@ -41,37 +40,40 @@ func ManifestHandler(store *Store) http.Handler {
 // BundleHandler answers GET /studio/plugins/widgets/<sha256>.js with a bundle the
 // manifest names, and 404 for anything else.
 //
-// Public on purpose: a module `import()` cannot send Studio's bearer token. That is
-// safe because a bundle is Supatype's own code, already published on npm, holding no
-// project data, and because nothing from the request reaches the filesystem but a
-// hash the manifest names.
+// Public on purpose: a module `import()` cannot send Studio's bearer token. A bundle
+// holds no project data, and nothing from the request reaches the filesystem but a
+// hash the manifest names, whose file is checked to hash to that name.
+//
+// Which plugin a bundle belongs to is what the manifest says, and the manifest is a
+// file in the project: the first-party list keeps other plugins' widgets out of a
+// project that is built with the CLI, but it does not prove a bundle is Supatype's
+// code to anyone who can write the project's .supatype directory.
 func BundleHandler(store *Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		hash := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, BundlePrefix), ".js")
 		named, err := store.Names(hash)
 		if err != nil {
-			manifestUnreadable(w, err)
+			manifestUnreadable(w)
 			return
 		}
 		if !named {
 			http.NotFound(w, req)
 			return
 		}
-		serveBundle(w, req, filepath.Join(store.Dir, hash+".js"))
+		serveBundle(w, req, store, hash)
 	})
 }
 
 // manifestUnreadable answers a request the manifest could not be read for. A broken
-// manifest is the server's fault, so it is logged and is not a 404.
-func manifestUnreadable(w http.ResponseWriter, err error) {
-	logrus.WithError(err).Error("plugin widgets: could not read the manifest")
+// manifest is the server's fault, so it is not a 404; the Store has logged why.
+func manifestUnreadable(w http.ResponseWriter) {
 	http.Error(w, "could not read the plugin widget manifest", http.StatusInternalServerError)
 }
 
-// serveBundle sends the bundle at path, leaving conditional and Range requests to
-// http.ServeContent.
-func serveBundle(w http.ResponseWriter, req *http.Request, path string) {
-	f, err := os.Open(path)
+// serveBundle sends the bundle the manifest names by hash, once its bytes are shown
+// to hash to that name, leaving conditional and Range requests to http.ServeContent.
+func serveBundle(w http.ResponseWriter, req *http.Request, store *Store, hash string) {
+	f, err := os.Open(filepath.Join(store.Dir, hash+".js"))
 	if err != nil {
 		http.NotFound(w, req)
 		return
@@ -80,6 +82,10 @@ func serveBundle(w http.ResponseWriter, req *http.Request, path string) {
 	info, err := f.Stat()
 	if err != nil {
 		http.NotFound(w, req)
+		return
+	}
+	if !store.bundleMatches(hash, f, info) {
+		http.Error(w, "plugin widget bundle does not match its hash", http.StatusInternalServerError)
 		return
 	}
 	h := w.Header()

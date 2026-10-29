@@ -44,51 +44,78 @@ var hexSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 type Store struct {
 	Dir string
 
-	mu      sync.Mutex
-	stamp   filestamp.Stamp
+	mu    sync.Mutex
+	stamp filestamp.Stamp
+	// entries is the last manifest read whole; loaded says there was one.
 	entries []Entry
-	warned  map[string]bool
+	loaded  bool
+	// broken is why the manifest at stamp could not be read, when there is no
+	// earlier one to fall back on.
+	broken error
+	warned map[string]bool
+
+	bundles verifiedBundles
 }
 
 // NewStore is a Store for the widgets directory dir.
 func NewStore(dir string) *Store {
-	return &Store{Dir: dir, warned: map[string]bool{}}
+	return &Store{
+		Dir:     dir,
+		warned:  map[string]bool{},
+		bundles: verifiedBundles{stamps: map[string]filestamp.Stamp{}},
+	}
 }
 
 // Entries is every widget Studio may load: named by the manifest, from a
 // first-party plugin, with a well-formed hash. No manifest means no widgets.
+//
+// Each version of the file is read once. One that cannot be read or parsed, such as
+// a manifest caught mid-write, leaves the last good one in place until the file
+// changes again; with no good one yet, it is an error until then.
 func (s *Store) Entries() ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	path := filepath.Join(s.Dir, "manifest.json")
 	stamp, err := filestamp.Of(path)
 	if errors.Is(err, os.ErrNotExist) {
-		s.entries, s.stamp = nil, filestamp.Stamp{}
+		s.stamp, s.entries, s.loaded, s.broken = filestamp.Stamp{}, nil, false, nil
 		return nil, nil
 	}
 	if err != nil {
+		logrus.WithError(err).Error("plugin widgets: could not read the manifest")
 		return nil, err
 	}
 	if !stamp.Same(s.stamp) {
-		if err := s.reload(path, stamp); err != nil {
-			return nil, err
-		}
+		s.stamp = stamp
+		s.reload(path)
 	}
-	return s.entries, nil
+	return s.entries, s.broken
 }
 
-func (s *Store) reload(path string, stamp filestamp.Stamp) error {
+func (s *Store) reload(path string) {
+	entries, err := s.read(path)
+	if err == nil {
+		s.entries, s.loaded, s.broken = entries, true, nil
+		return
+	}
+	if s.loaded {
+		logrus.WithError(err).Warn("plugin widgets: could not read the manifest; serving the last one read until it changes")
+		return
+	}
+	logrus.WithError(err).Error("plugin widgets: could not read the manifest")
+	s.broken = err
+}
+
+func (s *Store) read(path string) ([]Entry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var m manifest
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return err
+		return nil, err
 	}
-	s.entries = s.servable(m.Widgets)
-	s.stamp = stamp
-	return nil
+	return s.servable(m.Widgets), nil
 }
 
 func (s *Store) servable(widgets []Entry) []Entry {

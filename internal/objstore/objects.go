@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -215,8 +216,6 @@ func formatUUID(b []byte, version byte) string {
 // Requires a valid JWT. Stores the request body as a file on disk.
 // Header x-upsert: true allows overwriting existing objects.
 func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
-	claims := claimsFrom(r.Context())
-
 	bucket, objPath, ok := objectRoute(w, r)
 	if !ok {
 		return
@@ -225,8 +224,6 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	upsert := r.Header.Get("x-upsert") == "true"
 	fileRel, err := s.objectFileRel(bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -238,11 +235,26 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	filePath := filepath.Join(s.root, fileRel)
+	size, ok := s.storeUpload(w, fileRel, body, r.Header.Get("x-upsert") == "true")
+	if !ok {
+		return
+	}
+	meta := ObjectMeta{Name: objPath, BucketID: bucket, Owner: claimsFrom(r.Context()).Sub, ContentType: contentType, Size: size}
+	if err := s.saveObjectMeta(stampedMeta(meta), bucket, objPath); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save metadata")
+		return
+	}
+	utilities.WriteJSON(w, http.StatusOK, map[string]string{"path": objPath})
+}
+
+// storeUpload writes body to fileRel under the storage root and returns its
+// size, answering the request itself when it cannot. Without upsert an
+// object already there is refused rather than replaced.
+func (s *store) storeUpload(w http.ResponseWriter, fileRel string, body io.Reader, upsert bool) (int64, bool) {
 	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
-		return
+		return 0, false
 	}
 	defer func() {
 		_ = root.Close()
@@ -251,39 +263,29 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	if !upsert {
 		if _, err := root.Stat(fileRel); err == nil {
 			writeError(w, http.StatusConflict, "object already exists")
-			return
+			return 0, false
 		}
 	}
-
+	filePath := filepath.Join(s.root, fileRel)
 	if err := mkdirAll(filepath.Dir(filePath), 0o700); err != nil { // #nosec G703 -- filePath is built from validated bucket and object paths under storageRoot.
 		writeError(w, http.StatusInternalServerError, "failed to create directory")
-		return
+		return 0, false
 	}
-
 	size, err := writeTo(root, fileRel, body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to write file")
-		return
+		return 0, false
 	}
+	return size, true
+}
 
-	owner := claims.Sub
+// stampedMeta is m as a new object's sidecar: a fresh id, and the current time
+// for its creation, update and last access.
+func stampedMeta(m ObjectMeta) *ObjectMeta {
 	now := time.Now().UTC().Format(time.RFC3339)
-	meta := &ObjectMeta{
-		ID:             newID(),
-		Name:           objPath,
-		BucketID:       bucket,
-		Owner:          owner,
-		ContentType:    contentType,
-		Size:           size,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		LastAccessedAt: now,
-	}
-	if err := s.saveObjectMeta(meta, bucket, objPath); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save metadata")
-		return
-	}
-	utilities.WriteJSON(w, http.StatusOK, map[string]string{"path": objPath})
+	m.ID = newID()
+	m.CreatedAt, m.UpdatedAt, m.LastAccessedAt = now, now, now
+	return &m
 }
 
 // ─── Download ─────────────────────────────────────────────────────────────────

@@ -473,6 +473,10 @@ func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error
 // somewhere below it, then one for each file, each group in byte order by name. A folder that is
 // not there, or is a file, has none, and the sidecar tree is never listed. Each child is named
 // by the object name its file name holds, which is also what the order is by.
+//
+// os.ReadDir returns entries in byte order by file name already, so the groups
+// are sorted again only when a stored name was decoded into a different one,
+// which can move it.
 func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 	if folder == ".meta" || strings.HasPrefix(folder, ".meta/") {
 		return []listItem{}
@@ -482,25 +486,45 @@ func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 		return []listItem{}
 	}
 	var folders, files []listItem
+	decoded := false
 	for _, e := range entries {
-		switch {
-		case folder == "" && e.Name() == ".meta":
-			// The sidecar tree, not a folder of objects.
-		case e.IsDir():
-			if holdsAnObject(filepath.Join(dir, e.Name())) {
-				folders = append(folders, folderItem(bucket, objectSegment(e.Name())))
-			}
-		default:
-			// A file removed since the directory was read has no info and is no longer a child.
-			if info, err := e.Info(); err == nil {
-				files = append(files, s.fileItem(bucket, folder, info))
-			}
+		item, ok := s.childItem(bucket, dir, folder, e)
+		if !ok {
+			continue
 		}
+		if e.IsDir() {
+			folders = append(folders, item)
+		} else {
+			files = append(files, item)
+		}
+		decoded = decoded || item.Name != e.Name()
 	}
-	byName := func(a, b listItem) int { return strings.Compare(a.Name, b.Name) }
-	slices.SortFunc(folders, byName)
-	slices.SortFunc(files, byName)
+	if decoded {
+		byName := func(a, b listItem) int { return strings.Compare(a.Name, b.Name) }
+		slices.SortFunc(folders, byName)
+		slices.SortFunc(files, byName)
+	}
 	return append(append(make([]listItem, 0, len(folders)+len(files)), folders...), files...)
+}
+
+// childItem is the list entry for one entry of a folder's directory, or false
+// when the entry is not a child: the sidecar tree, a subfolder with no object
+// anywhere below it, or a file removed since the directory was read.
+func (s *store) childItem(bucket, dir, folder string, e fs.DirEntry) (listItem, bool) {
+	switch {
+	case folder == "" && e.Name() == ".meta":
+		return listItem{}, false
+	case e.IsDir():
+		if !holdsAnObject(filepath.Join(dir, e.Name())) {
+			return listItem{}, false
+		}
+		return folderItem(bucket, objectSegment(e.Name())), true
+	}
+	info, err := e.Info()
+	if err != nil {
+		return listItem{}, false
+	}
+	return s.fileItem(bucket, folder, info), true
 }
 
 // holdsAnObject reports whether a file lies anywhere below dir, so an empty tree is not a folder.
@@ -649,11 +673,7 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 // keeping the slashes between them. Serving reads the path from the token, so
 // the router only has to decode it back to the same route.
 func escapeSegments(objPath string) string {
-	segments := strings.Split(objPath, "/")
-	for i, segment := range segments {
-		segments[i] = url.PathEscape(segment)
-	}
-	return strings.Join(segments, "/")
+	return mapSegments(objPath, url.PathEscape)
 }
 
 // defaultSignedURLSeconds is the life of a signed URL that names none.

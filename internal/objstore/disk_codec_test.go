@@ -14,7 +14,7 @@ func TestDiskNamesAreLegalOnWindowsAndDecodeBack(t *testing.T) {
 			if strings.ContainsAny(disk, `<>:"|?*\/`) || strings.ContainsFunc(disk, func(r rune) bool { return r < 0x20 }) {
 				t.Errorf("%q is stored as %q, which Windows forbids", segment, disk)
 			}
-			if strings.HasSuffix(disk, ".") || strings.HasSuffix(disk, " ") || windowsReserved(disk) {
+			if strings.HasSuffix(disk, ".") || strings.HasSuffix(disk, " ") || windowsReserved(disk, true) {
 				t.Errorf("%q is stored as %q, which Windows renames or reserves", segment, disk)
 			}
 			if got := objectSegment(disk); got != segment {

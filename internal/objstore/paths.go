@@ -134,13 +134,55 @@ const windowsForbidden = `<>:"|?*\`
 // onWindows is whether names are stored under Windows rules here.
 const onWindows = runtime.GOOS == "windows"
 
-// diskPath is objPath with each segment as diskSegment stores it here.
+// diskPath is objPath with each segment as diskSegment stores it here. A path
+// none of whose segments needs encoding, which is nearly every path, comes
+// back as the same string without being copied.
 func diskPath(objPath string) string {
-	segments := strings.Split(objPath, "/")
-	for i, segment := range segments {
-		segments[i] = diskSegment(segment, onWindows)
+	return mapSegments(objPath, storedSegment)
+}
+
+// storedSegment is diskSegment under the rules of this OS.
+func storedSegment(segment string) string {
+	return diskSegment(segment, onWindows)
+}
+
+// mapSegments is objPath with f applied to each slash-separated segment. When
+// f returns every segment unchanged, objPath itself is returned and nothing is
+// allocated; otherwise the result is built once, from the first segment that
+// changed.
+func mapSegments(objPath string, f func(string) string) string {
+	var b strings.Builder
+	changed := false
+	for start := 0; ; {
+		end := strings.IndexByte(objPath[start:], '/')
+		last := end < 0
+		if last {
+			end = len(objPath)
+		} else {
+			end += start
+		}
+		segment := objPath[start:end]
+		mapped := f(segment)
+		if !changed && mapped != segment {
+			changed = true
+			b.Grow(len(objPath) + len(mapped) - len(segment))
+			b.WriteString(objPath[:start])
+		}
+		if changed {
+			b.WriteString(mapped)
+			if !last {
+				b.WriteByte('/')
+			}
+		}
+		if last {
+			break
+		}
+		start = end + 1
 	}
-	return strings.Join(segments, "/")
+	if !changed {
+		return objPath
+	}
+	return b.String()
 }
 
 // diskSegment is the file name a segment of an object name is stored under,
@@ -166,22 +208,28 @@ func storableAsIs(segment string, windows bool) bool {
 	}
 	return !strings.ContainsFunc(segment, refusedOnWindows) &&
 		!strings.HasSuffix(segment, ".") && !strings.HasSuffix(segment, " ") &&
-		!windowsReserved(segment)
+		!windowsReserved(segment, windows)
 }
 
 func refusedOnWindows(r rune) bool {
 	return r < 0x20 || strings.ContainsRune(windowsForbidden, r)
 }
 
+// upperHex is the digits a percent-encoded byte is written with.
+const upperHex = "0123456789ABCDEF"
+
 // escapeSegment percent-encodes '%', the characters Windows refuses, and a
 // trailing dot or space. The result is the same on every OS.
 func escapeSegment(segment string) string {
 	var b strings.Builder
+	b.Grow(len(segment) + 8)
 	last := len(segment) - 1
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
 		if c == '%' || c < 0x20 || strings.IndexByte(windowsForbidden, c) >= 0 || (i == last && (c == '.' || c == ' ')) {
-			fmt.Fprintf(&b, "%%%02X", c)
+			b.WriteByte('%')
+			b.WriteByte(upperHex[c>>4])
+			b.WriteByte(upperHex[c&0x0F])
 			continue
 		}
 		b.WriteByte(c)
@@ -204,13 +252,17 @@ func objectSegment(diskName string) string {
 	return name
 }
 
-// windowsReserved reports whether Windows takes name for a device rather than
-// a file. On Windows that is asked of the OS through filepath.IsLocal, which
-// knows that Windows 11 no longer reserves "CON.txt". Elsewhere, where it is
-// only asked to show the encoding, every reserved base name counts, with or
-// without an extension.
-func windowsReserved(name string) bool {
-	if runtime.GOOS == "windows" {
+// windowsReserved reports whether, under Windows rules when windows is set,
+// the OS takes name for a device rather than a file. Without Windows rules no
+// name is reserved. On Windows itself that is asked of the OS through
+// filepath.IsLocal, which knows that Windows 11 no longer reserves "CON.txt".
+// Elsewhere, where Windows rules are only applied to show the encoding, every
+// reserved base name counts, with or without an extension.
+func windowsReserved(name string, windows bool) bool {
+	switch {
+	case !windows:
+		return false
+	case onWindows:
 		return !filepath.IsLocal(name)
 	}
 	base, _, _ := strings.Cut(name, ".")

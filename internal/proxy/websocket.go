@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"io"
 	"net"
@@ -24,7 +25,7 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 			return
 		}
 
-		backendConn, err := dialTarget(target)
+		backendConn, err := dialTarget(r.Context(), target)
 		if err != nil {
 			logrus.WithError(err).Error("websocket proxy: dial upstream failed")
 			http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -47,13 +48,20 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 	})
 }
 
+// dialTimeout is how long reaching a WebSocket target may take, the TLS
+// handshake included, before the request is answered 502.
+var dialTimeout = 10 * time.Second
+
 // dialTarget connects to target: over TLS for https and wss, and over plain
-// TCP for anything else.
-func dialTarget(target *url.URL) (net.Conn, error) {
+// TCP for anything else. The dial gives up after dialTimeout, or as soon as
+// ctx, the client's request, is cancelled.
+func dialTarget(ctx context.Context, target *url.URL) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: dialTimeout}
 	if !isTLSTarget(target) {
-		return net.Dial("tcp", targetAddr(target))
+		return dialer.DialContext(ctx, "tcp", targetAddr(target))
 	}
-	return tls.Dial("tcp", targetAddr(target), upstreamTLSConfig(target.Hostname()))
+	tlsDialer := &tls.Dialer{NetDialer: dialer, Config: upstreamTLSConfig(target.Hostname())}
+	return tlsDialer.DialContext(ctx, "tcp", targetAddr(target))
 }
 
 // isTLSTarget reports whether target is reached over TLS.

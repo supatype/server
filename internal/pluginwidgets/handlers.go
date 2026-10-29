@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -15,10 +16,8 @@ const BundlePrefix = "/studio/plugins/widgets/"
 
 // published is one widget as Studio reads it: what it edits and where to import it from.
 type published struct {
-	Plugin string `json:"plugin"`
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`
-	URL    string `json:"url"`
+	Widget
+	URL string `json:"url"`
 }
 
 // ManifestHandler answers GET /studio/plugins with the widgets Studio may load. The
@@ -27,13 +26,12 @@ func ManifestHandler(store *Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		entries, err := store.Entries()
 		if err != nil {
-			logrus.WithError(err).Error("plugin widgets: could not read the manifest")
-			http.Error(w, "could not read the plugin widget manifest", http.StatusInternalServerError)
+			manifestUnreadable(w, err)
 			return
 		}
 		widgets := make([]published, 0, len(entries))
 		for _, e := range entries {
-			widgets = append(widgets, published{Plugin: e.Plugin, Name: e.Name, Kind: e.Kind, URL: BundlePrefix + e.Bundle()})
+			widgets = append(widgets, published{Widget: e.Widget, URL: BundlePrefix + e.Bundle()})
 		}
 		w.Header().Set("Cache-Control", "no-cache")
 		utilities.WriteJSON(w, http.StatusOK, map[string][]published{"widgets": widgets})
@@ -50,27 +48,46 @@ func ManifestHandler(store *Store) http.Handler {
 func BundleHandler(store *Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		hash := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, BundlePrefix), ".js")
-		entry, ok, err := store.Bundle(hash)
-		if err != nil || !ok {
-			http.NotFound(w, req)
-			return
-		}
-		body, err := os.ReadFile(filepath.Join(store.Dir, entry.Bundle()))
+		named, err := store.Names(hash)
 		if err != nil {
+			manifestUnreadable(w, err)
+			return
+		}
+		if !named {
 			http.NotFound(w, req)
 			return
 		}
-		writeBundle(w, body)
+		serveBundle(w, req, filepath.Join(store.Dir, hash+".js"))
 	})
 }
 
-func writeBundle(w http.ResponseWriter, body []byte) {
+// manifestUnreadable answers a request the manifest could not be read for. A broken
+// manifest is the server's fault, so it is logged and is not a 404.
+func manifestUnreadable(w http.ResponseWriter, err error) {
+	logrus.WithError(err).Error("plugin widgets: could not read the manifest")
+	http.Error(w, "could not read the plugin widget manifest", http.StatusInternalServerError)
+}
+
+// serveBundle sends the bundle at path, leaving conditional and Range requests to
+// http.ServeContent.
+func serveBundle(w http.ResponseWriter, req *http.Request, path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, req)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, req)
+		return
+	}
 	h := w.Header()
 	h.Set("Content-Type", "text/javascript; charset=utf-8")
 	h.Set("X-Content-Type-Options", "nosniff")
 	// The URL is the content's hash, so its bytes never change.
-	h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	h.Set("Cache-Control", static.DefaultHashedCache)
 	// Studio on another origin (Cloud's studio.<domain>) imports it from here.
 	h.Set("Cross-Origin-Resource-Policy", "cross-origin")
-	_, _ = w.Write(body)
+	http.ServeContent(w, req, info.Name(), info.ModTime(), f)
 }

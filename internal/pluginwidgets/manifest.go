@@ -7,19 +7,24 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
-	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/filestamp"
 )
 
-// Entry is one widget as the CLI's manifest names it. Its bundle is the file
-// `<SHA256>.js` beside the manifest.
-type Entry struct {
+// Widget is what a widget edits, as both the CLI's manifest and Studio name it.
+type Widget struct {
 	Plugin string `json:"plugin"`
 	// Name is the field type or composite the widget edits: its id in the admin config.
 	Name string `json:"name"`
 	// Kind is "field" or "composite".
-	Kind   string `json:"kind"`
+	Kind string `json:"kind"`
+}
+
+// Entry is one widget as the CLI's manifest names it. Its bundle is the file
+// `<SHA256>.js` beside the manifest.
+type Entry struct {
+	Widget
 	SHA256 string `json:"sha256"`
 }
 
@@ -34,23 +39,20 @@ type manifest struct {
 var hexSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Store reads the manifest in Dir, again only when the file has changed, so a dev
-// session's schema reload reaches Studio without a restart.
+// session's schema reload reaches Studio without a restart. The manifest and bundle
+// routes share one, so the manifest is parsed, and a refused plugin logged, once.
 type Store struct {
 	Dir string
 
 	mu      sync.Mutex
-	modTime time.Time
+	stamp   filestamp.Stamp
 	entries []Entry
 	warned  map[string]bool
 }
 
-var stores sync.Map
-
-// StoreFor is the one Store for dir, shared by the manifest and bundle routes so the
-// manifest is parsed, and a refused plugin logged, once.
-func StoreFor(dir string) *Store {
-	store, _ := stores.LoadOrStore(dir, &Store{Dir: dir, warned: map[string]bool{}})
-	return store.(*Store)
+// NewStore is a Store for the widgets directory dir.
+func NewStore(dir string) *Store {
+	return &Store{Dir: dir, warned: map[string]bool{}}
 }
 
 // Entries is every widget Studio may load: named by the manifest, from a
@@ -59,23 +61,23 @@ func (s *Store) Entries() ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	path := filepath.Join(s.Dir, "manifest.json")
-	info, err := os.Stat(path)
+	stamp, err := filestamp.Of(path)
 	if errors.Is(err, os.ErrNotExist) {
-		s.entries, s.modTime = nil, time.Time{}
+		s.entries, s.stamp = nil, filestamp.Stamp{}
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !info.ModTime().Equal(s.modTime) {
-		if err := s.reload(path, info.ModTime()); err != nil {
+	if !stamp.Same(s.stamp) {
+		if err := s.reload(path, stamp); err != nil {
 			return nil, err
 		}
 	}
 	return s.entries, nil
 }
 
-func (s *Store) reload(path string, modTime time.Time) error {
+func (s *Store) reload(path string, stamp filestamp.Stamp) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -85,7 +87,7 @@ func (s *Store) reload(path string, modTime time.Time) error {
 		return err
 	}
 	s.entries = s.servable(m.Widgets)
-	s.modTime = modTime
+	s.stamp = stamp
 	return nil
 }
 
@@ -112,16 +114,16 @@ func (s *Store) refuseOnce(plugin string) {
 	logrus.WithField("plugin", plugin).Warn("plugin widgets: not loading a widget from a plugin that is not Supatype's own; its fields use Studio's built-in editors")
 }
 
-// Bundle is the entry whose bundle has this hash, if the manifest names one.
-func (s *Store) Bundle(sha256 string) (Entry, bool, error) {
+// Names reports whether Studio may load the bundle with this hash.
+func (s *Store) Names(sha256 string) (bool, error) {
 	entries, err := s.Entries()
 	if err != nil {
-		return Entry{}, false, err
+		return false, err
 	}
 	for _, e := range entries {
 		if e.SHA256 == sha256 {
-			return e, true, nil
+			return true, nil
 		}
 	}
-	return Entry{}, false, nil
+	return false, nil
 }

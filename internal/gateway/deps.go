@@ -16,6 +16,7 @@ import (
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/outerhealth"
+	"github.com/supatype/server/internal/pluginwidgets"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/sqlrunner"
@@ -72,6 +73,9 @@ type Deps struct {
 	Hooks func(http.Handler) http.Handler
 	// HookCallback serves previous(), or is nil when it could not be built.
 	HookCallback *modelhooks.Callback
+	// PluginWidgets is the project's plugin widget manifest, read by both the route
+	// that lists the widgets and the one that serves their bundles.
+	PluginWidgets *pluginwidgets.Store
 	// Baseline is the manifest with no request in hand, used by the mounts whose
 	// existence is decided once at startup rather than per tenant.
 	Baseline *proxy.RouteManifest
@@ -120,6 +124,7 @@ func NewDeps(
 		Cache:         resources.Cache(),
 		PlatformCache: resources.PlatformCache(),
 		CacheStats:    restcache.NewCounter(),
+		PluginWidgets: pluginwidgets.NewStore(cfg.PluginWidgetsDir),
 		Baseline:      manifestFor(nil),
 	}
 	d.Studio = newStudioConfig(cfg, resources)

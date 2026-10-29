@@ -416,7 +416,7 @@ func TestCacheControlForPath(t *testing.T) {
 		opts CacheOpts
 		want string
 	}{
-		"a hashed asset, by default": {"/assets/app.abc123.js", CacheOpts{}, defaultHashedCache},
+		"a hashed asset, by default": {"/assets/app.abc123.js", CacheOpts{}, DefaultHashedCache},
 		"HTML, by default":           {"/index.html", CacheOpts{}, defaultHTMLCache},
 		"the root, by default":       {"/", CacheOpts{}, defaultHTMLCache},
 		"anything else":              {"/robots.txt", CacheOpts{}, ""},
@@ -439,7 +439,7 @@ func TestCacheControlForPath(t *testing.T) {
 			"/index.html", CacheOpts{HTML: "   "}, defaultHTMLCache,
 		},
 		"a blank hashed setting falls back": {
-			"/assets/x.js", CacheOpts{HashedAssets: "  "}, defaultHashedCache,
+			"/assets/x.js", CacheOpts{HashedAssets: "  "}, DefaultHashedCache,
 		},
 	} {
 		if got := cacheControlForPath(tc.path, tc.opts); got != tc.want {

@@ -122,12 +122,12 @@ func buildStudioSession(d *Deps) http.Handler  { return studioauth.SessionHandle
 // buildPluginWidgetManifest lists the plugin widgets Studio may load, to a caller
 // with a Studio session, as /studio-config is.
 func buildPluginWidgetManifest(d *Deps) http.Handler {
-	return studioauth.RequireAdmin(d.Studio, pluginwidgets.ManifestHandler(pluginwidgets.StoreFor(d.Config.PluginWidgetsDir)))
+	return studioauth.RequireAdmin(d.Studio, pluginwidgets.ManifestHandler(d.PluginWidgets))
 }
 
 // buildPluginWidgetBundles serves each bundle the manifest names, to anyone.
 func buildPluginWidgetBundles(d *Deps) http.Handler {
-	return pluginwidgets.BundleHandler(pluginwidgets.StoreFor(d.Config.PluginWidgetsDir))
+	return pluginwidgets.BundleHandler(d.PluginWidgets)
 }
 
 // buildStudioProxy fronts every other service on this router, which is why it

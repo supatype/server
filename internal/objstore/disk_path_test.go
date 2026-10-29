@@ -42,13 +42,14 @@ func TestDiskPathEncodesOnlyTheSegmentsThatNeedIt(t *testing.T) {
 }
 
 // A stored name that decodes to a different name is listed where the decoded
-// name sorts, not where its file name does: "%%z%3F.txt" is "z?.txt", which
-// comes after "m.txt" although its file name comes first.
+// name sorts, not where its file name does: "%%z%00.txt" is "z\x00.txt", which
+// comes after "m.txt" although its file name comes first. NUL is encoded on
+// every OS, so the names decode under either set of rules.
 func TestListingOrdersByTheDecodedName(t *testing.T) {
 	handler, root := newStore(t)
 	makeBucket(t, handler, "avatars", false)
 	bucket := filepath.Join(root, "avatars")
-	for _, rel := range []string{"m.txt", "%%z%3F.txt", "b/x.txt", "%%y%3F/x.txt"} {
+	for _, rel := range []string{"m.txt", "%%z%00.txt", "b/x.txt", "%%y%00/x.txt"} {
 		file := filepath.Join(bucket, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 			t.Fatal(err)
@@ -59,7 +60,7 @@ func TestListingOrdersByTheDecodedName(t *testing.T) {
 	}
 
 	names, _ := listNames(t, handler, `{"prefix":""}`)
-	if want := []string{"b/", "y?/", "m.txt", "z?.txt"}; !slices.Equal(names, want) {
+	if want := []string{"b/", "y\x00/", "m.txt", "z\x00.txt"}; !slices.Equal(names, want) {
 		t.Fatalf("listed %q, want %q", names, want)
 	}
 }

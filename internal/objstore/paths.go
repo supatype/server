@@ -237,16 +237,24 @@ func escapeSegment(segment string) string {
 	return b.String()
 }
 
-// objectSegment is the segment of an object name a stored file name holds.
-// Only a name escapeSegment could have written is decoded; anything else,
-// such as a file placed by hand, is read as the name it has.
-func objectSegment(diskName string) string {
+// listedSegment is objectSegment under the rules of this OS.
+func listedSegment(diskName string) string {
+	return objectSegment(diskName, onWindows)
+}
+
+// objectSegment is the segment of an object name a stored file name holds,
+// under Windows rules when windows is set. A name is decoded only when the
+// decoded name would be stored under this very file name, so every listed
+// name leads back to the file it was listed from. Anything else, such as a
+// file placed by hand or one written under the other OS's rules, is read as
+// the name it has.
+func objectSegment(diskName string, windows bool) string {
 	body, ok := strings.CutPrefix(diskName, encodedMarker)
 	if !ok {
 		return diskName
 	}
 	name, err := url.PathUnescape(body)
-	if err != nil || name == "" || name == "." || name == ".." || escapeSegment(name) != body {
+	if err != nil || diskSegment(name, windows) != diskName {
 		return diskName
 	}
 	return name

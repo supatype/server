@@ -1,10 +1,12 @@
 package objstore
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -113,4 +115,31 @@ func TestAnEncodedNameStaysInItsBucket(t *testing.T) {
 			t.Errorf("%q was accepted", name)
 		}
 	}
+}
+
+// A file that looks encoded but is not what the name it decodes to would be
+// stored as is listed under its own name. Decoding "%%100%25" to "100%" would
+// list two entries named "100%" here, and the listed name would serve the
+// other file.
+func TestAListedNameServesTheFileItWasListedFrom(t *testing.T) {
+	handler, root := newStore(t)
+	makeBucket(t, handler, "files", true)
+	for disk, content := range map[string]string{"100%": "plain", "%%100%25": "lookalike"} {
+		if err := os.WriteFile(filepath.Join(root, "files", disk), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := do(t, handler, http.MethodPost, "/object/list/files", userToken(t), strings.NewReader(`{"prefix":""}`))
+	var items []listItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("list: %v (%s)", err, rec.Body.String())
+	}
+	var names []string
+	for _, it := range items {
+		names = append(names, it.Name)
+	}
+	if want := []string{"%%100%25", "100%"}; !slices.Equal(names, want) {
+		t.Fatalf("listed %q, want %q", names, want)
+	}
+	wantContent(t, handler, "/object/public/files/100%25", "", "plain")
 }

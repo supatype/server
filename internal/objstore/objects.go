@@ -518,7 +518,7 @@ func (s *store) childItem(bucket, dir, folder string, e fs.DirEntry) (listItem, 
 		if !holdsAnObject(filepath.Join(dir, e.Name())) {
 			return listItem{}, false
 		}
-		return folderItem(bucket, objectSegment(e.Name())), true
+		return folderItem(bucket, listedSegment(e.Name())), true
 	}
 	info, err := e.Info()
 	if err != nil {
@@ -542,7 +542,7 @@ func holdsAnObject(dir string) bool {
 
 // fileItem is the list entry of a file directly in the folder, named by its own name.
 func (s *store) fileItem(bucket, folder string, info os.FileInfo) listItem {
-	name := objectSegment(info.Name())
+	name := listedSegment(info.Name())
 	objPath := path.Join(folder, name)
 	meta, err := s.loadObjectMeta(bucket, objPath)
 	if err != nil {

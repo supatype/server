@@ -31,7 +31,8 @@ func TestActingAsYourselfKeepsAdministration(t *testing.T) {
 	for _, path := range []string{
 		"/auth/v1/admin/users",
 		"/storage/v1/bucket",
-		"/functions/v1/admin/functions",
+		"/functions/v1/admin/list",
+		"/admin/v1/functions/list",
 		"/platform/v1/projects/default/settings",
 		"/admin/v1/config",
 	} {
@@ -55,6 +56,8 @@ func TestActingAsYourselfStillAppliesToContent(t *testing.T) {
 		"/graphql/v1",
 		"/storage/v1/object/list/avatars",
 		"/auth/v1/user",
+		// A project function named admin, not the admin API at its old address.
+		"/functions/v1/admin/orders/42",
 	} {
 		next, _ := proxySelf(t, "admin", http.MethodGet, path)
 		if next.auth == "Bearer service-role-key" {

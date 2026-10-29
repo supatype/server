@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/functions"
@@ -92,4 +93,32 @@ func TestTheOldAdminAddressWithoutAnInvocationProxyAnswersNotFound(t *testing.T)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 with no invocation proxy", rec.Code)
 	}
+}
+
+// asStudioAdmin sends a Studio admin's session, which the proxy forwards as the service role.
+func asStudioAdmin(t *testing.T) func(*http.Request) {
+	t.Helper()
+	token := signedClaims(t, `{"sub":"admin-user","role":"authenticated","app_metadata":{"role":"admin"},"exp":`+
+		itoa(int(time.Now().Add(time.Hour).Unix()))+`}`)
+	return func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+token) }
+}
+
+// Through the Studio proxy and the real router, an admin reaches the admin API at both addresses
+// and the function named admin at the old one: the proxy and the dispatcher ask the same question.
+func TestStudioReachesTheAdminAPIAndTheFunctionNamedAdmin(t *testing.T) {
+	for _, target := range []string{"/studio/proxy/admin/v1/functions/list", "/studio/proxy/functions/v1/admin/list"} {
+		r := functionsRig(t)
+		rec := r.do(http.MethodGet, target, asStudioAdmin(t))
+		if _, reached := r.lastHit(); rec.Code != http.StatusOK || reached || !strings.Contains(rec.Body.String(), `"data"`) {
+			t.Fatalf("GET %s: status %d, body %s, reached an upstream %v; want the admin API", target, rec.Code, rec.Body.String(), reached)
+		}
+	}
+	// A read: an elevated write is refused here, since the rig has no audit log to record it in.
+	expectWorker(t, functionsRig(t), http.MethodGet, "/studio/proxy/functions/v1/admin/orders/42", asStudioAdmin(t))
+}
+
+// An escaped admin route is not an admin route to the router, so the dispatcher sends it to the
+// function named admin even with the service-role key, as the Studio proxy judges it.
+func TestAnEscapedAdminRouteIsAFunctionCall(t *testing.T) {
+	expectWorker(t, functionsRig(t), http.MethodGet, "/functions/v1/admin/%6cist", asServiceRole)
 }

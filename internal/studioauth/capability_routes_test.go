@@ -267,26 +267,62 @@ func TestProxyServedWithoutAMountJudgesTheEscapedPath(t *testing.T) {
 	}
 }
 
-// Function administration is not content, at either of its addresses. /functions/v1 is a content
-// prefix, and the admin API's old address sits under it, so a capability that may read and write
-// every content row must still be refused the admin API on both: only Administer reaches it.
+// functionAdminRoutes are the functions admin API's own routes, below either of its addresses.
+var functionAdminRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/list"},
+	{http.MethodGet, "/hello/logs"},
+	{http.MethodGet, "/logs/tail"},
+	{http.MethodGet, "/env"},
+	{http.MethodPost, "/env"},
+	{http.MethodDelete, "/env/KEY"},
+	{http.MethodGet, "/hello/env"},
+	{http.MethodPost, "/hello/env"},
+	{http.MethodDelete, "/hello/env/KEY"},
+}
+
+// functionAdminAddresses are where the functions admin API is served: its address, and its old one.
+var functionAdminAddresses = []string{"/admin/v1/functions", "/functions/v1/admin"}
+
+// A project function named admin is called at /functions/v1/admin, so these are content, not
+// administration: the old admin address only answers the admin API's own routes.
+var functionNamedAdminPaths = []string{"/functions/v1/admin", "/functions/v1/admin/", "/functions/v1/admin/orders/42"}
+
+// Function administration is not content, at either of its addresses: Read and Write never reach
+// one of the admin API's routes, and only Administer does.
 func TestReadWriteDoesNotReachFunctionAdministration(t *testing.T) {
 	content := StudioPermissions{Read: true, Write: true}
 	administer := StudioPermissions{Read: true, Write: true, Administer: true}
-	methods := []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
-	paths := []string{
-		"/admin/v1/functions", "/admin/v1/functions/list", "/admin/v1/functions/env", "/admin/v1/functions/env/KEY",
-		"/admin/v1/functions/hello/logs", "/admin/v1/functions/logs/tail",
-		"/functions/v1/admin", "/functions/v1/admin/", "/functions/v1/admin/list", "/functions/v1/admin/env",
-		"/functions/v1/admin/env/KEY", "/functions/v1/admin/hello/env", "/functions/v1/admin/logs/tail",
-	}
-	for _, path := range paths {
-		for _, method := range methods {
-			if AllowsRequest(content, method, path) {
-				t.Errorf("Read/Write reached %s %s, which only Administer may", method, path)
+	for _, address := range functionAdminAddresses {
+		for _, route := range functionAdminRoutes {
+			if AllowsRequest(content, route.method, address+route.path) {
+				t.Errorf("Read/Write reached %s %s, which only Administer may", route.method, address+route.path)
 			}
-			if !AllowsRequest(administer, method, path) {
-				t.Errorf("Administer was refused %s %s", method, path)
+			if !AllowsRequest(administer, route.method, address+route.path) {
+				t.Errorf("Administer was refused %s %s", route.method, address+route.path)
+			}
+		}
+	}
+	// Everything under the new address is administration, a route it does not have included.
+	if AllowsRequest(content, http.MethodPost, "/admin/v1/functions/orders/42") {
+		t.Error("Read/Write reached POST /admin/v1/functions/orders/42")
+	}
+}
+
+// A project function named admin follows the rules every function does: Read calls it with a
+// read, Write with anything else.
+func TestAFunctionNamedAdminIsContent(t *testing.T) {
+	read := StudioPermissions{Read: true}
+	write := StudioPermissions{Read: true, Write: true}
+	for _, path := range functionNamedAdminPaths {
+		if !AllowsRequest(read, http.MethodGet, path) {
+			t.Errorf("Read was refused GET %s", path)
+		}
+		if AllowsRequest(read, http.MethodPost, path) {
+			t.Errorf("Read reached POST %s, which needs Write", path)
+		}
+		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			if !AllowsRequest(write, method, path) {
+				t.Errorf("Write was refused %s %s", method, path)
 			}
 		}
 	}

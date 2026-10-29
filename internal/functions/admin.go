@@ -4,6 +4,7 @@
 //
 //	GET    /list             list deployed functions (scanned from functionsDir)
 //	GET    /{name}/logs      recent log lines for a function (?since=1h)
+//	GET    /logs/tail        live log tail, relayed from the functions worker
 //	GET    /env              list shared env var key names from .env.local
 //	POST   /env              set a shared env var in .env.local
 //	DELETE /env/{key}        remove a shared env var from .env.local
@@ -41,18 +42,29 @@ type LogSource interface {
 	FunctionLogs(function string, since time.Time, n int) []deno.LogLine
 }
 
-// API is the functions admin API as its callers need it: a handler, and the route table it serves,
-// so a caller can ask whether a request is one of its routes before handing it over. It is not a
-// chi.Router, so nothing outside this package can add routes to it.
-type API interface {
-	http.Handler
-	chi.Routes
-}
-
 // Handler returns the functions admin API.
 // manager may be nil when edge functions are disabled; the log route is then
 // empty rather than absent.
-func Handler(cfg *config.Config, functionsDir string, manager LogSource) API {
+func Handler(cfg *config.Config, functionsDir string, manager LogSource) http.Handler {
+	return newRouter(cfg, functionsDir, manager)
+}
+
+// routeTable is the admin API's routes over no directory, for asking whether a request is one of
+// them. It is built by the same newRouter that serves the API, so the two cannot disagree.
+var routeTable = newRouter(&config.Config{}, "", nil)
+
+// IsAdminRoute reports whether method and path, below the mount that serves the admin API, name one
+// of its routes. The gateway's old admin address dispatches on it, and the Studio proxy judges on
+// it which requests there are administration rather than a call to a function named admin.
+func IsAdminRoute(method, path string) bool {
+	if path == "" {
+		path = "/"
+	}
+	return routeTable.Match(chi.NewRouteContext(), method, path)
+}
+
+// newRouter is the admin API: its routes, behind the service-role check.
+func newRouter(cfg *config.Config, functionsDir string, manager LogSource) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(RequireServiceRoleMiddleware(cfg))

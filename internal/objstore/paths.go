@@ -91,28 +91,45 @@ func bucketPaths(bucket, rel string) (fileRel, metaRel string, err error) {
 
 // legacyPaths is where an object and its sidecar were stored before names
 // were encoded, when that is somewhere other than where they are stored now.
-// This is looked for on Windows only, where the layout changed for names in
-// use: a backslash in a name split it into folders, and the OS dropped a
-// trailing dot or space. (A name starting with encodedMarker was also stored
-// as written, on every OS; on Windows it is found here too.) The legacy location
+// On every OS a name starting with encodedMarker was stored as written, and
+// on Windows a backslash in a name split it into folders. The legacy location
 // passes the same checks as the current one, so it never leaves the bucket
 // or reaches the sidecar tree. It is only ever read from or removed: writes
 // always use the encoded name.
 func legacyPaths(bucket, objPath string) (fileRel, metaRel string, ok bool) {
-	if !onWindows {
-		return "", "", false
-	}
+	return legacyPathsUnder(bucket, objPath, onWindows)
+}
+
+// legacyPathsUnder is legacyPaths under Windows rules when windows is set.
+//
+// Windows also dropped a trailing dot or space from a name, so the old file
+// of "notes." is "notes", which may as well be the object "notes" itself. A
+// name with such a part therefore has no legacy location under Windows rules:
+// reading or removing it must never reach another object.
+func legacyPathsUnder(bucket, objPath string, windows bool) (fileRel, metaRel string, ok bool) {
 	bucket, err := cleanBucketID(bucket)
 	if err != nil {
 		return "", "", false
 	}
 	current, err := cleanObjectPath(objPath, false)
 	rel := filepath.FromSlash(strings.TrimPrefix(objPath, "/"))
-	if err != nil || rel == current || !filepath.IsLocal(rel) {
+	if err != nil || rel == current || !filepath.IsLocal(rel) || (windows && renamedByWindows(rel)) {
 		return "", "", false
 	}
 	fileRel, metaRel, err = bucketPaths(bucket, rel)
 	return fileRel, metaRel, err == nil
+}
+
+// renamedByWindows reports whether any part of rel, split at either slash,
+// ends in a dot or a space, which Windows drops from a file name. The dot
+// segments are path structure, not names, and are left to the traversal check.
+func renamedByWindows(rel string) bool {
+	for part := range strings.FieldsFuncSeq(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part != "." && part != ".." && (strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *store) objectFileRel(bucket, objPath string) (string, error) {

@@ -394,35 +394,52 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bucketDir, ok := s.emptyBucketDir(w, id)
+	if !ok {
+		return
+	}
+
+	if s.dropBucket(w, append(buckets[:i], buckets[i+1:]...), bucketDir) {
+		utilities.WriteJSON(w, http.StatusOK, map[string]string{"message": "Successfully deleted"})
+	}
+}
+
+// dropBucket saves the bucket list without a deleted bucket and removes the
+// bucket's directory, answering the request itself when either fails.
+func (s *store) dropBucket(w http.ResponseWriter, remaining []Bucket, bucketDir string) bool {
+	if err := s.saveBuckets(remaining); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save buckets")
+		return false
+	}
+	if err := removeAll(bucketDir); err != nil { // #nosec G703 -- bucketDir is under storageRoot after bucket id validation in emptyBucketDir.
+		writeError(w, http.StatusInternalServerError, "failed to delete bucket directory")
+		return false
+	}
+	return true
+}
+
+// emptyBucketDir is the directory of bucket id when it holds no objects,
+// answering the request itself when it does or cannot be read. The sidecar
+// directory is this implementation's own bookkeeping, not the caller's data,
+// so it does not make a bucket non-empty, however its name is cased.
+func (s *store) emptyBucketDir(w http.ResponseWriter, id string) (string, bool) {
 	bucketDir, err := s.bucketDir(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return "", false
 	}
 	entries, err := readDir(bucketDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read bucket")
-		return
+		return "", false
 	}
-	// The sidecar directory is this implementation's own bookkeeping, not the
-	// caller's data, so it does not make a bucket non-empty.
 	for _, e := range entries {
-		if e.Name() != sidecarDir {
+		if !inSidecarTree(e.Name()) {
 			writeError(w, http.StatusBadRequest, "bucket must be empty before deletion")
-			return
+			return "", false
 		}
 	}
-
-	buckets = append(buckets[:i], buckets[i+1:]...)
-	if err := s.saveBuckets(buckets); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save buckets")
-		return
-	}
-	if err := removeAll(bucketDir); err != nil { // #nosec G703 -- bucketDir is under storageRoot after bucket id validation above.
-		writeError(w, http.StatusInternalServerError, "failed to delete bucket directory")
-		return
-	}
-	utilities.WriteJSON(w, http.StatusOK, map[string]string{"message": "Successfully deleted"})
+	return bucketDir, true
 }
 
 // emptyBucket: POST /bucket/{id}/empty

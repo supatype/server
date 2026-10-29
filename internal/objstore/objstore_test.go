@@ -459,6 +459,19 @@ func TestABucketHoldingOnlySidecarsIsEmpty(t *testing.T) {
 	}
 }
 
+// The sidecar directory is recognised however its name is cased, as every
+// object route recognises it. No object can be stored under ".META", so a
+// bucket holding only that directory holds no objects.
+func TestABucketHoldingOnlyACaseVariantSidecarDirIsEmpty(t *testing.T) {
+	handler, root := newStore(t)
+	makeBucket(t, handler, "avatars", false)
+
+	placeFile(t, root, "avatars/.META/a.png.json", "{}")
+	if rec := do(t, handler, http.MethodDelete, "/bucket/avatars", serviceToken(t), nil); rec.Code != http.StatusOK {
+		t.Errorf("status = %d %s, want .META not to count", rec.Code, rec.Body.String())
+	}
+}
+
 func TestOperationsOnABucketThatIsNotThere(t *testing.T) {
 	handler, _ := newStore(t)
 

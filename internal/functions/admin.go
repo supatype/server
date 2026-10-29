@@ -44,7 +44,7 @@ type LogSource interface {
 // Handler returns a chi.Router that serves the functions admin API.
 // manager may be nil when edge functions are disabled; the log route is then
 // empty rather than absent.
-func Handler(cfg *config.Config, functionsDir string, manager LogSource) http.Handler {
+func Handler(cfg *config.Config, functionsDir string, manager LogSource) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(RequireServiceRoleMiddleware(cfg))

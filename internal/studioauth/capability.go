@@ -102,8 +102,8 @@ func KnownStudioRoles() []string {
 // dataPlanePrefixes are the routes that carry content: rows, files, realtime and
 // function invocation. Every role works with content, so these are the only
 // routes that `Read` and `Write` open. Function administration lives under
-// `/functions/v1/admin` and bucket management under `/storage/v1/bucket`, and
-// neither is content.
+// `/admin/v1/functions` (and, for a transition, its old `/functions/v1/admin`)
+// and bucket management under `/storage/v1/bucket`, and neither is content.
 var dataPlanePrefixes = []string{"/rest/v1", "/graphql/v1", "/storage/v1", "/realtime/v1", "/functions/v1"}
 
 // AllowsRequest reports whether a capability set covers one proxied request.

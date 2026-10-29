@@ -263,7 +263,7 @@ func buildStorage(d *Deps) http.Handler {
 
 func buildFunctionsAdmin(d *Deps) http.Handler {
 	logrus.WithField("dir", d.Config.DenoFunctionsDir).
-		Info("mux: Functions admin handler mounted at /functions/v1/admin")
+		Info("mux: Functions admin handler mounted at /admin/v1/functions")
 	return functions.Handler(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs())
 }
 

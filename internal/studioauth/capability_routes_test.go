@@ -103,6 +103,10 @@ var realtimeInspectorRules = []proxyRule{
 // role can do, for admins and developers, and a route added later must land here
 // rather than fall through to "may write content rows".
 var serviceRoleRules = []proxyRule{
+	{http.MethodGet, "/admin/v1/functions/list", true, true, false},
+	{http.MethodGet, "/admin/v1/functions/env", true, true, false},
+	{http.MethodPost, "/admin/v1/functions/env", true, true, false},
+	// The admin API's old address, kept for a transition.
 	{http.MethodGet, "/functions/v1/admin/list", true, true, false},
 	{http.MethodGet, "/functions/v1/admin/env", true, true, false},
 	{http.MethodPost, "/functions/v1/admin/env", true, true, false},

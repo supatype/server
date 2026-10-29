@@ -414,16 +414,10 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	var body struct {
-		Prefixes []string `json:"prefixes"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	prefixes, ok := removePrefixes(w, r)
+	if !ok {
 		return
 	}
-
-	deleted := []removedItem{}
 	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
@@ -433,19 +427,46 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 		_ = root.Close()
 	}()
 
-	for _, prefix := range body.Prefixes {
-		fileRel, metaRel, err := s.objectPaths(bucket, prefix)
+	deleted := []removedItem{}
+	for _, prefix := range prefixes {
+		removed, err := s.removeObject(root, bucket, prefix)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		fileRel, metaRel = storedAt(root, bucket, prefix, fileRel, metaRel)
-		if err := root.Remove(fileRel); err == nil {
-			_ = root.Remove(metaRel)
+		if removed {
 			deleted = append(deleted, removedItem{Name: prefix, BucketID: bucket})
 		}
 	}
 	utilities.WriteJSON(w, http.StatusOK, deleted)
+}
+
+// removePrefixes is the object names a remove's body lists, answering the
+// request itself when the body cannot be read.
+func removePrefixes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
+	var body struct {
+		Prefixes []string `json:"prefixes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return nil, false
+	}
+	return body.Prefixes, true
+}
+
+// removeObject removes one object and its sidecar, reporting whether there
+// was an object to remove, or an error when the name is refused.
+func (s *store) removeObject(root *os.Root, bucket, objPath string) (bool, error) {
+	fileRel, metaRel, err := s.objectPaths(bucket, objPath)
+	if err != nil {
+		return false, err
+	}
+	fileRel, metaRel = storedAt(root, bucket, objPath, fileRel, metaRel)
+	removed := root.Remove(fileRel) == nil
+	if removed {
+		_ = root.Remove(metaRel)
+	}
+	return removed, nil
 }
 
 // ─── List objects ─────────────────────────────────────────────────────────────

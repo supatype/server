@@ -63,6 +63,19 @@ func IsAdminRoute(method, path string) bool {
 	return routeTable.Match(chi.NewRouteContext(), method, path)
 }
 
+// Mounted reports whether the gateway serves the admin API, at both of its addresses: it does when
+// the server has a functions directory to administer.
+func Mounted(cfg *config.Config) bool { return cfg.DenoFunctionsDir != "" }
+
+// ServesAdminAPI reports whether the admin API's old address, /functions/v1/admin, hands a request
+// to the admin API rather than to the project's function named admin: the API is mounted, the
+// request carries the service role's key, and it names one of the API's routes (path is below the
+// address). The gateway's dispatcher asks it of the request it holds, and the Studio proxy of the
+// request it is about to forward, so the two agree on which one a request is.
+func ServesAdminAPI(mounted, serviceRole bool, method, path string) bool {
+	return mounted && serviceRole && IsAdminRoute(method, path)
+}
+
 // newRouter is the admin API: its routes, behind the service-role check.
 func newRouter(cfg *config.Config, functionsDir string, manager LogSource) chi.Router {
 	r := chi.NewRouter()

@@ -34,6 +34,11 @@ var dataPlaneRules = []proxyRule{
 	{http.MethodPost, "/storage/v1/object/media/a.png", true, true, true},
 	{http.MethodGet, "/realtime/v1/websocket", true, true, true},
 	{http.MethodPost, "/functions/v1/hello", true, true, true},
+	// By its path alone, the admin API's old address is a call to the function named admin. The
+	// proxy judges it as administration only when the gateway will hand it to the admin API
+	// (servesFunctionsAdmin), which depends on the credential it carries.
+	{http.MethodGet, "/functions/v1/admin/list", true, true, true},
+	{http.MethodPost, "/functions/v1/admin/env", true, true, true},
 }
 
 // The routes that already had a rule of their own.
@@ -106,10 +111,6 @@ var serviceRoleRules = []proxyRule{
 	{http.MethodGet, "/admin/v1/functions/list", true, true, false},
 	{http.MethodGet, "/admin/v1/functions/env", true, true, false},
 	{http.MethodPost, "/admin/v1/functions/env", true, true, false},
-	// The admin API's old address, kept for a transition.
-	{http.MethodGet, "/functions/v1/admin/list", true, true, false},
-	{http.MethodGet, "/functions/v1/admin/env", true, true, false},
-	{http.MethodPost, "/functions/v1/admin/env", true, true, false},
 	{http.MethodGet, "/admin/v1/config/rest", true, true, false},
 	{http.MethodPatch, "/admin/v1/config/rest", true, true, false},
 	{http.MethodPost, "/admin/v1/database/credentials/first-view", true, true, false},
@@ -288,16 +289,18 @@ var functionAdminAddresses = []string{"/admin/v1/functions", "/functions/v1/admi
 var functionNamedAdminPaths = []string{"/functions/v1/admin", "/functions/v1/admin/", "/functions/v1/admin/orders/42"}
 
 // Function administration is not content, at either of its addresses: Read and Write never reach
-// one of the admin API's routes, and only Administer does.
+// one of the admin API's routes, and only Administer does. At the old address that is a request
+// the gateway will hand to the admin API (servesFunctionsAdmin).
 func TestReadWriteDoesNotReachFunctionAdministration(t *testing.T) {
 	content := StudioPermissions{Read: true, Write: true}
 	administer := StudioPermissions{Read: true, Write: true, Administer: true}
 	for _, address := range functionAdminAddresses {
+		servedAsAdmin := address == legacyFunctionsAdminPrefix
 		for _, route := range functionAdminRoutes {
-			if AllowsRequest(content, route.method, address+route.path) {
+			if allowsProxied(content, route.method, address+route.path, servedAsAdmin) {
 				t.Errorf("Read/Write reached %s %s, which only Administer may", route.method, address+route.path)
 			}
-			if !AllowsRequest(administer, route.method, address+route.path) {
+			if !allowsProxied(administer, route.method, address+route.path, servedAsAdmin) {
 				t.Errorf("Administer was refused %s %s", route.method, address+route.path)
 			}
 		}

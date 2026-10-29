@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/studioctx"
 )
@@ -256,7 +257,7 @@ func Routes() []Route {
 }
 
 // functionsDirSet is whether the server has a functions directory, which mounts the admin API.
-func functionsDirSet(d *Deps) bool { return d.Config.DenoFunctionsDir != "" }
+func functionsDirSet(d *Deps) bool { return functions.Mounted(d.Config) }
 
 // functionsInvocationRoute is /functions/v1, the invocation proxy. A function of its own, since the
 // admin API's old address hands it every request that is not administration (legacyFunctionsAdmin).

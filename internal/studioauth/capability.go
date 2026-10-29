@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -105,8 +104,9 @@ func KnownStudioRoles() []string {
 // routes that `Read` and `Write` open. Function administration lives under
 // `/admin/v1/functions` and bucket management under `/storage/v1/bucket`, and
 // neither is content. The admin API's old address, `/functions/v1/admin`, is
-// also where a project function named admin is called, so only the admin API's
-// own routes there are administration (isLegacyFunctionsAdmin).
+// also where a project function named admin is called: by its path it is a
+// function call, and the proxy judges it as administration only when the
+// gateway will hand it to the admin API (servesFunctionsAdmin).
 var dataPlanePrefixes = []string{"/rest/v1", "/graphql/v1", "/storage/v1", "/realtime/v1", "/functions/v1"}
 
 // AllowsRequest reports whether a capability set covers one proxied request.
@@ -126,7 +126,7 @@ func AllowsRequest(perms StudioPermissions, method, path string) bool {
 		return allowed
 	}
 	switch {
-	case isDataPlane(method, path):
+	case isDataPlane(path):
 		return allowsContent(perms, method, path)
 	// The one named exception to "the control plane is admin only".
 	case IsRealtimeInspectorRoute(method, path):
@@ -232,10 +232,7 @@ func IsRealtimeInspectorRoute(method, path string) bool {
 	}
 }
 
-func isDataPlane(method, path string) bool {
-	if isLegacyFunctionsAdmin(method, path) {
-		return false
-	}
+func isDataPlane(path string) bool {
 	for _, prefix := range dataPlanePrefixes {
 		if under(path, prefix) {
 			return true
@@ -250,22 +247,6 @@ func isDataPlane(method, path string) bool {
 // refused by each of them, whatever their Studio role.
 var serviceRoleOnlyPrefixes = []string{"/admin/v1", "/auth/v1/admin", "/storage/v1/bucket"}
 
-// legacyFunctionsAdminPrefix is the functions admin API's old address, kept for a
-// transition, and also where a project function named admin is called.
-const legacyFunctionsAdminPrefix = "/functions/v1/admin"
-
-// isLegacyFunctionsAdmin reports whether a request at the admin API's old
-// address is one of the API's own routes, which the gateway hands to the admin
-// API rather than to the function named admin. It asks functions.IsAdminRoute,
-// the question the gateway's dispatcher asks, so the rule judging a request
-// and the router serving it agree on which one it is.
-func isLegacyFunctionsAdmin(method, path string) bool {
-	if !under(path, legacyFunctionsAdminPrefix) {
-		return false
-	}
-	return functions.IsAdminRoute(method, path[len(legacyFunctionsAdminPrefix):])
-}
-
 // isServiceRoleOnly reports whether a proxied request goes to an upstream that
 // admits only the service role. The self-host control plane is one, except for
 // the Realtime Inspector's routes, which mediate a caller acting as themselves.
@@ -279,9 +260,6 @@ func isServiceRoleOnly(method, path string) bool {
 		if under(path, prefix) {
 			return true
 		}
-	}
-	if isLegacyFunctionsAdmin(method, path) {
-		return true
 	}
 	return under(path, "/platform/v1") && !IsRealtimeInspectorRoute(method, path)
 }

@@ -7,6 +7,7 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
+	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/studioctx"
 	"github.com/supatype/server/internal/studiomembers"
 	"github.com/supatype/server/internal/utilities"
@@ -46,6 +47,10 @@ type Config struct {
 	// endpoints read the publishing block from the same file, so settings the
 	// engine writes reach this process by one route rather than two.
 	AdminConfigPath string
+	// FunctionsAdminMounted is whether the gateway serves the functions admin API
+	// (functions.Mounted). Without it, the API's old address /functions/v1/admin
+	// is only ever a call to a project function named admin.
+	FunctionsAdminMounted bool
 }
 
 // StudioRoleLookup returns the Studio role recorded for a user id. The second
@@ -55,11 +60,12 @@ type StudioRoleLookup func(userID string) (string, bool)
 // ConfigFromServer builds handler config from ServerConfig and admin-config path.
 func ConfigFromServer(cfg *config.Config) Config {
 	return Config{
-		JWTSecret:       cfg.JWTSecret,
-		ServiceRoleKey:  cfg.ServiceRoleKey,
-		AnonKey:         cfg.AnonKey,
-		AdminRoles:      AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
-		AdminConfigPath: cfg.AdminConfigPath,
+		JWTSecret:             cfg.JWTSecret,
+		ServiceRoleKey:        cfg.ServiceRoleKey,
+		AnonKey:               cfg.AnonKey,
+		AdminRoles:            AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
+		AdminConfigPath:       cfg.AdminConfigPath,
+		FunctionsAdminMounted: functions.Mounted(cfg),
 	}
 }
 
@@ -332,7 +338,8 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 
 	perms := permissionsOf(result)
 	method := permissionMethod(req, path)
-	if !AllowsRequest(perms, method, path) && !allowsStoragePolicyRead(req, perms, path) {
+	functionsAdmin := servesFunctionsAdmin(req, c, perms, path)
+	if !allowsProxied(perms, method, path, functionsAdmin) && !allowsStoragePolicyRead(req, perms, path) {
 		WriteErrorBody(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false
 	}
@@ -342,7 +349,7 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 	if !guardAdminAccounts(w, req, c, perms, path) {
 		return admission{}, false
 	}
-	adm, ok := admitActingMode(w, req, result, perms, path)
+	adm, ok := admitActingMode(w, req, result, perms, path, functionsAdmin)
 	adm.readsOnly = isReadOnly(method)
 	return adm, ok
 }
@@ -354,11 +361,12 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 // the service role to reach the runner's connection; being read-only, it is not
 // recorded as elevated.
 //
-// An upstream that admits only the service role (isServiceRoleOnly) acts
+// An upstream that admits only the service role (isServiceRoleOnly, or the
+// functions admin API at its old address: functionsAdmin) acts
 // elevated for a caller who may elevate, whichever mode they chose: acting as
 // yourself applies to project rows, not to administration the role holds. A
 // role that cannot elevate is not elevated by these routes either.
-func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string) (admission, bool) {
+func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string, functionsAdmin bool) (admission, bool) {
 	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms, claims: result.Claims}
 	if under(path, "/sql") || under(path, "/metadata") || under(path, "/studio-admin") {
 		return adm, true
@@ -369,7 +377,7 @@ func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, pe
 		adm.mode = ModeAnon
 		return adm, true
 	}
-	if perms.ElevatedSQL && isServiceRoleOnly(req.Method, path) {
+	if perms.ElevatedSQL && (functionsAdmin || isServiceRoleOnly(req.Method, path)) {
 		return adm, true
 	}
 	mode, ok := resolveActingMode(req, perms)

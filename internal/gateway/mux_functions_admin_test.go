@@ -122,3 +122,17 @@ func TestStudioReachesTheAdminAPIAndTheFunctionNamedAdmin(t *testing.T) {
 func TestAnEscapedAdminRouteIsAFunctionCall(t *testing.T) {
 	expectWorker(t, functionsRig(t), http.MethodGet, "/functions/v1/admin/%6cist", asServiceRole)
 }
+
+// With a worker but no functions directory the admin API is not mounted, so /functions/v1/admin is
+// only the function named admin. The Studio proxy agrees: an admin acting as themselves calls it
+// with their own token, not the service role's key it would carry to the admin API.
+func TestWithoutAFunctionsDirStudioCallsTheFunctionAsTheCaller(t *testing.T) {
+	r := newRig(t, "dev")
+	expectWorker(t, r, http.MethodGet, "/studio/proxy/functions/v1/admin/env", func(req *http.Request) {
+		asStudioAdmin(t)(req)
+		req.Header.Set("X-Supatype-Acting-Mode", "self")
+	})
+	if got, _ := r.lastHit(); got.header.Get("Authorization") == "Bearer service-role-key" {
+		t.Fatal("the function was called with the service role's key")
+	}
+}

@@ -29,6 +29,8 @@ func membershipConfig(role string) Config {
 		AnonKey:        "anon-key",
 		AdminRoles:     DefaultAdminRoles,
 		StudioRole:     func(string) (string, bool) { return role, role != "" },
+		// As compose and native dev run: with a functions directory.
+		FunctionsAdminMounted: true,
 	}
 }
 

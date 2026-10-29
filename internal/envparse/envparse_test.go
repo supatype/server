@@ -42,3 +42,36 @@ func TestProcessStillRejectsAnUnparseableValue(t *testing.T) {
 		t.Fatal("want an error for a non-numeric port")
 	}
 }
+
+// Process reads the environment and never writes it: a goroutine reading a
+// blank typed setting while a load runs must always find it present. Hiding
+// the variable for the length of the parse made it vanish for every other
+// reader of the process environment.
+func TestProcessNeverChangesTheProcessEnvironment(t *testing.T) {
+	t.Setenv("T_PORT", "")
+	stop := make(chan struct{})
+	vanished := make(chan bool, 1)
+	go func() {
+		seen := false
+		for {
+			select {
+			case <-stop:
+				vanished <- seen
+				return
+			default:
+				_, ok := os.LookupEnv("T_PORT")
+				seen = seen || !ok
+			}
+		}
+	}()
+	for range 2000 {
+		var s spec
+		if err := Process("t", &s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	if <-vanished {
+		t.Fatal("T_PORT went missing from the environment while Process ran")
+	}
+}

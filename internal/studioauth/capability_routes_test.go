@@ -266,3 +266,28 @@ func TestProxyServedWithoutAMountJudgesTheEscapedPath(t *testing.T) {
 		t.Fatalf("an escaped prefix must be judged as routed, got %d at %q", code, landed)
 	}
 }
+
+// Function administration is not content, at either of its addresses. /functions/v1 is a content
+// prefix, and the admin API's old address sits under it, so a capability that may read and write
+// every content row must still be refused the admin API on both: only Administer reaches it.
+func TestReadWriteDoesNotReachFunctionAdministration(t *testing.T) {
+	content := StudioPermissions{Read: true, Write: true}
+	administer := StudioPermissions{Read: true, Write: true, Administer: true}
+	methods := []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	paths := []string{
+		"/admin/v1/functions", "/admin/v1/functions/list", "/admin/v1/functions/env", "/admin/v1/functions/env/KEY",
+		"/admin/v1/functions/hello/logs", "/admin/v1/functions/logs/tail",
+		"/functions/v1/admin", "/functions/v1/admin/", "/functions/v1/admin/list", "/functions/v1/admin/env",
+		"/functions/v1/admin/env/KEY", "/functions/v1/admin/hello/env", "/functions/v1/admin/logs/tail",
+	}
+	for _, path := range paths {
+		for _, method := range methods {
+			if AllowsRequest(content, method, path) {
+				t.Errorf("Read/Write reached %s %s, which only Administer may", method, path)
+			}
+			if !AllowsRequest(administer, method, path) {
+				t.Errorf("Administer was refused %s %s", method, path)
+			}
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/filestamp"
 )
 
 // RouteManifest describes the active upstream services for this project.
@@ -369,27 +370,6 @@ var newWatcher = fsnotify.NewWatcher
 // happen with nothing anywhere to explain it.
 const manifestPollInterval = 2 * time.Second
 
-// FileStamp identifies a version of the manifest file without reading it. The
-// zero value stands for a file that did not exist.
-type FileStamp struct {
-	mod  time.Time
-	size int64
-}
-
-func (s FileStamp) same(other FileStamp) bool {
-	// ModTime is compared with Equal rather than ==, because == on time.Time
-	// also compares the monotonic reading and the location pointer.
-	return s.size == other.size && s.mod.Equal(other.mod)
-}
-
-func statStamp(path string) (FileStamp, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return FileStamp{}, err
-	}
-	return FileStamp{mod: info.ModTime(), size: info.Size()}, nil
-}
-
 // LoadStamped is Load plus the stamp of the version it read, for handing to
 // Watch so the watch starts from what is live rather than from the file as it
 // is by the time Watch runs.
@@ -398,8 +378,8 @@ func statStamp(path string) (FileStamp, error) {
 // newer content behind an older stamp, which the poll then applies once more:
 // harmless. Taken after the read, the same write would be stamped as loaded
 // and never applied.
-func LoadStamped(path string) (*RouteManifest, FileStamp, error) {
-	stamp, _ := statStamp(path)
+func LoadStamped(path string) (*RouteManifest, filestamp.Stamp, error) {
+	stamp, _ := filestamp.Of(path)
 	m, err := Load(path)
 	return m, stamp, err
 }
@@ -446,7 +426,7 @@ func dedupe(fn func(*RouteManifest), window time.Duration) func(*RouteManifest) 
 //
 // A nil done runs for the life of the process, which is what Watch passes; the
 // channel exists so a test can stop it rather than leak a ticker per case.
-func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}, last FileStamp) {
+func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}, last filestamp.Stamp) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -456,8 +436,8 @@ func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done
 		case <-ticker.C:
 		}
 
-		s, err := statStamp(path)
-		if err != nil || s.same(last) {
+		s, err := filestamp.Of(path)
+		if err != nil || s.Same(last) {
 			continue
 		}
 		m, err := Load(path)
@@ -482,7 +462,7 @@ func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done
 // loaded is the stamp LoadStamped returned for the manifest now live. The poll
 // measures change from it, so a write that lands between that load and this
 // call, before fsnotify is watching, is still applied.
-func Watch(path string, loaded FileStamp, fn func(*RouteManifest)) error {
+func Watch(path string, loaded filestamp.Stamp, fn func(*RouteManifest)) error {
 	guarded := dedupe(fn, 2*manifestPollInterval)
 	go pollLoop(path, manifestPollInterval, guarded, nil, loaded)
 

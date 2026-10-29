@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Studio roles and what each may do.
@@ -281,13 +281,11 @@ func under(path, prefix string) bool {
 // decoded path. Judging the decoded path alone would let `/%72est/v1` read as
 // content rows while the router sends it to the catch-all.
 func routedPath(req *http.Request) string {
-	if rctx := chi.RouteContext(req.Context()); rctx != nil && rctx.RoutePath != "" {
-		return rctx.RoutePath
-	}
+	unrouted := req.URL.Path
 	if req.URL.RawPath != "" {
-		return req.URL.RawPath
+		unrouted = req.URL.RawPath
 	}
-	return req.URL.Path
+	return utilities.RoutePath(req, unrouted)
 }
 
 // legacyAdminPermissions is what a deployment still on the claim-based path

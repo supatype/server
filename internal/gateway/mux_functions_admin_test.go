@@ -2,10 +2,12 @@ package gateway
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/functions"
 )
 
 // withFunctionsDir sets the functions directory, as compose and native dev both do: it is what
@@ -78,4 +80,16 @@ func TestTheOldAdminAddressAnswersOnlyKnownRoutesToTheServiceRole(t *testing.T) 
 	expectWorker(t, functionsRig(t), http.MethodGet, "/functions/v1/admin/list", func(req *http.Request) {
 		req.Header.Set("Authorization", "Bearer not-the-key")
 	})
+}
+
+// With no invocation proxy built there is no project function to call: the old address answers a
+// call to one 404, as /functions/v1 does when it is not mounted, rather than dereferencing nothing.
+func TestTheOldAdminAddressWithoutAnInvocationProxyAnswersNotFound(t *testing.T) {
+	cfg := &config.Config{ServiceRoleKey: "service-role-key", DenoFunctionsDir: t.TempDir()}
+	h := legacyFunctionsAdmin(cfg.ServiceRoleKey, functions.Handler(cfg, cfg.DenoFunctionsDir, nil), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/orders/42", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 with no invocation proxy", rec.Code)
+	}
 }

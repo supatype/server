@@ -41,10 +41,18 @@ type LogSource interface {
 	FunctionLogs(function string, since time.Time, n int) []deno.LogLine
 }
 
-// Handler returns a chi.Router that serves the functions admin API.
+// API is the functions admin API as its callers need it: a handler, and the route table it serves,
+// so a caller can ask whether a request is one of its routes before handing it over. It is not a
+// chi.Router, so nothing outside this package can add routes to it.
+type API interface {
+	http.Handler
+	chi.Routes
+}
+
+// Handler returns the functions admin API.
 // manager may be nil when edge functions are disabled; the log route is then
 // empty rather than absent.
-func Handler(cfg *config.Config, functionsDir string, manager LogSource) chi.Router {
+func Handler(cfg *config.Config, functionsDir string, manager LogSource) API {
 	r := chi.NewRouter()
 
 	r.Use(RequireServiceRoleMiddleware(cfg))

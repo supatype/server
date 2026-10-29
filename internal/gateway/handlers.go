@@ -14,7 +14,6 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/corsorigins"
 	"github.com/supatype/server/internal/draftinsert"
-	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/maskedfields"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/modes"
@@ -264,7 +263,7 @@ func buildStorage(d *Deps) http.Handler {
 func buildFunctionsAdmin(d *Deps) http.Handler {
 	logrus.WithField("dir", d.Config.DenoFunctionsDir).
 		Info("mux: Functions admin handler mounted at /admin/v1/functions")
-	return functions.Handler(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs())
+	return functionsAdminAPI(d)
 }
 
 func buildFunctions(d *Deps) http.Handler {

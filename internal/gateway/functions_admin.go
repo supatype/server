@@ -6,14 +6,20 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modes"
+	"github.com/supatype/server/internal/utilities"
 )
+
+// functionsAdminAPI is the functions admin API over this server's functions directory, as both of
+// its addresses serve it.
+func functionsAdminAPI(d *Deps) functions.API {
+	return functions.Handler(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs())
+}
 
 // buildLegacyFunctionsAdmin serves /functions/v1/admin while callers move to /admin/v1/functions.
 func buildLegacyFunctionsAdmin(d *Deps) http.Handler {
-	admin := functions.Handler(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs())
 	// The invocation proxy exactly as /functions/v1 mounts it.
 	invoke := wrappedHandler(functionsInvocationRoute(), d)
-	return legacyFunctionsAdmin(d.Config.ServiceRoleKey, admin, invoke)
+	return legacyFunctionsAdmin(d.Config.ServiceRoleKey, functionsAdminAPI(d), invoke)
 }
 
 // legacyFunctionsAdmin is the functions admin API's old address, /functions/v1/admin.
@@ -22,23 +28,20 @@ func buildLegacyFunctionsAdmin(d *Deps) http.Handler {
 // "admin" could never be called: every request answered 401 "service role key required". The API
 // now lives at /admin/v1/functions. For a transition, this still hands the API's own routes to it
 // when the caller presents the service-role key, so a Studio or CLI not yet moved keeps working.
-// Any other caller, and any other sub-path, is a call to the project's function named admin.
-func legacyFunctionsAdmin(serviceRoleKey string, admin chi.Router, invoke http.Handler) http.Handler {
+// Any other caller, and any other sub-path, is a call to the project's function named admin. With
+// no invocation proxy built, /functions/v1 is not mounted either, and those calls answer 404 as
+// the rest of /functions/v1 does.
+func legacyFunctionsAdmin(serviceRoleKey string, admin functions.API, invoke http.Handler) http.Handler {
+	if invoke == nil {
+		invoke = http.NotFoundHandler()
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if modes.ServiceRoleBearer(r, serviceRoleKey) && admin.Match(chi.NewRouteContext(), r.Method, routePathUnderMount(r)) {
+		// The mount's own root when chi left no remainder: this judges a path below this mount only.
+		path := utilities.RoutePath(r, "/")
+		if modes.ServiceRoleBearer(r, serviceRoleKey) && admin.Match(chi.NewRouteContext(), r.Method, path) {
 			admin.ServeHTTP(w, r)
 			return
 		}
 		invoke.ServeHTTP(w, r)
 	})
-}
-
-// routePathUnderMount is the request's path below the mount that routed it, as chi tracks it. Its
-// fallback is "/", the mount's own root, where studioauth's routedPath falls back to the request's
-// whole path: that one judges a path anywhere on the router, this one only below this mount.
-func routePathUnderMount(r *http.Request) string {
-	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePath != "" {
-		return rctx.RoutePath
-	}
-	return "/"
 }

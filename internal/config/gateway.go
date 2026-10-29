@@ -94,6 +94,11 @@ type Config struct {
 	// Served at POST /studio-config for the Studio UI.
 	AdminConfigPath string `envconfig:"SUPATYPE_ADMIN_CONFIG_PATH" default:".supatype/admin-config.json"`
 
+	// PluginWidgetsDir holds the plugin editor widgets the CLI writes beside the admin
+	// config: `manifest.json` and one `<sha256>.js` per bundle. Served to Studio at
+	// /studio/plugins, for Supatype's own plugins only (internal/pluginwidgets).
+	PluginWidgetsDir string `envconfig:"SUPATYPE_PLUGIN_WIDGETS_DIR" default:".supatype/plugin-widgets"`
+
 	// ApiConfigPath is the path to the .supatype/api-config.json file managed by the admin API.
 	ApiConfigPath string `envconfig:"SUPATYPE_API_CONFIG_PATH" default:".supatype/api-config.json"`
 

@@ -42,6 +42,8 @@ GET     /platform/v1/*
 GET     /rest/v1/*
 GET     /storage/v1/*
 GET     /studio/auth/verify
+GET     /studio/plugins
+GET     /studio/plugins/widgets/*
 GET     /studio/proxy/*
 GET     /studio/schema
 GET     /studio/session

@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/modelhooks"
+	"github.com/supatype/server/internal/pluginwidgets"
 	"github.com/supatype/server/internal/studioctx"
 )
 
@@ -242,6 +243,16 @@ func Routes() []Route {
 		// request.
 		{Pattern: "/studio/schema", Verb: GET, Build: buildStudioSchema},
 		{Pattern: "/studio/session", Verb: GET, Build: buildStudioSession},
+		// The editors of the project's first-party plugins: which there are, behind a
+		// Studio session, and each bundle by its hash, public because a module import
+		// carries no token (internal/pluginwidgets).
+		{Pattern: "/studio/plugins", Verb: GET, Build: buildPluginWidgetManifest},
+		{
+			Pattern: pluginwidgets.BundlePrefix + "*",
+			Verb:    GET,
+			Build:   buildPluginWidgetBundles,
+			Log:     "mux: plugin widgets mounted at /studio/plugins",
+		},
 		{
 			Pattern: "/studio/proxy",
 			Verb:    MountAll,

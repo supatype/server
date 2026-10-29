@@ -20,6 +20,7 @@ import (
 	"github.com/supatype/server/internal/modes"
 	"github.com/supatype/server/internal/objstore"
 	"github.com/supatype/server/internal/platformproxy"
+	"github.com/supatype/server/internal/pluginwidgets"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/sqlrunner"
@@ -117,6 +118,17 @@ func buildPreviewResolve(d *Deps) http.Handler { return studioauth.PreviewResolv
 func buildStudioVerify(d *Deps) http.Handler   { return studioauth.VerifyHandler(d.Studio) }
 func buildStudioSchema(d *Deps) http.Handler   { return studioauth.SchemaHandler(d.Studio) }
 func buildStudioSession(d *Deps) http.Handler  { return studioauth.SessionHandler(d.Studio) }
+
+// buildPluginWidgetManifest lists the plugin widgets Studio may load, to a caller
+// with a Studio session, as /studio-config is.
+func buildPluginWidgetManifest(d *Deps) http.Handler {
+	return studioauth.RequireAdmin(d.Studio, pluginwidgets.ManifestHandler(pluginwidgets.StoreFor(d.Config.PluginWidgetsDir)))
+}
+
+// buildPluginWidgetBundles serves each bundle the manifest names, to anyone.
+func buildPluginWidgetBundles(d *Deps) http.Handler {
+	return pluginwidgets.BundleHandler(pluginwidgets.StoreFor(d.Config.PluginWidgetsDir))
+}
 
 // buildStudioProxy fronts every other service on this router, which is why it
 // needs the router itself.

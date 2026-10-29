@@ -30,7 +30,7 @@ func functionsInvocationProxy(
 			return
 		}
 		// Hooks are procedural: the API server calls them around a write. They live under a `hooks/`
-		// route on the same worker, and that route is not a public endpoint — a caller holding the anon
+		// route on the same worker, and that route is not a public endpoint, so a caller holding the anon
 		// key must not be able to invoke one directly with a payload of their own choosing.
 		if seg := firstURLSegment(req.URL.Path); seg == "hooks" {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -165,6 +165,6 @@ func functionsUpstreamURL(cfg *config.Config) (*url.URL, error) {
 	}
 	return &url.URL{
 		Scheme: "http",
-		Host:   "127.0.0.1:" + cfg.DenoPort,
+		Host:   denoAddr(cfg),
 	}, nil
 }

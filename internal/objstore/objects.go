@@ -122,6 +122,11 @@ func (s *store) loadObjectMeta(bucket, objPath string) (*ObjectMeta, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.loadMetaAt(metaRel)
+}
+
+// loadMetaAt reads the sidecar at metaRel, relative to the storage root.
+func (s *store) loadMetaAt(metaRel string) (*ObjectMeta, error) {
 	root, err := openRoot(s.root)
 	if err != nil {
 		return nil, err
@@ -151,6 +156,11 @@ func (s *store) saveObjectMeta(meta *ObjectMeta, bucket, objPath string) error {
 	if err != nil {
 		return err
 	}
+	return s.saveMetaAt(meta, metaRel)
+}
+
+// saveMetaAt writes meta to the sidecar at metaRel, relative to the storage root.
+func (s *store) saveMetaAt(meta *ObjectMeta, metaRel string) error {
 	if err := mkdirAll(filepath.Join(s.root, filepath.Dir(metaRel)), 0o700); err != nil { // #nosec G703 -- metaRel is built from validated bucket and object paths under storageRoot.
 		return err
 	}
@@ -310,7 +320,7 @@ func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
 // Public, authenticated and signed downloads all arrive here, so this is the
 // one place the stored-XSS header policy has to be applied.
 func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPath string) {
-	f, ok := s.openObject(w, bucket, objPath)
+	f, metaRel, ok := s.openObject(w, bucket, objPath)
 	if !ok {
 		return
 	}
@@ -323,46 +333,66 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		writeError(w, http.StatusInternalServerError, "failed to stat file")
 		return
 	}
-	s.applyObjectMeta(w, bucket, objPath)
+	s.applyObjectMeta(w, metaRel)
 
 	// http.ServeContent handles Range, ETag, and Last-Modified negotiation. The
 	// wrapper hardens the headers once ServeContent has settled the type.
 	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, path.Base(objPath), info.ModTime(), f)
 }
 
-// openObject opens a stored object for reading, answering the request itself
-// when it cannot.
-func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.File, bool) {
-	fileRel, err := s.objectFileRel(bucket, objPath)
+// openObject opens a stored object for reading and returns where its sidecar
+// is, answering the request itself when it cannot.
+func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.File, string, bool) {
+	fileRel, metaRel, err := s.objectPaths(bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return nil, false
+		return nil, "", false
 	}
 	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
-		return nil, false
+		return nil, "", false
 	}
 	defer func() {
 		_ = root.Close()
 	}()
 
+	fileRel, metaRel = storedAt(root, bucket, objPath, fileRel, metaRel)
 	f, err := openIn(root, fileRel)
 	if os.IsNotExist(err) {
 		writeError(w, http.StatusNotFound, "object not found")
-		return nil, false
+		return nil, "", false
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open file")
-		return nil, false
+		return nil, "", false
 	}
-	return f, true
+	return f, metaRel, true
 }
 
-// applyObjectMeta sets Content-Type from the saved metadata and records the
-// access time. Both are best effort: neither fails the download.
-func (s *store) applyObjectMeta(w http.ResponseWriter, bucket, objPath string) {
-	meta, err := s.loadObjectMeta(bucket, objPath)
+// storedAt is where an object that should already exist and its sidecar are:
+// fileRel and metaRel, where objectPaths stores it now, or, when no file is
+// there, where it was stored before names were encoded, if a file is there
+// instead. Only reads and removals look here; an upload always writes where
+// objectPaths says.
+func storedAt(root *os.Root, bucket, objPath, fileRel, metaRel string) (string, string) {
+	legacyFile, legacyMeta, ok := legacyPaths(bucket, objPath)
+	if !ok {
+		return fileRel, metaRel
+	}
+	if _, err := root.Stat(fileRel); !os.IsNotExist(err) {
+		return fileRel, metaRel
+	}
+	if info, err := root.Stat(legacyFile); err != nil || !info.Mode().IsRegular() {
+		return fileRel, metaRel
+	}
+	return legacyFile, legacyMeta
+}
+
+// applyObjectMeta sets Content-Type from the sidecar at metaRel and records
+// the access time. Both are best effort: neither fails the download.
+func (s *store) applyObjectMeta(w http.ResponseWriter, metaRel string) {
+	meta, err := s.loadMetaAt(metaRel)
 	if err != nil {
 		return
 	}
@@ -370,7 +400,7 @@ func (s *store) applyObjectMeta(w http.ResponseWriter, bucket, objPath string) {
 		w.Header().Set("Content-Type", meta.ContentType)
 	}
 	meta.LastAccessedAt = time.Now().UTC().Format(time.RFC3339)
-	_ = s.saveObjectMeta(meta, bucket, objPath)
+	_ = s.saveMetaAt(meta, metaRel)
 }
 
 // ─── Remove objects ───────────────────────────────────────────────────────────
@@ -409,6 +439,7 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		fileRel, metaRel = storedAt(root, bucket, prefix, fileRel, metaRel)
 		if err := root.Remove(fileRel); err == nil {
 			_ = root.Remove(metaRel)
 			deleted = append(deleted, removedItem{Name: prefix, BucketID: bucket})

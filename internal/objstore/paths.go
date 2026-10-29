@@ -76,11 +76,43 @@ func (s *store) objectPaths(bucket, objPath string) (fileRel, metaRel string, er
 	if err != nil {
 		return "", "", err
 	}
+	return bucketPaths(bucket, rel)
+}
+
+// bucketPaths is where the object at rel in bucket and its sidecar live,
+// relative to the storage root, refusing a rel inside the sidecar tree.
+func bucketPaths(bucket, rel string) (fileRel, metaRel string, err error) {
 	if inSidecarTree(rel) {
 		return "", "", fmt.Errorf("invalid object path")
 	}
 	dir, file := filepath.Split(rel)
 	return filepath.Join(bucket, rel), filepath.Join(bucket, sidecarDir, dir, file+".json"), nil
+}
+
+// legacyPaths is where an object and its sidecar were stored before names
+// were encoded, when that is somewhere other than where they are stored now.
+// This is looked for on Windows only, where the layout changed for names in
+// use: a backslash in a name split it into folders, and the OS dropped a
+// trailing dot or space. (A name starting with encodedMarker was also stored
+// as written, on every OS; on Windows it is found here too.) The legacy location
+// passes the same checks as the current one, so it never leaves the bucket
+// or reaches the sidecar tree. It is only ever read from or removed: writes
+// always use the encoded name.
+func legacyPaths(bucket, objPath string) (fileRel, metaRel string, ok bool) {
+	if !onWindows {
+		return "", "", false
+	}
+	bucket, err := cleanBucketID(bucket)
+	if err != nil {
+		return "", "", false
+	}
+	current, err := cleanObjectPath(objPath, false)
+	rel := filepath.FromSlash(strings.TrimPrefix(objPath, "/"))
+	if err != nil || rel == current || !filepath.IsLocal(rel) {
+		return "", "", false
+	}
+	fileRel, metaRel, err = bucketPaths(bucket, rel)
+	return fileRel, metaRel, err == nil
 }
 
 func (s *store) objectFileRel(bucket, objPath string) (string, error) {

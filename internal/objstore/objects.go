@@ -455,7 +455,9 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 }
 
 // listFolder is the directory a list prefix names and the folder's object path ("" for the
-// bucket root), with the slashes around the prefix stripped.
+// bucket root), with the slashes around the prefix stripped and the path cleaned, so the folder
+// is spelled one way however the prefix reached it: "a/.." is the bucket root, not a folder
+// beside it that would list the sidecar tree.
 func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error) {
 	bucketDir, err := s.bucketDir(bucket)
 	if err != nil {
@@ -465,6 +467,9 @@ func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error
 	rel, err := cleanObjectPath(folder, true)
 	if err != nil {
 		return "", "", err
+	}
+	if folder = path.Clean(folder); folder == "." {
+		folder = ""
 	}
 	return filepath.Join(bucketDir, rel), folder, nil
 }
@@ -478,7 +483,7 @@ func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error
 // are sorted again only when a stored name was decoded into a different one,
 // which can move it.
 func (s *store) folderChildren(bucket, dir, folder string) []listItem {
-	if folder == ".meta" || strings.HasPrefix(folder, ".meta/") {
+	if inSidecarTree(folder) {
 		return []listItem{}
 	}
 	entries, err := os.ReadDir(dir)
@@ -512,7 +517,7 @@ func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 // anywhere below it, or a file removed since the directory was read.
 func (s *store) childItem(bucket, dir, folder string, e fs.DirEntry) (listItem, bool) {
 	switch {
-	case folder == "" && e.Name() == ".meta":
+	case folder == "" && inSidecarTree(e.Name()):
 		return listItem{}, false
 	case e.IsDir():
 		if !holdsAnObject(filepath.Join(dir, e.Name())) {

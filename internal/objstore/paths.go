@@ -47,6 +47,19 @@ func (s *store) bucketDir(bucket string) (string, error) {
 	return filepath.Join(s.root, bucket), nil
 }
 
+// sidecarDir is the directory in each bucket that holds the objects' sidecars.
+// It is this store's own bookkeeping, never an object or a folder of objects.
+const sidecarDir = ".meta"
+
+// inSidecarTree reports whether rel, a path relative to a bucket, resolves into
+// the sidecar tree, however it is spelled: "./.meta" and "a/../.meta" are the
+// same directory. Case is ignored because the file systems of Windows and
+// macOS ignore it, so ".META" opens the same directory there.
+func inSidecarTree(rel string) bool {
+	first, _, _ := strings.Cut(filepath.ToSlash(filepath.Clean(rel)), "/")
+	return strings.EqualFold(first, sidecarDir)
+}
+
 // objectPaths returns where an object and its sidecar live, relative to the
 // storage root, validating the bucket and path once.
 //
@@ -63,8 +76,11 @@ func (s *store) objectPaths(bucket, objPath string) (fileRel, metaRel string, er
 	if err != nil {
 		return "", "", err
 	}
+	if inSidecarTree(rel) {
+		return "", "", fmt.Errorf("invalid object path")
+	}
 	dir, file := filepath.Split(rel)
-	return filepath.Join(bucket, rel), filepath.Join(bucket, ".meta", dir, file+".json"), nil
+	return filepath.Join(bucket, rel), filepath.Join(bucket, sidecarDir, dir, file+".json"), nil
 }
 
 func (s *store) objectFileRel(bucket, objPath string) (string, error) {

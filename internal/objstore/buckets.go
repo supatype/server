@@ -407,7 +407,7 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 	// The sidecar directory is this implementation's own bookkeeping, not the
 	// caller's data, so it does not make a bucket non-empty.
 	for _, e := range entries {
-		if e.Name() != ".meta" {
+		if e.Name() != sidecarDir {
 			writeError(w, http.StatusBadRequest, "bucket must be empty before deletion")
 			return
 		}

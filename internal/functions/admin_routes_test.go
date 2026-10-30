@@ -31,19 +31,16 @@ func TestIsAdminRouteNamesOnlyTheAPIsRoutes(t *testing.T) {
 	}
 }
 
-// The old address serves the admin API only when it is mounted, the request carries the service
-// role, and the path is one of the API's routes; anything short of all three is the function.
-func TestServesAdminAPINeedsMountCredentialAndRoute(t *testing.T) {
-	if !ServesAdminAPI(true, true, http.MethodGet, "/env") {
-		t.Error("a mounted, service-role GET /env must be the admin API")
+// The old address serves the admin API only when the request carries the service role and the
+// path is one of the API's routes; anything short of both is the function.
+func TestServesAdminAPINeedsCredentialAndRoute(t *testing.T) {
+	if !ServesAdminAPI(true, http.MethodGet, "/env") {
+		t.Error("a service-role GET /env must be the admin API")
 	}
-	if ServesAdminAPI(false, true, http.MethodGet, "/env") {
-		t.Error("an unmounted admin API served GET /env")
-	}
-	if ServesAdminAPI(true, false, http.MethodGet, "/env") {
+	if ServesAdminAPI(false, http.MethodGet, "/env") {
 		t.Error("the caller's own token reached the admin API")
 	}
-	if ServesAdminAPI(true, true, http.MethodPost, "/orders/42") {
+	if ServesAdminAPI(true, http.MethodPost, "/orders/42") {
 		t.Error("a function call reached the admin API")
 	}
 }

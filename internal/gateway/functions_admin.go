@@ -37,8 +37,7 @@ func legacyFunctionsAdmin(serviceRoleKey string, admin, invoke http.Handler) htt
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The mount's own root when chi left no remainder: this judges a path below this mount only.
 		path := utilities.RoutePath(r, "/")
-		// Mounted: this handler is only built where the admin API is.
-		if functions.ServesAdminAPI(true, modes.ServiceRoleBearer(r, serviceRoleKey), r.Method, path) {
+		if functions.ServesAdminAPI(modes.ServiceRoleBearer(r, serviceRoleKey), r.Method, path) {
 			admin.ServeHTTP(w, r)
 			return
 		}

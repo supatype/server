@@ -12,10 +12,10 @@ const legacyFunctionsAdminPrefix = "/functions/v1/admin"
 
 // servesFunctionsAdmin reports whether the gateway will hand this proxied request to the functions
 // admin API at its old address rather than to the function named admin. It asks the gateway's own
-// question (functions.ServesAdminAPI) about the request the proxy will forward: whether the API is
-// mounted, and whether the proxy will attach the service role's key.
+// question (functions.ServesAdminAPI) about the request the proxy will forward, with the key the
+// proxy will attach, once it knows the API is mounted at all.
 func servesFunctionsAdmin(req *http.Request, c Config, perms StudioPermissions, path string) bool {
-	if !under(path, legacyFunctionsAdminPrefix) {
+	if !c.FunctionsAdminMounted || !under(path, legacyFunctionsAdminPrefix) {
 		return false
 	}
 	below := path[len(legacyFunctionsAdminPrefix):]
@@ -23,8 +23,9 @@ func servesFunctionsAdmin(req *http.Request, c Config, perms StudioPermissions, 
 }
 
 // elevatesAdministration reports whether the proxy sends a request to a route that admits only the
-// service role as the service role: for a caller who may elevate, in every mode but anonymous
-// (admitActingMode).
+// service role as the service role: for a caller who may elevate, in a mode they may act in other
+// than anonymous (admitActingMode). A mode they may not act in elevates nothing: the request is
+// then a function call, and admitActingMode refuses the mode as it does on any such route.
 func elevatesAdministration(req *http.Request, perms StudioPermissions) bool {
 	mode, ok := resolveActingMode(req, perms)
 	return ok && perms.ElevatedSQL && mode != ModeAnon

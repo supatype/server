@@ -75,3 +75,30 @@ func TestConfigureLoggingAddsTheConfiguredFieldsToEveryLine(t *testing.T) {
 		t.Errorf("a field the call site set was overwritten: %q", lines[1])
 	}
 }
+
+// The fields go on before anything is logged, so even the line that reports the log file
+// carries them.
+func TestConfigureLoggingAddsTheFieldsBeforeItsOwnFirstLine(t *testing.T) {
+	freshLogging(t)
+	configureLibraryLoggers = func(string) {}
+	t.Cleanup(func() { SetLogFields(nil) })
+	path := t.TempDir() + "/auth.log"
+
+	err := ConfigureLogging(&conf.LoggingConfig{File: path, Fields: map[string]interface{}{"service": "auth"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ConfigureLogging keeps the file open for the life of the process; close it so the temp
+	// dir can go.
+	if f, ok := logrus.StandardLogger().Out.(*os.File); ok {
+		_ = f.Close()
+	}
+	logrus.SetOutput(io.Discard)
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "Set output file to") || !strings.Contains(string(written), `"service":"auth"`) {
+		t.Errorf("want the log file line to carry the configured field, got %q", written)
+	}
+}

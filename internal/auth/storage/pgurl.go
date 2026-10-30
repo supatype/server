@@ -10,9 +10,6 @@ import (
 // configured one, which config load has already trimmed and checked is a plain lower-case
 // identifier, so it is sent as given.
 func EnsurePostgresSearchPathInURL(connURL, ns string) (string, error) {
-	if ns == "" {
-		return connURL, nil
-	}
 	u, err := url.Parse(connURL)
 	if err != nil {
 		return "", err

@@ -24,6 +24,29 @@ var (
 	loggingOnce sync.Once
 )
 
+var (
+	logFieldsMu sync.Mutex
+	logFields   logrus.Fields
+)
+
+// SetLogFields records the LOG_FIELDS every logger of this process should carry.
+// ConfigureLogging calls it; loggers made afterwards pick them up through AddLogFields.
+func SetLogFields(fields map[string]interface{}) {
+	logFieldsMu.Lock()
+	defer logFieldsMu.Unlock()
+	logFields = logrus.Fields(fields)
+}
+
+// AddLogFields adds the recorded LOG_FIELDS to a logger, for a logger built apart from the
+// standard one, such as the gateway's access logger.
+func AddLogFields(lg *logrus.Logger) {
+	logFieldsMu.Lock()
+	defer logFieldsMu.Unlock()
+	if len(logFields) > 0 {
+		lg.AddHook(&fieldsHook{fields: logFields})
+	}
+}
+
 // configureLibraryLoggers points Pop's and OpenTelemetry's logging at logrus. A variable so a
 // test can see that it ran.
 var configureLibraryLoggers = func(sql string) {
@@ -57,10 +80,10 @@ func ConfigureLogging(config *conf.LoggingConfig) error {
 	var err error
 	loggingOnce.Do(func() {
 		logrus.SetFormatter(NewCustomFormatter())
+		// The fields first, so every line from here on carries them, the setup's own included.
+		SetLogFields(config.Fields)
+		AddLogFields(logrus.StandardLogger())
 		err = errors.Join(setLogFile(config.File), setLogLevel(config.Level))
-		if len(config.Fields) > 0 {
-			logrus.AddHook(&fieldsHook{fields: logrus.Fields(config.Fields)})
-		}
 		configureLibraryLoggers(config.SQL)
 	})
 	return err

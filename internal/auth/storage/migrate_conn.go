@@ -3,7 +3,6 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"net/url"
 
 	"github.com/gobuffalo/pop/v6"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -12,43 +11,24 @@ import (
 )
 
 // MigrationConnectionDetails builds a connection for the auth schema's own maintenance: the
-// migrate command and the index worker. The namespace goes into the URL as search_path, which
-// pgx sends as a startup parameter, so every pooled connection starts in it and nothing has
-// to SET it. The namespace is the configured one, already trimmed and validated at load.
+// migrate command and the index worker. See BuildConnectionDetails.
 //
 // The pool is not pinned to one connection. Pop runs each migration file in its own
 // transaction, possibly on a different connection, so a migration must not rely on session
 // state left by an earlier file. Anything session-scoped a migration needs, it sets itself
 // with SET LOCAL.
-func MigrationConnectionDetails(dbURL, driver, ns, applicationName string) (*pop.ConnectionDetails, error) {
-	withPath, err := EnsurePostgresSearchPathInURL(dbURL, ns)
-	if err != nil {
-		return nil, err
-	}
-	u, err := url.Parse(withPath)
-	if err != nil {
-		return nil, err
-	}
-	q := u.Query()
-	q.Set("application_name", applicationName)
-	u.RawQuery = q.Encode()
-	if driver == "" {
-		driver = u.Scheme
-	}
-	return &pop.ConnectionDetails{
-		Dialect: driver,
-		URL:     u.String(),
-		Options: map[string]string{"migration_table_name": "schema_migrations", "Namespace": ns},
-	}, nil
+func MigrationConnectionDetails(dbURL, dialect, ns, applicationName string) (*pop.ConnectionDetails, error) {
+	return BuildConnectionDetails(ConnectionSettings{
+		URL: dbURL, Dialect: dialect, Namespace: ns, ApplicationName: applicationName,
+	})
 }
 
 // CheckMigrationSearchPath refuses a migrate connection whose search_path is not exactly the
-// one its URL sent. A pooler that drops startup parameters would leave the database's own
-// path in place, and Pop's unqualified schema_migrations would land somewhere other than auth.
+// one its URL sent. The driver sets it twice, as a startup parameter and again once connected,
+// so a session-mode pooler that drops the first still passes. Only a connection on which
+// neither took would fail, and there Pop's unqualified schema_migrations would land somewhere
+// other than auth.
 func CheckMigrationSearchPath(db *pop.Connection, ns string) error {
-	if ns == "" {
-		return nil
-	}
 	var path string
 	if err := db.RawQuery("SHOW search_path").First(&path); err != nil {
 		return fmt.Errorf("reading the migrate connection's search_path: %w", err)
@@ -57,8 +37,9 @@ func CheckMigrationSearchPath(db *pop.Connection, ns string) error {
 		return nil
 	}
 	return fmt.Errorf("the migrate connection's search_path is %q, not the %q its database URL "+
-		"asked for: the startup parameter did not reach Postgres. A pooler between them may drop "+
-		"startup parameters (PgBouncer ignore_startup_parameters); migrate against Postgres directly", path, ns)
+		"asked for: neither the startup parameter nor the search_path set on connect held. A pooler "+
+		"between them may drop startup parameters (PgBouncer ignore_startup_parameters) and not keep "+
+		"a session to itself (transaction pooling); migrate against Postgres directly", path, ns)
 }
 
 // legacySearchPathQuery returns the current database's name and its database-level
@@ -90,9 +71,6 @@ var (
 // A role that does not own the database cannot reset it: that is logged with the value found
 // and the statement to run, and migrating carries on.
 func ResetLegacyDatabaseSearchPath(db *pop.Connection, ns string) error {
-	if ns == "" {
-		return nil
-	}
 	var found []legacySearchPath
 	if err := db.RawQuery(legacySearchPathQuery, ns, ns).All(&found); err != nil {
 		return fmt.Errorf("%w: %w", errLegacySearchPathLookup, err)

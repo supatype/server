@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/observability"
 )
 
 type outerLogCtxKey int
@@ -87,6 +88,7 @@ func configureOuterAccessLoggingWriter(w io.Writer, level string) {
 func newOuterAccessLogger(w io.Writer, level string) *logrus.Logger {
 	lg := logrus.New()
 	lg.SetOutput(w)
+	observability.AddLogFields(lg)
 	lg.SetFormatter(&logrus.JSONFormatter{TimestampFormat: time.RFC3339Nano})
 	lv := strings.TrimSpace(level)
 	if lv == "" {
@@ -104,7 +106,7 @@ func outerAccessLog() *logrus.Logger {
 	outerAccessMu.Lock()
 	defer outerAccessMu.Unlock()
 	if outerAccessLogger == nil {
-		// Do not call configureOuterAccessLogging here — it would re-enter this mutex and deadlock.
+		// Do not call configureOuterAccessLogging here: it would re-enter this mutex and deadlock.
 		outerAccessLogger = newOuterAccessLogger(os.Stderr, "info")
 	}
 	return outerAccessLogger

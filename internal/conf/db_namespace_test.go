@@ -5,24 +5,39 @@ import (
 	"testing"
 )
 
-// The namespace goes into migrations unquoted, where Postgres folds it to lower case, and into
-// the connection URL as search_path. Only a plain lower-case identifier means the same schema
-// in both, so anything else is refused at load rather than splitting auth across two schemas.
+// The namespace goes into migrations unquoted (`CREATE SCHEMA IF NOT EXISTS auth`,
+// `auth.users`), where Postgres folds it to lower case and refuses a reserved keyword, and
+// into the connection URL as search_path. Only a plain lower-case identifier that is not
+// reserved means the same schema in both, so anything else is refused at load.
 func TestDBNamespaceMustBeAPlainLowerCaseIdentifier(t *testing.T) {
-	for _, ok := range []string{"auth", " auth ", "_a1", "user", strings.Repeat("a", 63)} {
+	// between is a keyword Postgres still accepts as a schema name; only the reserved ones
+	// (reserved, and reserved as a type or function name) are refused.
+	for _, ok := range []string{"auth", "_a1", "between", "pgauth", strings.Repeat("a", 63)} {
 		cfg := &DBConfiguration{Namespace: ok}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("namespace %q refused: %v", ok, err)
 		}
-		if cfg.Namespace != strings.TrimSpace(ok) {
-			t.Errorf("namespace %q kept as %q, want it trimmed once here", ok, cfg.Namespace)
-		}
 	}
-	for _, bad := range []string{"", "  ", "Auth", "Auth Ns", "1auth", "au-th", "a$b", strings.Repeat("a", 64)} {
-		cfg := &DBConfiguration{Namespace: bad}
+	bad := []string{"", " auth ", "Auth", "Auth Ns", "1auth", "au-th", "a$b", strings.Repeat("a", 64),
+		"user", "table", "order", "select", "join", "authorization", "pg_auth"}
+	for _, name := range bad {
+		cfg := &DBConfiguration{Namespace: name}
 		err := cfg.Validate()
 		if err == nil || !strings.Contains(err.Error(), "SUPATYPE_DB_NAMESPACE") {
-			t.Errorf("namespace %q: want an error naming SUPATYPE_DB_NAMESPACE, got %v", bad, err)
+			t.Errorf("namespace %q: want an error naming SUPATYPE_DB_NAMESPACE, got %v", name, err)
+		}
+	}
+}
+
+// Trimming and the default happen in one place, before validation.
+func TestApplyDefaultsTrimsTheNamespaceAndDefaultsAnEmptyOne(t *testing.T) {
+	for given, want := range map[string]string{"": "auth", "   ": "auth", " auth ": "auth", "mine": "mine"} {
+		cfg := &GlobalConfiguration{DB: DBConfiguration{Namespace: given}, JWT: JWTConfiguration{Secret: "a"}}
+		if err := cfg.ApplyDefaults(); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.DB.Namespace != want {
+			t.Errorf("namespace %q became %q, want %q", given, cfg.DB.Namespace, want)
 		}
 	}
 }

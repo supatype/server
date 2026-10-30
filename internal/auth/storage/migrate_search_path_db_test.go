@@ -14,6 +14,7 @@ import (
 	"github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
+	"github.com/supatype/server/internal/conf"
 )
 
 // The migrate command once wrote `ALTER DATABASE ... SET search_path TO auth, public,
@@ -137,8 +138,48 @@ func TestMigrationConnectionStartsInTheNamespace(t *testing.T) {
 	}
 }
 
-// strippedConn is a migrate connection whose search_path never reached Postgres, as behind a
-// pooler that drops startup parameters (PgBouncer's ignore_startup_parameters).
+// A session-mode pooler that drops startup parameters (PgBouncer's ignore_startup_parameters)
+// must not change where auth's names resolve: the driver sets the path again on every new
+// connection, for migrating and serving alike, and the migrate check then passes.
+func TestADroppedStartupSearchPathIsSetOnConnect(t *testing.T) {
+	dropStartupSearchPath = true
+	t.Cleanup(func() { dropStartupSearchPath = false })
+	dsn := scratchDatabase(t)
+	seedDefault(t, dsn, "public")
+
+	migrating := migrationConn(t, dsn, "auth")
+	if err := SettleMigrationSearchPath(migrating, "auth"); err != nil {
+		t.Errorf("migrate refused a connection the driver had set: %v", err)
+	}
+	conns := map[string]*pop.Connection{
+		"migrate": migrating,
+		"serve":   servingConn(t, dsn),
+	}
+	for name, db := range conns {
+		var path string
+		if err := db.RawQuery("SHOW search_path").First(&path); err != nil {
+			t.Fatal(err)
+		}
+		if path != "auth" {
+			t.Errorf("%s connection search_path = %q, want auth without the startup parameter", name, path)
+		}
+	}
+}
+
+// servingConn dials the way the server does.
+func servingConn(t *testing.T, dsn string) *pop.Connection {
+	t.Helper()
+	cfg := &conf.GlobalConfiguration{DB: conf.DBConfiguration{URL: dsn, Driver: "postgres", Namespace: "auth"}}
+	serving, err := DialContext(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = serving.Close() })
+	return serving.Connection
+}
+
+// strippedConn is a migrate connection on which neither the startup parameter nor the SET on
+// connect set the path: its URL names none, as if both were lost on the way.
 func strippedConn(t *testing.T, dsn string) *pop.Connection {
 	t.Helper()
 	deets, err := MigrationConnectionDetails(dsn, "", "auth", "auth_migrations")
@@ -153,7 +194,7 @@ func strippedConn(t *testing.T, dsn string) *pop.Connection {
 	return openConn(t, deets)
 }
 
-// The connection then sits on the database's own path. Even one that starts with auth is not
+// Such a connection sits on the database's own path. Even one that starts with auth is not
 // what the URL asked for, so only the exact value passes.
 func TestCheckMigrationSearchPathRefusesAStrippedPath(t *testing.T) {
 	for _, dbDefault := range []string{"", "auth, extensions"} {
@@ -168,8 +209,8 @@ func TestCheckMigrationSearchPathRefusesAStrippedPath(t *testing.T) {
 	}
 }
 
-// Behind such a pooler the old default must still be taken back, on the same run that then
-// stops on the check.
+// Even then the old default must still be taken back, on the same run that then stops on the
+// check.
 func TestSettleResetsTheOldDefaultBeforeRefusingAStrippedPath(t *testing.T) {
 	dsn := scratchDatabase(t)
 	seedOldServerDefault(t, dsn, "auth", true)
@@ -182,12 +223,13 @@ func TestSettleResetsTheOldDefaultBeforeRefusingAStrippedPath(t *testing.T) {
 	}
 }
 
-// user is a keyword, so Postgres stores it quoted in the list; the match must quote it too.
+// between is a keyword Postgres accepts as a schema name but stores quoted in the list; the
+// match must quote it the same way.
 func TestResetTakesBackTheDefaultAnOldServerWrote(t *testing.T) {
 	cases := []struct {
 		ns   string
 		full bool
-	}{{"auth", true}, {"auth", false}, {"user", true}}
+	}{{"auth", true}, {"auth", false}, {"between", true}}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("%s/extensions=%v", c.ns, c.full), func(t *testing.T) {
 			dsn := scratchDatabase(t)

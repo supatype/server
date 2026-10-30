@@ -99,10 +99,13 @@ func (w *hintingWriter) Write(p []byte) (int, error) {
 
 // Flush passes through for a response that is not held; a held one is written whole at the end.
 func (w *hintingWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok && !w.held {
-		flusher.Flush()
+	if !w.held {
+		_ = http.NewResponseController(w.ResponseWriter).Flush()
 	}
 }
+
+// Unwrap lets http.ResponseController reach the writer underneath.
+func (w *hintingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // finish writes a held response, with the hint added when the table keeps drafts and the
 // body is the refusal the hint is about.

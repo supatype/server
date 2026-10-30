@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -105,13 +106,17 @@ func upstreamTLSConfig(serverName string) *tls.Config {
 // hijackClient takes over the client connection, answering the request itself
 // when it cannot. The reader holds whatever the client sent after the upgrade
 // request that the server had already read off the socket.
+//
+// It asks through http.ResponseController, which follows Unwrap down to the
+// connection. Middleware wraps the writer (the gateway's CORS layer does outside
+// dev mode), and asking the wrapper itself for http.Hijacker failed every
+// upgrade behind it with 500.
 func hijackClient(w http.ResponseWriter) (net.Conn, *bufio.Reader, bool) {
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
+	conn, rw, err := http.NewResponseController(w).Hijack()
+	if errors.Is(err, http.ErrNotSupported) {
 		http.Error(w, "websocket not supported", http.StatusInternalServerError)
 		return nil, nil, false
 	}
-	conn, rw, err := hijacker.Hijack()
 	if err != nil {
 		logrus.WithError(err).Error("websocket proxy: hijack failed")
 		return nil, nil, false

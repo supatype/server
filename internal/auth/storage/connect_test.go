@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/XSAM/otelsql"
@@ -21,5 +22,25 @@ func TestTheDriverSurvivesWrappingForOpenTelemetry(t *testing.T) {
 	}
 	if _, err := otelsql.Register(searchPathDriver); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Go's URL parse error quotes the whole URL, password included, and the error ends up in the
+// log. A malformed database URL must be reported without it.
+func TestAMalformedDatabaseURLNeverShowsItsPassword(t *testing.T) {
+	for _, dsn := range []string{
+		"postgres://user:s3cretpw@host:notaport/db",
+		"postgres://user:s3cretpw@ho st/db",
+		"postgres://user:s3cret\x7fpw@host/db",
+		"postgres://user:s3cretpw@[::1/db",
+	} {
+		_, err := BuildConnectionDetails(ConnectionSettings{URL: dsn, Namespace: "auth"})
+		if err == nil {
+			t.Errorf("%q: want an error", dsn)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("the error shows the password: %v", err)
+		}
 	}
 }

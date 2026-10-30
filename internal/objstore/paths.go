@@ -115,6 +115,9 @@ func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 //   - under Windows rules, where a part ends in a dot or space: Windows
 //     dropped it, so the old file of "notes." is "notes", which may as well
 //     be the object "notes" itself.
+//   - where a part is ".", "..", or empty: the path steps through folders or
+//     collapses, so "%%x/../a" would open the file of the object "a" and
+//     answer for it under another name.
 //
 // So a name Windows once split at a backslash no longer answers under that
 // name, by decision: its file is exactly where the split name is stored now,
@@ -125,10 +128,29 @@ func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 func (r nameRules) legacyRel(objPath string) (string, bool) {
 	name := strings.TrimPrefix(objPath, "/")
 	rel := filepath.FromSlash(name)
-	if !filepath.IsLocal(rel) || (r.windows && r.renamesAPart(name)) || r.isStoredLocation(name) {
+	if !filepath.IsLocal(rel) || r.hasStepPart(name) || (r.windows && r.renamesAPart(name)) || r.isStoredLocation(name) {
 		return "", false
 	}
 	return rel, true
+}
+
+// hasStepPart reports whether name, split into parts as r splits a path, has a part that is
+// not a name of its own: ".", "..", or an empty part between two separators.
+func (r nameRules) hasStepPart(name string) bool {
+	for {
+		i := strings.IndexFunc(name, r.isSeparator)
+		part := name
+		if i >= 0 {
+			part = name[:i]
+		}
+		if part == "" || part == "." || part == ".." {
+			return true
+		}
+		if i < 0 {
+			return false
+		}
+		name = name[i+1:] // every separator is one byte
+	}
 }
 
 // isStoredLocation reports whether name, split into parts as r splits a

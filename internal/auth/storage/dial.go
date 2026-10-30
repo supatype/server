@@ -116,7 +116,7 @@ func applyDBDriver(
 	if config.DB.Driver == "" && config.DB.URL != "" {
 		u, err := url.Parse(config.DB.URL)
 		if err != nil {
-			return errors.Wrap(err, "parsing db connection url")
+			return databaseURLError(err)
 		}
 		config.DB.Driver = u.Scheme
 	}

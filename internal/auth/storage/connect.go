@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"net/url"
 	"time"
@@ -97,11 +98,11 @@ type ConnectionSettings struct {
 func BuildConnectionDetails(s ConnectionSettings) (*pop.ConnectionDetails, error) {
 	withPath, err := EnsurePostgresSearchPathInURL(s.URL, s.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("parsing the database URL: %w", err)
+		return nil, databaseURLError(err)
 	}
 	u, err := url.Parse(withPath)
 	if err != nil {
-		return nil, fmt.Errorf("parsing the database URL: %w", err)
+		return nil, databaseURLError(err)
 	}
 	if s.ApplicationName != "" {
 		q := u.Query()
@@ -117,4 +118,14 @@ func BuildConnectionDetails(s ConnectionSettings) (*pop.ConnectionDetails, error
 		Pool: s.Pool, IdlePool: s.IdlePool, ConnMaxLifetime: s.ConnMaxLifetime, ConnMaxIdleTime: s.ConnMaxIdleTime,
 		Options: map[string]string{"migration_table_name": "schema_migrations", "Namespace": s.Namespace},
 	}, nil
+}
+
+// databaseURLError reports a database URL that does not parse without quoting it. Go's parse
+// error carries the whole URL, password included, and this error is logged.
+func databaseURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	return fmt.Errorf("parsing the database URL: %w", err)
 }

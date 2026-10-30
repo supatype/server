@@ -19,15 +19,15 @@ func servesFunctionsAdmin(req *http.Request, c Config, perms StudioPermissions, 
 		return false
 	}
 	below := path[len(legacyFunctionsAdminPrefix):]
-	return functions.ServesAdminAPI(c.FunctionsAdminMounted, elevatesAdministration(req, perms), req.Method, below)
+	return functions.ServesAdminAPI(elevatesAdministration(req, perms), req.Method, below)
 }
 
 // elevatesAdministration reports whether the proxy sends a request to a route that admits only the
 // service role as the service role: for a caller who may elevate, in every mode but anonymous
 // (admitActingMode).
 func elevatesAdministration(req *http.Request, perms StudioPermissions) bool {
-	mode, _ := resolveActingMode(req, perms)
-	return perms.ElevatedSQL && mode != ModeAnon
+	mode, ok := resolveActingMode(req, perms)
+	return ok && perms.ElevatedSQL && mode != ModeAnon
 }
 
 // allowsProxied is AllowsRequest for the request the gateway will serve. By its path a request to

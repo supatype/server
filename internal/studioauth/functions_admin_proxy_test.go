@@ -107,3 +107,14 @@ func TestAnAdminAdministersFunctionsAtBothAddresses(t *testing.T) {
 		t.Error("an admin acting as themselves called a function with the service role's key")
 	}
 }
+
+// An acting mode the proxy does not know is refused at the old address as it is on every route
+// that acts in the caller's mode, rather than counted as elevating and sent as the service role.
+func TestAnUnknownActingModeIsRefusedAtTheOldAdminAddress(t *testing.T) {
+	for _, path := range []string{"/functions/v1/admin/list", "/functions/v1/admin/orders/42"} {
+		next, rec := proxyAs(t, RoleAdmin, "bogus", http.MethodGet, path)
+		if next.reached || rec.Code != http.StatusForbidden {
+			t.Errorf("GET %s: got %d with %q, want 403 and no upstream", path, rec.Code, next.auth)
+		}
+	}
+}

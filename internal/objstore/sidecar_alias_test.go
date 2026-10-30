@@ -59,11 +59,15 @@ func TestTheSidecarDirIsUnreachableByItsShortName(t *testing.T) {
 // name where the OS makes none; under posix rules the disk is not asked.
 func TestANameTheDiskResolvesToTheSidecarDirIsRefused(t *testing.T) {
 	root := t.TempDir()
-	s := &store{root: root}
 	placeFile(t, root, "files/.meta/a.png.json", "{}")
 	placeFile(t, root, "files/other/b.png", "b")
 	if err := os.Symlink(".meta", filepath.Join(root, "files", "META~1")); err != nil {
 		t.Skipf("cannot make a symbolic link here: %v", err)
+	}
+	outside := t.TempDir()
+	placeFile(t, outside, "secret", "s")
+	if err := os.Symlink(outside, filepath.Join(root, "files", "out")); err != nil {
+		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		rules nameRules
@@ -73,11 +77,25 @@ func TestANameTheDiskResolvesToTheSidecarDirIsRefused(t *testing.T) {
 		{windowsRules, "META~1/a.png.json", true},
 		{windowsRules, "other/b.png", false},
 		{windowsRules, "missing/b.png", false},
+		{windowsRules, "out/secret", true},
 		{posixRules, "META~1/a.png.json", false},
 	} {
-		if got := s.reachesSidecarTree(tc.rules, "files", tc.rel); got != tc.want {
-			t.Errorf("windows=%t reachesSidecarTree(%q) = %t, want %t", tc.rules.windows, tc.rel, got, tc.want)
+		s := &store{root: root, rules: tc.rules}
+		if got := s.offLimits("files", filepath.FromSlash(tc.rel)); got != tc.want {
+			t.Errorf("windows=%t offLimits(%q) = %t, want %t", tc.rules.windows, tc.rel, got, tc.want)
 		}
+	}
+	// A store opened the usual way compares against the root it resolved once.
+	opened := openStore(root, secret)
+	opened.rules = windowsRules
+	if !opened.offLimits("files", filepath.FromSlash("META~1/a.png.json")) {
+		t.Error("an opened store reached the sidecar tree through a link")
+	}
+	// With no storage root to compare against, nothing can be shown to be an
+	// alias, so nothing is refused for being one.
+	gone := &store{root: filepath.Join(root, "gone"), rules: windowsRules}
+	if gone.offLimits("files", "META~1") {
+		t.Error("a store with no root refused a name as an alias")
 	}
 }
 

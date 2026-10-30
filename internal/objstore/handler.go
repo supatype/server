@@ -33,44 +33,15 @@ import (
 // The handler is designed to be mounted with http.StripPrefix("/storage/v1")
 // so all routes below are relative to that prefix.
 func Handler(storageRoot, jwtSecret string) http.Handler {
-	h := &store{
-		root:      storageRoot,
-		jwtSecret: []byte(jwtSecret),
-		mu:        &sync.RWMutex{},
-	}
-
-	metaDir := filepath.Join(storageRoot, storeMetaDir)
-	if err := mkdirAll(metaDir, 0o700); err != nil {
-		logrus.WithError(err).Warn("objstore: failed to create metadata directory")
-	}
-
+	h := openStore(storageRoot, jwtSecret)
 	r := chi.NewRouter()
 
 	// Who may reach a route is stated once, at the mount, rather than as the
 	// first four lines of every handler. Ten handlers each opened with their own
 	// copy of the check, which is ten chances to write the wrong one.
 
-	// ── Bucket administration ─────────────────────────────────────────────────
-	r.Group(func(r chi.Router) {
-		r.Use(h.serviceRoleOnly)
-		r.Get("/bucket", h.listBuckets)
-		r.Post("/bucket", h.createBucket)
-		r.Get("/bucket/{id}", h.getBucket)
-		r.Put("/bucket/{id}", h.updateBucket)
-		r.Delete("/bucket/{id}", h.deleteBucket)
-		r.Post("/bucket/{id}/empty", h.emptyBucket)
-	})
-
-	// ── Objects, for any authenticated caller ─────────────────────────────────
-	// More specific patterns first.
-	r.Group(func(r chi.Router) {
-		r.Use(h.authenticated)
-		r.Post("/object/list/{bucket}", h.listObjects)
-		r.Post("/object/sign/{bucket}/*", h.createSignedURL)
-		r.Get("/object/authenticated/{bucket}/*", h.downloadAuthenticated)
-		r.Post("/object/{bucket}/*", h.uploadObject)
-		r.Delete("/object/{bucket}", h.removeObjects)
-	})
+	r.Group(h.bucketRoutes)
+	r.Group(h.objectRoutes)
 
 	// ── Objects reachable without a token ─────────────────────────────────────
 	// The signed URL carries its own credential; the public bucket is public.
@@ -80,12 +51,59 @@ func Handler(storageRoot, jwtSecret string) http.Handler {
 	return r
 }
 
+// bucketRoutes are bucket administration, for the service role only.
+func (s *store) bucketRoutes(r chi.Router) {
+	r.Use(s.serviceRoleOnly)
+	r.Get("/bucket", s.listBuckets)
+	r.Post("/bucket", s.createBucket)
+	r.Get("/bucket/{id}", s.getBucket)
+	r.Put("/bucket/{id}", s.updateBucket)
+	r.Delete("/bucket/{id}", s.deleteBucket)
+	r.Post("/bucket/{id}/empty", s.emptyBucket)
+}
+
+// objectRoutes are the object routes for any authenticated caller, more
+// specific patterns first.
+func (s *store) objectRoutes(r chi.Router) {
+	r.Use(s.authenticated)
+	r.Post("/object/list/{bucket}", s.listObjects)
+	r.Post("/object/sign/{bucket}/*", s.createSignedURL)
+	r.Get("/object/authenticated/{bucket}/*", s.downloadAuthenticated)
+	r.Post("/object/{bucket}/*", s.uploadObject)
+	r.Delete("/object/{bucket}", s.removeObjects)
+}
+
 // ─── store ────────────────────────────────────────────────────────────────────
 
 type store struct {
 	root      string
 	jwtSecret []byte
 	mu        *sync.RWMutex
+	// rules are the naming rules of the file system holding root, with case
+	// folding probed when the store opens.
+	rules nameRules
+	// realRoot is root as the disk names it, links resolved, when known.
+	realRoot string
+	// registry caches buckets.json between writes.
+	registry registryCache
+}
+
+// openStore opens the store at storageRoot: it makes the metadata directory,
+// probes the file system there for its naming rules, and resolves the root's
+// own name once, so no request has to.
+func openStore(storageRoot, jwtSecret string) *store {
+	s := &store{root: storageRoot, jwtSecret: []byte(jwtSecret), mu: &sync.RWMutex{}}
+	metaDir := filepath.Join(storageRoot, storeMetaDir)
+	if err := mkdirAll(metaDir, 0o700); err != nil {
+		logrus.WithError(err).Warn("objstore: failed to create metadata directory")
+	}
+	rules, probed := rulesFor(metaDir)
+	if !probed {
+		logrus.Warn("objstore: could not probe the storage file system for case folding; assuming the OS default")
+	}
+	s.rules = rules
+	s.realRoot, _ = filepath.EvalSymlinks(storageRoot)
+	return s
 }
 
 // ─── JSON helpers ─────────────────────────────────────────────────────────────

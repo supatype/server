@@ -129,15 +129,6 @@ func (s *store) openStorageRoot(w http.ResponseWriter) (*os.Root, bool) {
 	return root, true
 }
 
-// loadObjectMeta reads the sidecar of objPath in bucket from root.
-func (s *store) loadObjectMeta(root *os.Root, bucket, objPath string) (*ObjectMeta, error) {
-	metaRel, err := s.objectMetaRel(bucket, objPath)
-	if err != nil {
-		return nil, err
-	}
-	return loadMetaAt(root, metaRel)
-}
-
 // loadMetaAt reads the sidecar at metaRel under root.
 func loadMetaAt(root *os.Root, metaRel string) (*ObjectMeta, error) {
 	f, err := root.Open(metaRel)
@@ -156,13 +147,9 @@ func loadMetaAt(root *os.Root, metaRel string) (*ObjectMeta, error) {
 	return &meta, json.Unmarshal(data, &meta)
 }
 
-// saveObjectMeta writes the sidecar of objPath in bucket, creating the folders
-// it goes in, the storage root included.
-func (s *store) saveObjectMeta(meta *ObjectMeta, bucket, objPath string) error {
-	metaRel, err := s.objectMetaRel(bucket, objPath)
-	if err != nil {
-		return err
-	}
+// saveNewMeta writes the sidecar at metaRel, creating the folders it goes in,
+// the storage root included.
+func (s *store) saveNewMeta(meta *ObjectMeta, metaRel string) error {
 	if err := mkdirAll(filepath.Join(s.root, filepath.Dir(metaRel)), 0o700); err != nil { // #nosec G703 -- metaRel is built from validated bucket and object paths under storageRoot.
 		return err
 	}
@@ -243,7 +230,7 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := ObjectMeta{Name: objPath, BucketID: bucket, Owner: claimsFrom(r.Context()).Sub, ContentType: contentType, Size: size}
-	if err := s.saveObjectMeta(stampedMeta(meta), bucket, objPath); err != nil {
+	if err := s.saveNewMeta(stampedMeta(meta), loc.metaRel); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save metadata")
 		return
 	}
@@ -402,15 +389,20 @@ func (s *store) locate(bucket, objPath string) (objectLocation, error) {
 // now, or, when no file is there, where it was stored before names were
 // encoded, if a file is there instead. Uploads look here only to find what
 // they replace; they always write where loc says.
+//
+// The checks run cheapest first. Nearly every name has no old location, so
+// most requests stop at legacyRel, which reads nothing; the next stop is a
+// file at the current location. Only then is the old location checked on
+// disk, which is never the current one, since legacyRel refuses that.
 func (s *store) stored(root *os.Root, loc objectLocation) (fileRel, metaRel string) {
-	rel, ok := hostRules.legacyRel(loc.name)
-	if !ok || s.reachesSidecarTree(hostRules, loc.bucket, rel) {
+	rel, ok := s.rules.legacyRel(loc.name)
+	if !ok {
+		return loc.fileRel, loc.metaRel
+	}
+	if _, err := root.Stat(loc.fileRel); !os.IsNotExist(err) || s.offLimits(loc.bucket, rel) {
 		return loc.fileRel, loc.metaRel
 	}
 	legacyFile, legacyMeta := joinPaths(loc.bucket, rel)
-	if _, err := root.Stat(loc.fileRel); !os.IsNotExist(err) {
-		return loc.fileRel, loc.metaRel
-	}
 	if info, err := root.Stat(legacyFile); err != nil || !info.Mode().IsRegular() {
 		return loc.fileRel, loc.metaRel
 	}
@@ -522,65 +514,70 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 	var body listRequest
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	dir, folder, err := s.listFolder(bucket, body.Prefix)
+	l, err := s.listFolder(bucket, body.Prefix)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	root, ok := s.openStorageRoot(w)
-	if !ok {
+	if l.root, ok = s.openStorageRoot(w); !ok {
 		return
 	}
 	defer func() {
-		_ = root.Close()
+		_ = l.root.Close()
 	}()
-	items := matchingItems(s.folderChildren(root, bucket, dir, folder), body.Search)
+	items := matchingItems(s.folderChildren(l), body.Search)
 
 	w.Header().Set("X-Total-Count", strconv.Itoa(len(items)))
 	w.Header().Set("Access-Control-Expose-Headers", "X-Total-Count")
 	utilities.WriteJSON(w, http.StatusOK, pageOf(items, body.Limit, body.Offset))
 }
 
-// listFolder is the directory a list prefix names and the folder's object path ("" for the
-// bucket root), with the slashes around the prefix stripped and the path cleaned, so the folder
-// is spelled one way however the prefix reached it: "a/.." is the bucket root, not a folder
-// beside it that would list the sidecar tree.
-func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error) {
-	bucketDir, err := s.bucketDir(bucket)
-	if err != nil {
-		return "", "", err
-	}
-	folder = strings.Trim(prefix, "/")
+// folderListing is one folder being listed: the bucket, the folder's object
+// path ("" for the bucket root), its path on disk relative to the bucket and
+// as a directory, and the storage root the sidecars are read from.
+type folderListing struct {
+	bucket, folder, rel, dir string
+	root                     *os.Root
+}
+
+// listFolder is the folder a list prefix names in bucket, which the registry
+// has already vouched for. The slashes around the prefix are stripped and the
+// path cleaned, so the folder is spelled one way however the prefix reached
+// it: "a/.." is the bucket root, not a folder beside it that would list the
+// sidecar tree.
+func (s *store) listFolder(bucket, prefix string) (folderListing, error) {
+	folder := strings.Trim(prefix, "/")
 	rel, err := cleanObjectPath(folder, true)
 	if err != nil {
-		return "", "", err
+		return folderListing{}, err
 	}
 	if folder = path.Clean(folder); folder == "." {
 		folder = ""
 	}
-	return filepath.Join(bucketDir, rel), folder, nil
+	return folderListing{bucket: bucket, folder: folder, rel: rel, dir: filepath.Join(s.root, bucket, rel)}, nil
 }
 
 // folderChildren is the folder's direct children: an entry for each subfolder with an object
 // somewhere below it, then one for each file, each group in byte order by name. A folder that is
-// not there, or is a file, has none, and the sidecar tree is never listed. Each child is named
-// by the object name its file name holds, which is also what the order is by.
+// not there, or is a file, has none, and neither the sidecar tree nor a folder reached by
+// another name, such as a short name, is ever listed. Each child is named by the object name its
+// file name holds, which is also what the order is by.
 //
 // os.ReadDir returns entries in byte order by file name already, so the groups
 // are sorted again only when a stored name was decoded into a different one,
 // which can move it.
-func (s *store) folderChildren(root *os.Root, bucket, dir, folder string) []listItem {
-	if s.reachesSidecarTree(hostRules, bucket, folder) {
+func (s *store) folderChildren(l folderListing) []listItem {
+	if s.offLimits(l.bucket, l.rel) {
 		return []listItem{}
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(l.dir)
 	if err != nil {
 		return []listItem{}
 	}
 	var folders, files []listItem
 	decoded := false
 	for _, e := range entries {
-		item, ok := s.childItem(root, bucket, dir, folder, e)
+		item, ok := s.childItem(l, e)
 		if !ok {
 			continue
 		}
@@ -602,21 +599,21 @@ func (s *store) folderChildren(root *os.Root, bucket, dir, folder string) []list
 // childItem is the list entry for one entry of a folder's directory, or false
 // when the entry is not a child: the sidecar tree, a subfolder with no object
 // anywhere below it, or a file removed since the directory was read.
-func (s *store) childItem(root *os.Root, bucket, dir, folder string, e fs.DirEntry) (listItem, bool) {
+func (s *store) childItem(l folderListing, e fs.DirEntry) (listItem, bool) {
 	switch {
-	case folder == "" && hostRules.inSidecarTree(e.Name()):
+	case l.folder == "" && s.rules.inSidecarTree(e.Name()):
 		return listItem{}, false
 	case e.IsDir():
-		if !holdsAnObject(filepath.Join(dir, e.Name())) {
+		if !holdsAnObject(filepath.Join(l.dir, e.Name())) {
 			return listItem{}, false
 		}
-		return folderItem(bucket, hostRules.objectSegment(e.Name())), true
+		return folderItem(l.bucket, s.rules.objectSegment(e.Name())), true
 	}
 	info, err := e.Info()
 	if err != nil {
 		return listItem{}, false
 	}
-	return s.fileItem(root, bucket, folder, info), true
+	return s.fileItem(l, info), true
 }
 
 // holdsAnObject reports whether a file lies anywhere below dir, so an empty tree is not a folder.
@@ -633,13 +630,15 @@ func holdsAnObject(dir string) bool {
 }
 
 // fileItem is the list entry of a file directly in the folder, named by its
-// own name, with its sidecar read from root.
-func (s *store) fileItem(root *os.Root, bucket, folder string, info os.FileInfo) listItem {
-	name := hostRules.objectSegment(info.Name())
-	objPath := path.Join(folder, name)
-	meta, err := s.loadObjectMeta(root, bucket, objPath)
+// own name. Its sidecar is the one stored beside its own file name: the name
+// came from the directory, so it needs no second check.
+func (s *store) fileItem(l folderListing, info os.FileInfo) listItem {
+	name := s.rules.objectSegment(info.Name())
+	objPath := path.Join(l.folder, name)
+	_, metaRel := joinPaths(l.bucket, filepath.Join(l.rel, info.Name()))
+	meta, err := loadMetaAt(l.root, metaRel)
 	if err != nil {
-		fallback := sidecarlessMeta(bucket, objPath, info)
+		fallback := sidecarlessMeta(l.bucket, objPath, info)
 		meta = &fallback
 	}
 	item := metaToListItem(*meta)

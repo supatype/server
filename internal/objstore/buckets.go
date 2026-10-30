@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
+	"github.com/supatype/server/internal/filestamp"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -73,8 +76,44 @@ func (s *store) bucketsPath() string {
 	return filepath.Join(s.root, storeMetaDir, "buckets.json")
 }
 
+// registryCache holds the bucket list as last read from or written to
+// buckets.json, with the file's stamp at the time. Every object request looks
+// its bucket up, so the file is read and parsed only when its stamp has moved:
+// this store's own writes refresh the cache as they land, and a write by
+// anything else, such as the CLI provisioning buckets, moves the stamp.
+type registryCache struct {
+	mu      sync.Mutex
+	stamp   filestamp.Stamp
+	buckets []Bucket
+	valid   bool
+}
+
+// get is a copy of the cached list when it was taken at stamp.
+func (c *registryCache) get(stamp filestamp.Stamp) ([]Bucket, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.valid || !c.stamp.Same(stamp) {
+		return nil, false
+	}
+	return slices.Clone(c.buckets), true
+}
+
+// put caches a copy of buckets as the version of the file at stamp. Callers
+// replace a bucket's fields rather than writing through them, so a shallow
+// copy keeps the cache from changing under them.
+func (c *registryCache) put(stamp filestamp.Stamp, buckets []Bucket) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stamp, c.buckets, c.valid = stamp, slices.Clone(buckets), true
+}
+
 func (s *store) loadBuckets() ([]Bucket, error) {
-	data, err := readFile(s.bucketsPath())
+	path := s.bucketsPath()
+	stamp, statErr := filestamp.Of(path)
+	if cached, ok := s.registry.get(stamp); ok && statErr == nil {
+		return cached, nil
+	}
+	data, err := readFile(path)
 	if os.IsNotExist(err) {
 		return []Bucket{}, nil
 	}
@@ -82,7 +121,13 @@ func (s *store) loadBuckets() ([]Bucket, error) {
 		return nil, err
 	}
 	var buckets []Bucket
-	return buckets, json.Unmarshal(data, &buckets)
+	if err := json.Unmarshal(data, &buckets); err != nil {
+		return buckets, err
+	}
+	if statErr == nil {
+		s.registry.put(stamp, buckets)
+	}
+	return buckets, nil
 }
 
 func (s *store) saveBuckets(buckets []Bucket) error {
@@ -90,7 +135,13 @@ func (s *store) saveBuckets(buckets []Bucket) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(s.bucketsPath(), data, 0o600)
+	if err := writeFile(s.bucketsPath(), data, 0o600); err != nil {
+		return err
+	}
+	if stamp, err := filestamp.Of(s.bucketsPath()); err == nil {
+		s.registry.put(stamp, buckets)
+	}
+	return nil
 }
 
 // findBucket returns the index and pointer for a bucket with the given ID,
@@ -158,8 +209,11 @@ func (s *store) knownBucketRoute(w http.ResponseWriter, r *http.Request) (string
 	if !ok {
 		return "", false
 	}
-	_, ok = s.registeredBucket(w, bucket)
-	return bucket, ok
+	b, ok := s.registeredBucket(w, bucket)
+	if !ok {
+		return "", false
+	}
+	return b.ID, true
 }
 
 // registeredBucket is the registry's bucket named id, answering the request itself
@@ -319,27 +373,33 @@ func (s *store) listBuckets(w http.ResponseWriter, _ *http.Request) {
 	utilities.WriteJSON(w, http.StatusOK, buckets)
 }
 
-// newBucketBody reads a create body, answering the request itself when it is
-// refused: a bucket can never be the store's own directory, under any name
-// this file system takes for it.
-func (s *store) newBucketBody(w http.ResponseWriter, r *http.Request) (bucketCreate, bool) {
-	body, err := decodeBucketCreate(r.Body)
-	if err == nil && s.aliasesDir(hostRules, body.ID, storeMetaDir) {
-		err = errInvalidBucketID
+// refuseBucketID answers a create of id beside the registered buckets when
+// the id is refused, reporting whether it was. The store's own directory is
+// not a bucket under any name the file system takes for it (400), and an id
+// the file system takes for a registered bucket's directory is that bucket
+// (409, as for the same id). The disk is asked about id once.
+func (s *store) refuseBucketID(w http.ResponseWriter, buckets []Bucket, id string) bool {
+	aliases := s.aliases(id)
+	if aliases(storeMetaDir) {
+		writeError(w, http.StatusBadRequest, errInvalidBucketID.Error())
+		return true
 	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return bucketCreate{}, false
+	for i := range buckets {
+		if aliases(buckets[i].ID) {
+			writeError(w, http.StatusConflict, "bucket already exists")
+			return true
+		}
 	}
-	return body, true
+	return false
 }
 
 // createBucket: POST /bucket
 // Body: { id?, name, public?, file_size_limit?, allowed_mime_types?,
 // access_mode?, s3_bucket_policy? }
 func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
-	body, ok := s.newBucketBody(w, r)
-	if !ok {
+	body, err := decodeBucketCreate(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -351,8 +411,7 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load buckets")
 		return
 	}
-	if s.aliasedBucket(hostRules, buckets, body.ID) != nil {
-		writeError(w, http.StatusConflict, "bucket already exists")
+	if s.refuseBucketID(w, buckets, body.ID) {
 		return
 	}
 
@@ -482,7 +541,7 @@ func (s *store) emptyBucketDir(w http.ResponseWriter, id string) (string, bool) 
 		return "", false
 	}
 	for _, e := range entries {
-		if !hostRules.inSidecarTree(e.Name()) {
+		if !s.rules.inSidecarTree(e.Name()) {
 			writeError(w, http.StatusBadRequest, "bucket must be empty before deletion")
 			return "", false
 		}

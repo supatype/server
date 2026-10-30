@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -72,74 +71,16 @@ func (r nameRules) inSidecarTree(rel string) bool {
 	return r.sameName(firstSegment(rel), sidecarDir)
 }
 
-// reachesSidecarTree reports whether rel in bucket resolves into the sidecar
-// tree under r: by name, or, under Windows rules, by another name the
-// directory answers to, such as its 8.3 short name META~1. Such a name is
-// not decided by its spelling: Windows makes it up when the directory is
-// created, so the disk is asked whether the two names are one directory.
-func (s *store) reachesSidecarTree(r nameRules, bucket, rel string) bool {
-	if r.inSidecarTree(rel) {
-		return true
-	}
-	return r.windows && s.sameDir(filepath.Join(bucket, firstSegment(rel)), filepath.Join(bucket, sidecarDir))
-}
-
 // storeMetaDir is the directory under the storage root that holds the
 // store's own bookkeeping, such as buckets.json. It is never a bucket.
 const storeMetaDir = ".supatype"
 
-// aliasesDir reports whether id, a bucket id, would be the directory dir
-// under the storage root under r: by name, or, under Windows rules, by any
-// other name the disk resolves to it, such as an 8.3 short name (SUPATY~1
-// for .supatype) or a spelling with a trailing dot, which Windows drops.
-func (s *store) aliasesDir(r nameRules, id, dir string) bool {
-	return r.sameName(id, dir) || (r.windows && s.sameDir(id, dir))
-}
-
-// aliasedBucket is the registered bucket whose directory id would be under
-// r, or nil when it would be a directory of its own.
-func (s *store) aliasedBucket(r nameRules, buckets []Bucket, id string) *Bucket {
-	for i := range buckets {
-		if s.aliasesDir(r, id, buckets[i].ID) {
-			return &buckets[i]
-		}
-	}
-	return nil
-}
-
-// sameDir reports whether a and b, relative to the storage root, are both
-// there and are the same directory, however each is spelled.
-func (s *store) sameDir(a, b string) bool {
-	aInfo, err := os.Stat(filepath.Join(s.root, a))
-	if err != nil {
-		return false
-	}
-	bInfo, err := os.Stat(filepath.Join(s.root, b))
-	return err == nil && os.SameFile(aInfo, bInfo)
-}
-
 // errInvalidObjectPath refuses an object name that cannot be stored.
 var errInvalidObjectPath = errors.New("invalid object path")
 
-// objectPaths returns where an object and its sidecar live, relative to the
-// storage root, validating the bucket and path once.
-//
-// The two used to be built by separate functions that each validated the same
-// two strings. Any caller wanting both therefore validated twice and had to
-// handle a second failure that could not happen: if the first call refused the
-// input, the second never ran.
-func (s *store) objectPaths(bucket, objPath string) (fileRel, metaRel string, err error) {
-	bucket, rel, err := s.cleanObject(bucket, objPath)
-	if err != nil {
-		return "", "", err
-	}
-	fileRel, metaRel = joinPaths(bucket, rel)
-	return fileRel, metaRel, nil
-}
-
 // cleanObject is the bucket id and the object's path on disk relative to its
-// bucket, or an error when either is refused: a name that leaves the bucket
-// or reaches the sidecar tree by any name.
+// bucket, or an error when either is refused: a name that leaves the bucket,
+// names the sidecar tree, or reaches a file on disk under another name.
 func (s *store) cleanObject(bucket, objPath string) (cleanBucket, rel string, err error) {
 	if cleanBucket, err = cleanBucketID(bucket); err != nil {
 		return "", "", err
@@ -147,7 +88,7 @@ func (s *store) cleanObject(bucket, objPath string) (cleanBucket, rel string, er
 	if rel, err = cleanObjectPath(objPath, false); err != nil {
 		return "", "", err
 	}
-	if s.reachesSidecarTree(hostRules, cleanBucket, rel) {
+	if s.offLimits(cleanBucket, rel) {
 		return "", "", errInvalidObjectPath
 	}
 	return cleanBucket, rel, nil
@@ -218,16 +159,6 @@ func (r nameRules) isStoredSegment(segment string) bool {
 	return err == nil && r.sameName(r.diskSegment(name), segment)
 }
 
-func (s *store) objectFileRel(bucket, objPath string) (string, error) {
-	fileRel, _, err := s.objectPaths(bucket, objPath)
-	return fileRel, err
-}
-
-func (s *store) objectMetaRel(bucket, objPath string) (string, error) {
-	_, metaRel, err := s.objectPaths(bucket, objPath)
-	return metaRel, err
-}
-
 // routeParam returns a route parameter as the caller meant it, answering the
 // request itself when it cannot be decoded.
 //
@@ -286,8 +217,9 @@ const windowsForbidden = `<>:"|?*\`
 const onWindows = runtime.GOOS == "windows"
 
 // nameRules is how a file system judges an object name's segments as file
-// names. The rules of this OS are chosen once, as hostRules; a test builds the
-// other OS's rules to check the encoding under them.
+// names. A store takes hostRules when it opens, with case folding probed from
+// the storage file system; a test builds the other OS's rules to check the
+// encoding under them.
 type nameRules struct {
 	// windows is set where Windows refuses windowsForbidden and control
 	// characters and drops a trailing dot or space from a name.
@@ -302,8 +234,9 @@ type nameRules struct {
 
 // hostRules are the rules of this OS. On Windows a device name is asked of
 // the OS through filepath.IsLocal, which knows that Windows 11 no longer
-// reserves "CON.txt". The file systems of Windows and macOS ignore case by
-// default; Linux's do not.
+// reserves "CON.txt". Their case folding is the usual one for the OS (the
+// file systems of Windows and macOS ignore case by default, Linux's do not),
+// which a store keeps only when it cannot probe its own file system.
 var hostRules = nameRules{
 	windows:   onWindows,
 	reserved:  func(name string) bool { return !filepath.IsLocal(name) },

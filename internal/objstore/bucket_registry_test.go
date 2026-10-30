@@ -86,7 +86,7 @@ func TestABucketCannotBeTheStoresOwnDirectory(t *testing.T) {
 	}
 	if onWindows {
 		ids = append(ids, ".supatype.", ".supatype. .")
-		if short := "SUPATY~1"; (&store{root: root}).sameDir(short, storeMetaDir) {
+		if short := "SUPATY~1"; sameFileAt(root, short, storeMetaDir) {
 			ids = append(ids, short)
 		} else {
 			t.Log("this volume gives .supatype no 8.3 short name")
@@ -138,7 +138,7 @@ func TestABucketCannotAliasAnotherBucket(t *testing.T) {
 	}
 	if onWindows {
 		ids = append(ids, "files.", "files. .")
-		if short := "LONGBU~1"; (&store{root: root}).sameDir(short, "longbucketname") {
+		if short := "LONGBU~1"; sameFileAt(root, short, "longbucketname") {
 			ids = append(ids, short)
 		} else {
 			t.Log("this volume gives longbucketname no 8.3 short name")
@@ -158,9 +158,7 @@ func TestABucketCannotAliasAnotherBucket(t *testing.T) {
 // posix rules it is a bucket of its own.
 func TestABucketAliasFollowsTheNameRules(t *testing.T) {
 	root := t.TempDir()
-	s := &store{root: root}
 	placeFile(t, root, "files/a.txt", "a")
-	registered := []Bucket{{ID: "files"}}
 	for _, tc := range []struct {
 		rules string
 		id    string
@@ -172,8 +170,8 @@ func TestABucketAliasFollowsTheNameRules(t *testing.T) {
 		{"posix", "FILES", false},
 		{"posix", "files", true},
 	} {
-		got := s.aliasedBucket(bothRules[tc.rules], registered, tc.id) != nil
-		if got != tc.want {
+		s := &store{root: root, rules: bothRules[tc.rules]}
+		if got := s.aliases(tc.id)("files"); got != tc.want {
 			t.Errorf("%s: %q aliases files = %t, want %t", tc.rules, tc.id, got, tc.want)
 		}
 	}

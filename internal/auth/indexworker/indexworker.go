@@ -307,14 +307,7 @@ const indexWorkerLockName = "auth_index_worker"
 // acquireIndexWorkerLock takes the index worker's advisory lock on a connection of its own,
 // or returns ErrAdvisoryLockAlreadyAcquired when another process holds it.
 func acquireIndexWorkerLock(ctx context.Context, db *pop.Connection, le *logrus.Entry) (*advisoryLock, error) {
-	sqldb, ok := storage.StdDB(db)
-	if !ok {
-		err := errors.New("no database handle to take the advisory lock on")
-		le.WithFields(logrus.Fields{"outcome": OutcomeFailure, "code": "advisory_lock_acquisition_failed"}).
-			WithError(err).Error("Failed to attempt advisory lock acquisition")
-		return nil, err
-	}
-	lock, acquired, err := tryAdvisoryLock(ctx, sqldb, indexWorkerLockName)
+	lock, acquired, err := tryIndexWorkerLock(ctx, db)
 	if err != nil {
 		le.WithFields(logrus.Fields{"outcome": OutcomeFailure, "code": "advisory_lock_acquisition_failed"}).
 			WithError(err).Error("Failed to attempt advisory lock acquisition")
@@ -329,14 +322,23 @@ func acquireIndexWorkerLock(ctx context.Context, db *pop.Connection, le *logrus.
 	return lock, nil
 }
 
+// tryIndexWorkerLock takes the lock on a connection of the pool under db.
+func tryIndexWorkerLock(ctx context.Context, db *pop.Connection) (*advisoryLock, bool, error) {
+	sqldb, ok := storage.StdDB(db)
+	if !ok {
+		return nil, false, errors.New("no database handle to take the advisory lock on")
+	}
+	return tryAdvisoryLock(ctx, sqldb, indexWorkerLockName)
+}
+
 // releaseIndexWorkerLock unlocks on the connection that took the lock.
 func releaseIndexWorkerLock(ctx context.Context, lock *advisoryLock, le *logrus.Entry) {
 	unlocked, err := lock.release(ctx)
 	switch {
 	case err != nil && ctx.Err() != nil:
-		le.Debug("Context cancelled, advisory lock will be released upon session termination")
+		le.Debug("Context cancelled; the lock's connection was closed, which released it")
 	case err != nil:
-		le.WithError(err).Error("Failed to release advisory lock")
+		le.WithError(err).Error("Failed to release advisory lock; its connection was closed, which released it")
 	case unlocked:
 		le.Debug("Successfully released advisory lock")
 	default:

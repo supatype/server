@@ -59,3 +59,32 @@ func TestAdvisoryLockHoldsOneConnectionUntilReleased(t *testing.T) {
 		t.Error("the lock was still held after release")
 	}
 }
+
+// When the unlock itself fails, the connection still holds the lock. Handed back to the pool
+// it would keep holding it for as long as the pool kept the connection, so it is closed
+// instead, which ends the session and the lock with it.
+func TestAFailedUnlockClosesTheConnectionThatHoldsTheLock(t *testing.T) {
+	dsn := os.Getenv("SUPATYPE_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set SUPATYPE_TEST_DSN to run the advisory lock test against Postgres")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	name := fmt.Sprintf("indexworker_test_%d", time.Now().UnixNano())
+	lock, acquired, err := tryAdvisoryLock(context.Background(), db, name)
+	if err != nil || !acquired {
+		t.Fatalf("want the lock, got acquired=%v err=%v", acquired, err)
+	}
+
+	// An unlock that errors and leaves the connection open, as a cancelled context does not.
+	lock.unlockSQL = "SELECT pg_advisory_unlock(hashtext($1)::bigint) / 0"
+	if _, err := lock.release(context.Background()); err == nil {
+		t.Fatal("want the unlock to fail")
+	}
+	if heldElsewhere(t, dsn, name) {
+		t.Error("the lock outlived a failed unlock: its connection went back to the pool")
+	}
+}

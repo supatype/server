@@ -26,15 +26,15 @@ var (
 
 var (
 	logFieldsMu sync.Mutex
-	logFields   logrus.Fields
+	logFields   map[string]string
 )
 
 // SetLogFields records the LOG_FIELDS every logger of this process should carry.
 // ConfigureLogging calls it; loggers made afterwards pick them up through AddLogFields.
-func SetLogFields(fields map[string]interface{}) {
+func SetLogFields(fields map[string]string) {
 	logFieldsMu.Lock()
 	defer logFieldsMu.Unlock()
-	logFields = logrus.Fields(fields)
+	logFields = fields
 }
 
 // AddLogFields adds the recorded LOG_FIELDS to a logger, for a logger built apart from the
@@ -121,7 +121,7 @@ func setLogLevel(configured string) error {
 // fieldsHook adds the configured LOG_FIELDS to every line, without overwriting a field the
 // line already carries.
 type fieldsHook struct {
-	fields logrus.Fields
+	fields map[string]string
 }
 
 func (h *fieldsHook) Levels() []logrus.Level { return logrus.AllLevels }

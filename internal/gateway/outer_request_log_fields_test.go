@@ -10,7 +10,7 @@ import (
 
 // The access logger is its own logrus instance, so LOG_FIELDS reach it only if it asks.
 func TestOuterAccessLoggerCarriesTheConfiguredFields(t *testing.T) {
-	observability.SetLogFields(map[string]interface{}{"service": "auth"})
+	observability.SetLogFields(map[string]string{"service": "auth"})
 	t.Cleanup(func() { observability.SetLogFields(nil) })
 	var buf bytes.Buffer
 	configureOuterAccessLoggingWriter(&buf, "info")

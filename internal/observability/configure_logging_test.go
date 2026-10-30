@@ -61,7 +61,7 @@ func TestConfigureLoggingAddsTheConfiguredFieldsToEveryLine(t *testing.T) {
 	out := freshLogging(t)
 	configureLibraryLoggers = func(string) {}
 
-	err := ConfigureLogging(&conf.LoggingConfig{Fields: map[string]interface{}{"service": "auth"}})
+	err := ConfigureLogging(&conf.LoggingConfig{Fields: map[string]string{"service": "auth"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestConfigureLoggingAddsTheFieldsBeforeItsOwnFirstLine(t *testing.T) {
 	t.Cleanup(func() { SetLogFields(nil) })
 	path := t.TempDir() + "/auth.log"
 
-	err := ConfigureLogging(&conf.LoggingConfig{File: path, Fields: map[string]interface{}{"service": "auth"}})
+	err := ConfigureLogging(&conf.LoggingConfig{File: path, Fields: map[string]string{"service": "auth"}})
 	if err != nil {
 		t.Fatal(err)
 	}

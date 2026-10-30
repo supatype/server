@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/XSAM/otelsql"
@@ -113,28 +113,30 @@ func applyDBDriver(
 	config *conf.GlobalConfiguration,
 	cd *pop.ConnectionDetails,
 ) error {
-	if config.DB.Driver == "" && config.DB.URL != "" {
-		u, err := url.Parse(config.DB.URL)
-		if err != nil {
-			return databaseURLError(err)
-		}
-		config.DB.Driver = u.Scheme
-	}
-
-	if config.DB.Driver != "postgres" {
+	if cd.Dialect != "postgres" {
 		logrus.Warn("DEPRECATION NOTICE: only PostgreSQL is supported, this option will be removed")
 	}
-
-	// cd.Driver is pgx setting the auth search_path on every connection (see searchPathDriver).
+	// cd.Driver is pgx setting the auth search_path on every connection (see searchPathDriverName).
 	if config.Tracing.Enabled || config.Metrics.Enabled {
 		cd.Driver = instrumentForOpenTelemetry(cd.Driver)
 	}
 	return nil
 }
 
+var (
+	instrumentedMu      sync.Mutex
+	instrumentedDrivers = map[string]string{}
+)
+
 // instrumentForOpenTelemetry wraps the driver for tracing and metrics, or keeps it as it is
-// when that fails.
+// when that fails. Each driver is wrapped once: DialWithRetry dials again until the database
+// answers, and registering on every dial would add a driver name per attempt.
 func instrumentForOpenTelemetry(driver string) string {
+	instrumentedMu.Lock()
+	defer instrumentedMu.Unlock()
+	if name, ok := instrumentedDrivers[driver]; ok {
+		return name
+	}
 	instrumentedDriver, err := otelsql.Register(driver)
 	if err != nil {
 		logrus.WithError(err).Errorf("unable to instrument sql driver %q for use with OpenTelemetry", driver)
@@ -144,6 +146,7 @@ func instrumentForOpenTelemetry(driver string) string {
 	// sqlx needs to be informed that the new instrumented driver has the same semantics as
 	// the non-instrumented driver
 	sqlx.BindDriver(instrumentedDriver, sqlx.BindType(driver))
+	instrumentedDrivers[driver] = instrumentedDriver
 	return instrumentedDriver
 }
 

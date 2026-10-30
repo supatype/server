@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gobuffalo/pop/v6"
@@ -16,67 +18,75 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// searchPathDriver is the database/sql driver every auth connection opens with: pgx, plus a
-// SET search_path on each new connection. The URL still carries search_path as a startup
-// parameter, but a session-mode pooler can drop startup parameters (PgBouncer
-// ignore_startup_parameters), and then nothing but the database's own default would decide
-// where unqualified names go. The SET does not depend on that.
-const searchPathDriver = "pgx-auth-search-path"
+// searchPathDriverPrefix names the database/sql drivers auth connections open with: pgx, plus
+// a set of the auth namespace as search_path on each new connection. A Postgres URL still
+// carries search_path as a startup parameter too, but a session-mode pooler can drop startup
+// parameters (PgBouncer ignore_startup_parameters), and a keyword/value DSN has none; then
+// nothing but the database's own default would decide where unqualified names go. The set on
+// connect does not depend on either. The namespace is part of the driver, not read back from
+// the DSN, so a DSN of any shape gets it.
+const searchPathDriverPrefix = "pgx-auth-search-path-"
 
-func init() {
-	sql.Register(searchPathDriver, searchPathPgxDriver{})
-	// sqlx picks the placeholder style by driver name; this one speaks Postgres.
-	sqlx.BindDriver(searchPathDriver, sqlx.DOLLAR)
+var (
+	searchPathDriversMu sync.Mutex
+	searchPathDrivers   = map[string]bool{}
+)
+
+// searchPathDriverName is the driver that sets ns on every connection, registered on first use.
+func searchPathDriverName(ns string) string {
+	name := searchPathDriverPrefix + ns
+	searchPathDriversMu.Lock()
+	defer searchPathDriversMu.Unlock()
+	if !searchPathDrivers[name] {
+		sql.Register(name, searchPathPgxDriver{namespace: ns})
+		// sqlx picks the placeholder style by driver name; this one speaks Postgres.
+		sqlx.BindDriver(name, sqlx.DOLLAR)
+		searchPathDrivers[name] = true
+	}
+	return name
 }
 
-type searchPathPgxDriver struct{}
+type searchPathPgxDriver struct {
+	namespace string
+}
 
-func (searchPathPgxDriver) Open(dsn string) (driver.Conn, error) {
-	connector, err := searchPathConnector(dsn)
+func (d searchPathPgxDriver) Open(dsn string) (driver.Conn, error) {
+	connector, err := d.OpenConnector(dsn)
 	if err != nil {
 		return nil, err
 	}
 	return connector.Connect(context.Background())
 }
 
-func (searchPathPgxDriver) OpenConnector(dsn string) (driver.Connector, error) {
-	return searchPathConnector(dsn)
-}
-
-// dropStartupSearchPath stands in for a pooler that drops startup parameters, for tests.
-var dropStartupSearchPath = false
-
-// searchPathConnector parses the DSN as pgx does and, when it names a search_path, sets that
-// path on every connection once it is open.
-func searchPathConnector(dsn string) (driver.Connector, error) {
+func (d searchPathPgxDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
-	path := cfg.RuntimeParams["search_path"]
-	if dropStartupSearchPath {
-		delete(cfg.RuntimeParams, "search_path")
-	}
-	if path != "" {
-		// set_config stores the value as given, as the startup parameter does, so SHOW reads
-		// back exactly what the URL sent either way.
-		value := [][]byte{[]byte(path)}
-		cfg.AfterConnect = func(ctx context.Context, conn *pgconn.PgConn) error {
-			result := conn.ExecParams(ctx, "SELECT pg_catalog.set_config('search_path', $1, false)", value, nil, nil, nil)
-			return result.Read().Err
-		}
-	}
-	return searchPathConnectorOf{stdlib.GetConnector(*cfg)}, nil
+	return searchPathConnector{Connector: stdlib.GetConnector(*withSearchPathOnConnect(cfg, d.namespace)), d: d}, nil
 }
 
-// searchPathConnectorOf is pgx's connector reporting this driver as its own. database/sql hands
+// withSearchPathOnConnect sets ns as search_path once each connection is open. set_config
+// stores the value as given, as the startup parameter does, so SHOW reads back exactly the
+// namespace either way.
+func withSearchPathOnConnect(cfg *pgx.ConnConfig, ns string) *pgx.ConnConfig {
+	value := [][]byte{[]byte(ns)}
+	cfg.AfterConnect = func(ctx context.Context, conn *pgconn.PgConn) error {
+		result := conn.ExecParams(ctx, "SELECT pg_catalog.set_config('search_path', $1, false)", value, nil, nil, nil)
+		return result.Read().Err
+	}
+	return cfg
+}
+
+// searchPathConnector is pgx's connector reporting this driver as its own. database/sql hands
 // out connector.Driver() as the DB's driver, and OpenTelemetry wraps whatever that is: pgx's
 // own would bypass the search_path set on connect.
-type searchPathConnectorOf struct {
+type searchPathConnector struct {
 	driver.Connector
+	d searchPathPgxDriver
 }
 
-func (searchPathConnectorOf) Driver() driver.Driver { return searchPathPgxDriver{} }
+func (c searchPathConnector) Driver() driver.Driver { return c.d }
 
 // ConnectionSettings is everything one auth connection pool is built from. Namespace is the
 // configured one, already trimmed and validated at load.
@@ -84,7 +94,7 @@ type ConnectionSettings struct {
 	URL             string
 	Dialect         string // the configured driver; the URL's scheme when empty
 	Namespace       string
-	ApplicationName string // left as the URL has it when empty
+	ApplicationName string // set only on a Postgres URL; left as the DSN has it when empty
 	Pool            int
 	IdlePool        int
 	ConnMaxLifetime time.Duration
@@ -92,32 +102,57 @@ type ConnectionSettings struct {
 }
 
 // BuildConnectionDetails is the one place an auth connection's details are made, for serving,
-// migrating and the index worker alike. The namespace goes into the URL as search_path and is
-// set again on every connection by searchPathDriver. A URL that cannot carry it is an error,
-// never silently used without it.
+// migrating and the index worker alike.
+//
+// A Postgres URL (postgres:// or postgresql://) gets the namespace as its search_path startup
+// parameter, and the application name; one that does not parse is an error. Any other DSN,
+// such as keyword/value (`host=db user=auth`) or another scheme, is passed on exactly as
+// written. Either way a Postgres connection opens on the auth driver, which sets the namespace
+// on every connection, so no DSN shape goes without it.
 func BuildConnectionDetails(s ConnectionSettings) (*pop.ConnectionDetails, error) {
+	dsn, scheme, err := dsnForNamespace(s)
+	if err != nil {
+		return nil, err
+	}
+	dialect := s.Dialect
+	if dialect == "" {
+		dialect = scheme
+	}
+	cd := &pop.ConnectionDetails{
+		Dialect: dialect, URL: dsn,
+		Pool: s.Pool, IdlePool: s.IdlePool, ConnMaxLifetime: s.ConnMaxLifetime, ConnMaxIdleTime: s.ConnMaxIdleTime,
+		Options: map[string]string{"migration_table_name": "schema_migrations", "Namespace": s.Namespace},
+	}
+	if pop.CanonicalDialect(dialect) == "postgres" {
+		cd.Driver = searchPathDriverName(s.Namespace)
+	}
+	return cd, nil
+}
+
+// dsnForNamespace adds search_path and application_name to a Postgres URL, returning it with
+// its scheme. Anything else is returned as written, with the scheme it names, if any.
+func dsnForNamespace(s ConnectionSettings) (dsn, scheme string, err error) {
+	if !strings.HasPrefix(s.URL, "postgres://") && !strings.HasPrefix(s.URL, "postgresql://") {
+		scheme, _, _ = strings.Cut(s.URL, "://")
+		if scheme == s.URL {
+			scheme = ""
+		}
+		return s.URL, scheme, nil
+	}
 	withPath, err := EnsurePostgresSearchPathInURL(s.URL, s.Namespace)
 	if err != nil {
-		return nil, databaseURLError(err)
+		return "", "", databaseURLError(err)
 	}
 	u, err := url.Parse(withPath)
 	if err != nil {
-		return nil, databaseURLError(err)
+		return "", "", databaseURLError(err)
 	}
 	if s.ApplicationName != "" {
 		q := u.Query()
 		q.Set("application_name", s.ApplicationName)
 		u.RawQuery = q.Encode()
 	}
-	dialect := s.Dialect
-	if dialect == "" {
-		dialect = u.Scheme
-	}
-	return &pop.ConnectionDetails{
-		Dialect: dialect, Driver: searchPathDriver, URL: u.String(),
-		Pool: s.Pool, IdlePool: s.IdlePool, ConnMaxLifetime: s.ConnMaxLifetime, ConnMaxIdleTime: s.ConnMaxIdleTime,
-		Options: map[string]string{"migration_table_name": "schema_migrations", "Namespace": s.Namespace},
-	}, nil
+	return u.String(), u.Scheme, nil
 }
 
 // databaseURLError reports a database URL that does not parse without quoting it. Go's parse

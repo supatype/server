@@ -2,15 +2,20 @@ package storage
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gobuffalo/pop/v6"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
@@ -138,48 +143,73 @@ func TestMigrationConnectionStartsInTheNamespace(t *testing.T) {
 	}
 }
 
-// A session-mode pooler that drops startup parameters (PgBouncer's ignore_startup_parameters)
-// must not change where auth's names resolve: the driver sets the path again on every new
-// connection, for migrating and serving alike, and the migrate check then passes.
-func TestADroppedStartupSearchPathIsSetOnConnect(t *testing.T) {
-	dropStartupSearchPath = true
-	t.Cleanup(func() { dropStartupSearchPath = false })
-	dsn := scratchDatabase(t)
-	seedDefault(t, dsn, "public")
+// strippingPooler opens connections as the auth driver does, but drops the search_path startup
+// parameter on the way, as a pooler with ignore_startup_parameters does.
+type strippingPooler struct{ searchPathPgxDriver }
 
-	migrating := migrationConn(t, dsn, "auth")
-	if err := SettleMigrationSearchPath(migrating, "auth"); err != nil {
-		t.Errorf("migrate refused a connection the driver had set: %v", err)
+func (d strippingPooler) Open(dsn string) (driver.Conn, error) {
+	connector, err := d.OpenConnector(dsn)
+	if err != nil {
+		return nil, err
 	}
-	conns := map[string]*pop.Connection{
-		"migrate": migrating,
-		"serve":   servingConn(t, dsn),
-	}
-	for name, db := range conns {
-		var path string
-		if err := db.RawQuery("SHOW search_path").First(&path); err != nil {
-			t.Fatal(err)
-		}
-		if path != "auth" {
-			t.Errorf("%s connection search_path = %q, want auth without the startup parameter", name, path)
-		}
-	}
+	return connector.Connect(context.Background())
 }
 
-// servingConn dials the way the server does.
-func servingConn(t *testing.T, dsn string) *pop.Connection {
-	t.Helper()
-	cfg := &conf.GlobalConfiguration{DB: conf.DBConfiguration{URL: dsn, Driver: "postgres", Namespace: "auth"}}
-	serving, err := DialContext(context.Background(), cfg)
+func (d strippingPooler) OpenConnector(dsn string) (driver.Connector, error) {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	delete(cfg.RuntimeParams, "search_path")
+	return stdlib.GetConnector(*withSearchPathOnConnect(cfg, d.namespace)), nil
+}
+
+var registerStrippingPooler sync.Once
+
+const strippingPoolerDriver = "test-stripping-pooler"
+
+// A session-mode pooler that drops startup parameters (PgBouncer's ignore_startup_parameters)
+// must not change where auth's names resolve: the driver sets the path again on every new
+// connection, and the migrate check then passes.
+func TestADroppedStartupSearchPathIsSetOnConnect(t *testing.T) {
+	registerStrippingPooler.Do(func() {
+		sql.Register(strippingPoolerDriver, strippingPooler{searchPathPgxDriver{namespace: "auth"}})
+		sqlx.BindDriver(strippingPoolerDriver, sqlx.DOLLAR)
+	})
+	dsn := scratchDatabase(t)
+	seedDefault(t, dsn, "public")
+	deets, err := MigrationConnectionDetails(dsn, "", "auth", "auth_migrations")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = serving.Close() })
-	return serving.Connection
+	deets.Driver = strippingPoolerDriver
+	migrating := openConn(t, deets)
+	if err := SettleMigrationSearchPath(migrating, "auth"); err != nil {
+		t.Errorf("migrate refused a connection the driver had set: %v", err)
+	}
+	var path string
+	if err := migrating.RawQuery("SHOW search_path").First(&path); err != nil {
+		t.Fatal(err)
+	}
+	if path != "auth" {
+		t.Errorf("search_path = %q, want auth without the startup parameter", path)
+	}
 }
 
-// strippedConn is a migrate connection on which neither the startup parameter nor the SET on
-// connect set the path: its URL names none, as if both were lost on the way.
+// Serving opens on the same driver, so it gets the same set on connect.
+func TestServingOpensOnTheAuthDriver(t *testing.T) {
+	cfg := &conf.GlobalConfiguration{DB: conf.DBConfiguration{URL: "postgres://u:p@h/db", Driver: "postgres", Namespace: "auth"}}
+	cd, err := newConnectionDetails(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cd.Driver != searchPathDriverName("auth") {
+		t.Errorf("serve driver = %q, want %q", cd.Driver, searchPathDriverName("auth"))
+	}
+}
+
+// strippedConn is a migrate connection on which neither the startup parameter nor the set on
+// connect took: plain pgx, with no search_path in its URL, as if both were lost on the way.
 func strippedConn(t *testing.T, dsn string) *pop.Connection {
 	t.Helper()
 	deets, err := MigrationConnectionDetails(dsn, "", "auth", "auth_migrations")
@@ -191,6 +221,7 @@ func strippedConn(t *testing.T, dsn string) *pop.Connection {
 		q.Del("search_path")
 		u.RawQuery = q.Encode()
 	})
+	deets.Driver = "pgx"
 	return openConn(t, deets)
 }
 
@@ -278,5 +309,28 @@ func TestResetWarnsAndCarriesOnForANonOwner(t *testing.T) {
 	}
 	if got := databaseDefault(t, dsn); got == "" {
 		t.Error("a non-owner reset the database default; the test proves nothing")
+	}
+}
+
+// A keyword/value DSN carries no search_path startup parameter; the set on connect alone puts
+// the connection in the namespace.
+func TestAKeywordDSNConnectionStartsInTheNamespace(t *testing.T) {
+	u, err := url.Parse(scratchDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw, _ := u.User.Password()
+	keyword := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		u.Hostname(), u.Port(), u.User.Username(), pw, strings.TrimPrefix(u.Path, "/"))
+	deets, err := MigrationConnectionDetails(keyword, "postgres", "auth", "auth_migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var path string
+	if err := openConn(t, deets).RawQuery("SHOW search_path").First(&path); err != nil {
+		t.Fatal(err)
+	}
+	if path != "auth" {
+		t.Errorf("keyword DSN connection search_path = %q, want auth", path)
 	}
 }

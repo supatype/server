@@ -222,14 +222,11 @@ func formatUUID(b []byte, version byte) string {
 // Requires a valid JWT. Stores the request body as a file on disk.
 // Header x-upsert: true allows overwriting existing objects.
 func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
-	bucket, objPath, ok := objectRoute(w, r)
+	b, objPath, ok := s.knownObjectRoute(w, r)
 	if !ok {
 		return
 	}
-	b, ok := s.resolveBucket(w, bucket)
-	if !ok {
-		return
-	}
+	bucket := b.ID
 	loc, err := s.locate(bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -311,14 +308,11 @@ func stampedMeta(m ObjectMeta) *ObjectMeta {
 // downloadPublic: GET /object/public/{bucket}/*
 // No auth required. The bucket's access mode must be public.
 func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
-	bucket, objPath, ok := objectRoute(w, r)
+	b, objPath, ok := s.knownObjectRoute(w, r)
 	if !ok {
 		return
 	}
-	b, ok := s.resolveBucket(w, bucket)
-	if !ok {
-		return
-	}
+	bucket := b.ID
 	if !b.servesAnonymously() {
 		writeError(w, http.StatusForbidden, "bucket is not public")
 		return
@@ -329,8 +323,8 @@ func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
 // downloadAuthenticated: GET /object/authenticated/{bucket}/*
 // Requires a valid JWT.
 func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
-	if bucket, objPath, ok := objectRoute(w, r); ok {
-		s.serveFile(w, r, bucket, objPath)
+	if b, objPath, ok := s.knownObjectRoute(w, r); ok {
+		s.serveFile(w, r, b.ID, objPath)
 	}
 }
 
@@ -445,7 +439,7 @@ func applyObjectMeta(w http.ResponseWriter, root *os.Root, metaRel string) {
 // Answers each removed object's name and bucket, as the storage service does.
 // An object with no sidecar is removed and reported like any other.
 func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
-	bucket, ok := routeParam(w, r, "bucket")
+	bucket, ok := s.knownBucketRoute(w, r)
 	if !ok {
 		return
 	}
@@ -520,7 +514,7 @@ type listRequest struct {
 // the files, each named relative to the folder. X-Total-Count is how many matched the search
 // before the page was cut.
 func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
-	bucket, ok := routeParam(w, r, "bucket")
+	bucket, ok := s.knownBucketRoute(w, r)
 	if !ok {
 		return
 	}
@@ -739,10 +733,11 @@ func (s *store) verifyToken(token string) (*signedPayload, bool) {
 // Requires a valid JWT. Body: { expiresIn: number (seconds) }
 // Returns: { signedURL: string }
 func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
-	bucket, objPath, ok := objectRoute(w, r)
+	b, objPath, ok := s.knownObjectRoute(w, r)
 	if !ok {
 		return
 	}
+	bucket := b.ID
 
 	expiresIn, err := signingExpiry(r)
 	if err != nil {
@@ -822,5 +817,7 @@ func (s *store) serveSignedURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid or expired token")
 		return
 	}
-	s.serveFile(w, r, p.B, p.P)
+	if _, ok := s.registeredBucket(w, p.B); ok {
+		s.serveFile(w, r, p.B, p.P)
+	}
 }

@@ -27,8 +27,8 @@ import (
 // Handler returns an http.Handler serving the object storage API, backed by
 // local disk at storageRoot.
 //
-// jwtSecret is the HS256 secret used to validate Bearer tokens — the same
-// value as SUPATYPE_JWT_SECRET set by the CLI (local dev JWT secret).
+// jwtSecret is the HS256 secret used to validate Bearer tokens. It is the
+// value of SUPATYPE_JWT_SECRET that the CLI sets (the local dev JWT secret).
 //
 // The handler is designed to be mounted with http.StripPrefix("/storage/v1")
 // so all routes below are relative to that prefix.
@@ -39,7 +39,7 @@ func Handler(storageRoot, jwtSecret string) http.Handler {
 		mu:        &sync.RWMutex{},
 	}
 
-	metaDir := filepath.Join(storageRoot, ".supatype")
+	metaDir := filepath.Join(storageRoot, storeMetaDir)
 	if err := mkdirAll(metaDir, 0o700); err != nil {
 		logrus.WithError(err).Warn("objstore: failed to create metadata directory")
 	}

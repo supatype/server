@@ -70,7 +70,7 @@ func (b *Bucket) mode() string {
 
 // bucketsPath returns the path to the bucket metadata JSON file.
 func (s *store) bucketsPath() string {
-	return filepath.Join(s.root, ".supatype", "buckets.json")
+	return filepath.Join(s.root, storeMetaDir, "buckets.json")
 }
 
 func (s *store) loadBuckets() ([]Bucket, error) {
@@ -135,6 +135,42 @@ func (s *store) resolveBucket(w http.ResponseWriter, id string) (*Bucket, bool) 
 		return nil, false
 	}
 	return bucket, true
+}
+
+// knownObjectRoute is the bucket and object path of an object route, when the
+// registry holds the bucket, answering the request itself otherwise. Every
+// object route goes through here or knownBucketRoute before it touches the
+// disk, so a directory under the storage root that is not a registered
+// bucket, such as the store's own .supatype, is never read or changed.
+func (s *store) knownObjectRoute(w http.ResponseWriter, r *http.Request) (*Bucket, string, bool) {
+	bucket, objPath, ok := objectRoute(w, r)
+	if !ok {
+		return nil, "", false
+	}
+	b, ok := s.registeredBucket(w, bucket)
+	return b, objPath, ok
+}
+
+// knownBucketRoute is the bucket id of a route naming only a bucket, when the
+// registry holds the bucket, answering the request itself otherwise.
+func (s *store) knownBucketRoute(w http.ResponseWriter, r *http.Request) (string, bool) {
+	bucket, ok := routeParam(w, r, "bucket")
+	if !ok {
+		return "", false
+	}
+	_, ok = s.registeredBucket(w, bucket)
+	return bucket, ok
+}
+
+// registeredBucket is the registry's bucket named id, answering the request itself
+// when id could not name a bucket at all, which is the caller's mistake, or
+// names none the registry holds.
+func (s *store) registeredBucket(w http.ResponseWriter, id string) (*Bucket, bool) {
+	if _, err := cleanBucketID(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return s.resolveBucket(w, id)
 }
 
 // ─── Request bodies ───────────────────────────────────────────────────────────
@@ -283,13 +319,27 @@ func (s *store) listBuckets(w http.ResponseWriter, _ *http.Request) {
 	utilities.WriteJSON(w, http.StatusOK, buckets)
 }
 
+// newBucketBody reads a create body, answering the request itself when it is
+// refused: a bucket can never be the store's own directory, under any name
+// this file system takes for it.
+func (s *store) newBucketBody(w http.ResponseWriter, r *http.Request) (bucketCreate, bool) {
+	body, err := decodeBucketCreate(r.Body)
+	if err == nil && s.isStoreMetaDir(hostRules, body.ID) {
+		err = errInvalidBucketID
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return bucketCreate{}, false
+	}
+	return body, true
+}
+
 // createBucket: POST /bucket
 // Body: { id?, name, public?, file_size_limit?, allowed_mime_types?,
 // access_mode?, s3_bucket_policy? }
 func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
-	body, err := decodeBucketCreate(r.Body)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	body, ok := s.newBucketBody(w, r)
+	if !ok {
 		return
 	}
 
@@ -307,9 +357,7 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucket := body.bucket(time.Now().UTC().Format(time.RFC3339))
-	buckets = append(buckets, bucket)
-
-	if err := s.saveBuckets(buckets); err != nil {
+	if err := s.saveBuckets(append(buckets, bucket)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save bucket")
 		return
 	}

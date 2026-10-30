@@ -14,10 +14,13 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// errInvalidBucketID refuses a bucket id that cannot be a bucket.
+var errInvalidBucketID = errors.New("invalid bucket id")
+
 func cleanBucketID(bucket string) (string, error) {
 	bucket = strings.TrimSpace(bucket)
 	if bucket == "" || strings.ContainsAny(bucket, `/\`) || !filepath.IsLocal(bucket) {
-		return "", fmt.Errorf("invalid bucket id")
+		return "", errInvalidBucketID
 	}
 	return bucket, nil
 }
@@ -78,16 +81,30 @@ func (s *store) reachesSidecarTree(r nameRules, bucket, rel string) bool {
 	if r.inSidecarTree(rel) {
 		return true
 	}
-	if !r.windows {
-		return false
-	}
-	dir := filepath.Join(s.root, bucket)
-	alias, err := os.Stat(filepath.Join(dir, firstSegment(rel)))
+	return r.windows && s.sameDir(filepath.Join(bucket, firstSegment(rel)), filepath.Join(bucket, sidecarDir))
+}
+
+// storeMetaDir is the directory under the storage root that holds the
+// store's own bookkeeping, such as buckets.json. It is never a bucket.
+const storeMetaDir = ".supatype"
+
+// isStoreMetaDir reports whether id, a bucket id, would be the store's own
+// directory under r: by name, or, under Windows rules, by any other name the
+// disk resolves to it, such as its 8.3 short name SUPATY~1 or a spelling
+// with a trailing dot, which Windows drops.
+func (s *store) isStoreMetaDir(r nameRules, id string) bool {
+	return r.sameName(id, storeMetaDir) || (r.windows && s.sameDir(id, storeMetaDir))
+}
+
+// sameDir reports whether a and b, relative to the storage root, are both
+// there and are the same directory, however each is spelled.
+func (s *store) sameDir(a, b string) bool {
+	aInfo, err := os.Stat(filepath.Join(s.root, a))
 	if err != nil {
 		return false
 	}
-	sidecars, err := os.Stat(filepath.Join(dir, sidecarDir))
-	return err == nil && os.SameFile(alias, sidecars)
+	bInfo, err := os.Stat(filepath.Join(s.root, b))
+	return err == nil && os.SameFile(aInfo, bInfo)
 }
 
 // errInvalidObjectPath refuses an object name that cannot be stored.
@@ -146,6 +163,13 @@ func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 //   - under Windows rules, where a part ends in a dot or space: Windows
 //     dropped it, so the old file of "notes." is "notes", which may as well
 //     be the object "notes" itself.
+//
+// So a name Windows once split at a backslash no longer answers under that
+// name, by decision: its file is exactly where the split name is stored now,
+// and a file with no sidecar carries nothing to say which object it was. It
+// answers to the split name,
+// which is also the name it is listed as. Names starting with the marker
+// that were stored as written are still found.
 func (r nameRules) legacyRel(objPath string) (string, bool) {
 	name := strings.TrimPrefix(objPath, "/")
 	rel := filepath.FromSlash(name)

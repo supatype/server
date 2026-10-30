@@ -966,6 +966,7 @@ func TestAnObjectWithNoSidecarGetsAStableID(t *testing.T) {
 
 func TestListObjectsRefusals(t *testing.T) {
 	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
 
 	for name, tc := range map[string]struct {
 		path, body string

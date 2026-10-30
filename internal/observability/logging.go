@@ -94,7 +94,7 @@ func setLogFile(path string) error {
 	if path == "" {
 		return nil
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660) //#nosec G302 -- Log files should be rw-rw-r--
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660) // #nosec G302,G304 -- the operator's own LOG_FILE, and log files should be rw-rw-r--
 	if err != nil {
 		return err
 	}

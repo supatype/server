@@ -347,7 +347,7 @@ func (r nameRules) storableAsIs(segment string) bool {
 
 // refusedRune is refusedByte for a character of a name.
 func refusedRune(c rune) bool {
-	return c < utf8.RuneSelf && refusedByte(byte(c))
+	return c < utf8.RuneSelf && refusedByte(byte(c)) // #nosec G115 -- c < utf8.RuneSelf, so it fits a byte
 }
 
 // upperHex is the digits a percent-encoded byte is written with.

@@ -230,6 +230,7 @@ func TestNoObjectRouteReachesASidecar(t *testing.T) {
 	}
 	body := `{"prefixes":["photos/../.meta/photos/a.txt.json"]}`
 	do(t, handler, http.MethodDelete, "/object/avatars", userToken(t), strings.NewReader(body))
+	// #nosec G304 -- this test's own temp dir
 	if data, err := os.ReadFile(sidecar); err != nil || !strings.Contains(string(data), `"name": "photos/a.txt"`) {
 		t.Errorf("sidecar after the attempts: %v %q", err, data)
 	}

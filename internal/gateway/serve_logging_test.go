@@ -17,6 +17,7 @@ func TestServeConfiguresLoggingFromTheAuthConfig(t *testing.T) {
 		serveLoggingChild(t)
 		return
 	}
+	// #nosec G204,G702 -- the command is this test binary itself, re-executed, with constant arguments.
 	cmd := exec.Command(os.Args[0], "-test.run=^TestServeConfiguresLoggingFromTheAuthConfig$", "-test.count=1")
 	cmd.Env = append(os.Environ(), "N15_SERVE_LOGGING_CHILD=1")
 	out, err := cmd.CombinedOutput()

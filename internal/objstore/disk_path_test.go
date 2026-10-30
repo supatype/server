@@ -17,6 +17,7 @@ func TestDiskPathLeavesAPlainPathAlone(t *testing.T) {
 		if got != objPath {
 			t.Fatalf("diskPath(%q) = %q", objPath, got)
 		}
+		// #nosec G103 -- only compares where two strings' bytes live, to prove no copy was made.
 		if objPath != "" && unsafe.StringData(got) != unsafe.StringData(objPath) {
 			t.Errorf("diskPath(%q) built a copy of a path it did not change", objPath)
 		}

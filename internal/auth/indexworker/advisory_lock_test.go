@@ -3,6 +3,7 @@ package indexworker
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -81,8 +82,13 @@ func TestAFailedUnlockClosesTheConnectionThatHoldsTheLock(t *testing.T) {
 
 	// An unlock that errors and leaves the connection open, as a cancelled context does not.
 	lock.unlockSQL = "SELECT pg_advisory_unlock(hashtext($1)::bigint) / 0"
-	if _, err := lock.release(context.Background()); err == nil {
+	_, err = lock.release(context.Background())
+	if err == nil {
 		t.Fatal("want the unlock to fail")
+	}
+	// The error is the unlock's alone: closing a connection already closed for it adds nothing.
+	if errors.Is(err, sql.ErrConnDone) {
+		t.Errorf("release error carries a spurious close error: %v", err)
 	}
 	if heldElsewhere(t, dsn, name) {
 		t.Error("the lock outlived a failed unlock: its connection went back to the pool")

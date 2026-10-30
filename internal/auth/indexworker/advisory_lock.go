@@ -40,8 +40,10 @@ func (l *advisoryLock) release(ctx context.Context) (bool, error) {
 	var unlocked bool
 	err := l.conn.QueryRowContext(ctx, l.unlockSQL, l.name).Scan(&unlocked)
 	if err != nil {
-		// ErrBadConn from Raw makes database/sql close the driver connection, not reuse it.
+		// ErrBadConn from Raw makes database/sql close the driver connection, not reuse it. That
+		// also releases the Conn, so there is nothing left to Close.
 		_ = l.conn.Raw(func(any) error { return driver.ErrBadConn })
+		return unlocked, err
 	}
-	return unlocked, errors.Join(err, l.conn.Close())
+	return unlocked, l.conn.Close()
 }

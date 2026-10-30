@@ -94,7 +94,7 @@ func TestConfigureLoggingAddsTheFieldsBeforeItsOwnFirstLine(t *testing.T) {
 		_ = f.Close()
 	}
 	logrus.SetOutput(io.Discard)
-	written, err := os.ReadFile(path)
+	written, err := os.ReadFile(path) // #nosec G304 -- this test's own temp dir
 	if err != nil {
 		t.Fatal(err)
 	}

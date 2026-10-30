@@ -27,10 +27,11 @@ type CacheOpts struct {
 	Prefixes     map[string]string
 }
 
-const (
-	defaultHTMLCache   = "no-cache"
-	defaultHashedCache = "public, max-age=31536000, immutable"
-)
+const defaultHTMLCache = "no-cache"
+
+// DefaultHashedCache is the Cache-Control for a file whose URL carries its content's
+// hash: its bytes never change, so a browser may keep it for a year unrevalidated.
+const DefaultHashedCache = "public, max-age=31536000, immutable"
 
 // Handler returns an http.Handler that serves static files from dir.
 //
@@ -277,7 +278,7 @@ func cacheControlForPath(path string, o CacheOpts) string {
 		if s := strings.TrimSpace(o.HashedAssets); s != "" {
 			return s
 		}
-		return defaultHashedCache
+		return DefaultHashedCache
 	}
 	if strings.HasSuffix(path, ".html") || path == "/" {
 		if s := strings.TrimSpace(o.HTML); s != "" {

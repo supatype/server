@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -121,6 +122,11 @@ func (s *store) loadObjectMeta(bucket, objPath string) (*ObjectMeta, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.loadMetaAt(metaRel)
+}
+
+// loadMetaAt reads the sidecar at metaRel, relative to the storage root.
+func (s *store) loadMetaAt(metaRel string) (*ObjectMeta, error) {
 	root, err := openRoot(s.root)
 	if err != nil {
 		return nil, err
@@ -150,6 +156,11 @@ func (s *store) saveObjectMeta(meta *ObjectMeta, bucket, objPath string) error {
 	if err != nil {
 		return err
 	}
+	return s.saveMetaAt(meta, metaRel)
+}
+
+// saveMetaAt writes meta to the sidecar at metaRel, relative to the storage root.
+func (s *store) saveMetaAt(meta *ObjectMeta, metaRel string) error {
 	if err := mkdirAll(filepath.Join(s.root, filepath.Dir(metaRel)), 0o700); err != nil { // #nosec G703 -- metaRel is built from validated bucket and object paths under storageRoot.
 		return err
 	}
@@ -309,7 +320,7 @@ func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
 // Public, authenticated and signed downloads all arrive here, so this is the
 // one place the stored-XSS header policy has to be applied.
 func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPath string) {
-	f, ok := s.openObject(w, bucket, objPath)
+	f, metaRel, ok := s.openObject(w, bucket, objPath)
 	if !ok {
 		return
 	}
@@ -322,46 +333,66 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 		writeError(w, http.StatusInternalServerError, "failed to stat file")
 		return
 	}
-	s.applyObjectMeta(w, bucket, objPath)
+	s.applyObjectMeta(w, metaRel)
 
 	// http.ServeContent handles Range, ETag, and Last-Modified negotiation. The
 	// wrapper hardens the headers once ServeContent has settled the type.
-	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, info.Name(), info.ModTime(), f)
+	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, path.Base(objPath), info.ModTime(), f)
 }
 
-// openObject opens a stored object for reading, answering the request itself
-// when it cannot.
-func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.File, bool) {
-	fileRel, err := s.objectFileRel(bucket, objPath)
+// openObject opens a stored object for reading and returns where its sidecar
+// is, answering the request itself when it cannot.
+func (s *store) openObject(w http.ResponseWriter, bucket, objPath string) (*os.File, string, bool) {
+	fileRel, metaRel, err := s.objectPaths(bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return nil, false
+		return nil, "", false
 	}
 	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
-		return nil, false
+		return nil, "", false
 	}
 	defer func() {
 		_ = root.Close()
 	}()
 
-	f, err := root.Open(fileRel)
+	fileRel, metaRel = storedAt(root, bucket, objPath, fileRel, metaRel)
+	f, err := openIn(root, fileRel)
 	if os.IsNotExist(err) {
 		writeError(w, http.StatusNotFound, "object not found")
-		return nil, false
+		return nil, "", false
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open file")
-		return nil, false
+		return nil, "", false
 	}
-	return f, true
+	return f, metaRel, true
 }
 
-// applyObjectMeta sets Content-Type from the saved metadata and records the
-// access time. Both are best effort: neither fails the download.
-func (s *store) applyObjectMeta(w http.ResponseWriter, bucket, objPath string) {
-	meta, err := s.loadObjectMeta(bucket, objPath)
+// storedAt is where an object that should already exist and its sidecar are:
+// fileRel and metaRel, where objectPaths stores it now, or, when no file is
+// there, where it was stored before names were encoded, if a file is there
+// instead. Only reads and removals look here; an upload always writes where
+// objectPaths says.
+func storedAt(root *os.Root, bucket, objPath, fileRel, metaRel string) (string, string) {
+	legacyFile, legacyMeta, ok := legacyPaths(bucket, objPath)
+	if !ok {
+		return fileRel, metaRel
+	}
+	if _, err := root.Stat(fileRel); !os.IsNotExist(err) {
+		return fileRel, metaRel
+	}
+	if info, err := root.Stat(legacyFile); err != nil || !info.Mode().IsRegular() {
+		return fileRel, metaRel
+	}
+	return legacyFile, legacyMeta
+}
+
+// applyObjectMeta sets Content-Type from the sidecar at metaRel and records
+// the access time. Both are best effort: neither fails the download.
+func (s *store) applyObjectMeta(w http.ResponseWriter, metaRel string) {
+	meta, err := s.loadMetaAt(metaRel)
 	if err != nil {
 		return
 	}
@@ -369,7 +400,7 @@ func (s *store) applyObjectMeta(w http.ResponseWriter, bucket, objPath string) {
 		w.Header().Set("Content-Type", meta.ContentType)
 	}
 	meta.LastAccessedAt = time.Now().UTC().Format(time.RFC3339)
-	_ = s.saveObjectMeta(meta, bucket, objPath)
+	_ = s.saveMetaAt(meta, metaRel)
 }
 
 // ─── Remove objects ───────────────────────────────────────────────────────────
@@ -383,16 +414,10 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	var body struct {
-		Prefixes []string `json:"prefixes"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	prefixes, ok := removePrefixes(w, r)
+	if !ok {
 		return
 	}
-
-	deleted := []removedItem{}
 	root, err := openRoot(s.root)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to open storage root")
@@ -402,18 +427,46 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 		_ = root.Close()
 	}()
 
-	for _, prefix := range body.Prefixes {
-		fileRel, metaRel, err := s.objectPaths(bucket, prefix)
+	deleted := []removedItem{}
+	for _, prefix := range prefixes {
+		removed, err := s.removeObject(root, bucket, prefix)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := root.Remove(fileRel); err == nil {
-			_ = root.Remove(metaRel)
+		if removed {
 			deleted = append(deleted, removedItem{Name: prefix, BucketID: bucket})
 		}
 	}
 	utilities.WriteJSON(w, http.StatusOK, deleted)
+}
+
+// removePrefixes is the object names a remove's body lists, answering the
+// request itself when the body cannot be read.
+func removePrefixes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
+	var body struct {
+		Prefixes []string `json:"prefixes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return nil, false
+	}
+	return body.Prefixes, true
+}
+
+// removeObject removes one object and its sidecar, reporting whether there
+// was an object to remove, or an error when the name is refused.
+func (s *store) removeObject(root *os.Root, bucket, objPath string) (bool, error) {
+	fileRel, metaRel, err := s.objectPaths(bucket, objPath)
+	if err != nil {
+		return false, err
+	}
+	fileRel, metaRel = storedAt(root, bucket, objPath, fileRel, metaRel)
+	removed := root.Remove(fileRel) == nil
+	if removed {
+		_ = root.Remove(metaRel)
+	}
+	return removed, nil
 }
 
 // ─── List objects ─────────────────────────────────────────────────────────────
@@ -454,24 +507,35 @@ func (s *store) listObjects(w http.ResponseWriter, r *http.Request) {
 }
 
 // listFolder is the directory a list prefix names and the folder's object path ("" for the
-// bucket root), with the slashes around the prefix stripped.
+// bucket root), with the slashes around the prefix stripped and the path cleaned, so the folder
+// is spelled one way however the prefix reached it: "a/.." is the bucket root, not a folder
+// beside it that would list the sidecar tree.
 func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error) {
 	bucketDir, err := s.bucketDir(bucket)
 	if err != nil {
 		return "", "", err
 	}
-	rel, err := cleanObjectPath(strings.Trim(prefix, "/"), true)
+	folder = strings.Trim(prefix, "/")
+	rel, err := cleanObjectPath(folder, true)
 	if err != nil {
 		return "", "", err
 	}
-	return filepath.Join(bucketDir, rel), filepath.ToSlash(rel), nil
+	if folder = path.Clean(folder); folder == "." {
+		folder = ""
+	}
+	return filepath.Join(bucketDir, rel), folder, nil
 }
 
 // folderChildren is the folder's direct children: an entry for each subfolder with an object
 // somewhere below it, then one for each file, each group in byte order by name. A folder that is
-// not there, or is a file, has none, and the sidecar tree is never listed.
+// not there, or is a file, has none, and the sidecar tree is never listed. Each child is named
+// by the object name its file name holds, which is also what the order is by.
+//
+// os.ReadDir returns entries in byte order by file name already, so the groups
+// are sorted again only when a stored name was decoded into a different one,
+// which can move it.
 func (s *store) folderChildren(bucket, dir, folder string) []listItem {
-	if folder == ".meta" || strings.HasPrefix(folder, ".meta/") {
+	if inSidecarTree(folder) {
 		return []listItem{}
 	}
 	entries, err := os.ReadDir(dir)
@@ -479,22 +543,45 @@ func (s *store) folderChildren(bucket, dir, folder string) []listItem {
 		return []listItem{}
 	}
 	var folders, files []listItem
+	decoded := false
 	for _, e := range entries {
-		switch {
-		case folder == "" && e.Name() == ".meta":
-			// The sidecar tree, not a folder of objects.
-		case e.IsDir():
-			if holdsAnObject(filepath.Join(dir, e.Name())) {
-				folders = append(folders, folderItem(bucket, e.Name()))
-			}
-		default:
-			// A file removed since the directory was read has no info and is no longer a child.
-			if info, err := e.Info(); err == nil {
-				files = append(files, s.fileItem(bucket, folder, info))
-			}
+		item, ok := s.childItem(bucket, dir, folder, e)
+		if !ok {
+			continue
 		}
+		if e.IsDir() {
+			folders = append(folders, item)
+		} else {
+			files = append(files, item)
+		}
+		decoded = decoded || item.Name != e.Name()
+	}
+	if decoded {
+		byName := func(a, b listItem) int { return strings.Compare(a.Name, b.Name) }
+		slices.SortFunc(folders, byName)
+		slices.SortFunc(files, byName)
 	}
 	return append(append(make([]listItem, 0, len(folders)+len(files)), folders...), files...)
+}
+
+// childItem is the list entry for one entry of a folder's directory, or false
+// when the entry is not a child: the sidecar tree, a subfolder with no object
+// anywhere below it, or a file removed since the directory was read.
+func (s *store) childItem(bucket, dir, folder string, e fs.DirEntry) (listItem, bool) {
+	switch {
+	case folder == "" && inSidecarTree(e.Name()):
+		return listItem{}, false
+	case e.IsDir():
+		if !holdsAnObject(filepath.Join(dir, e.Name())) {
+			return listItem{}, false
+		}
+		return folderItem(bucket, listedSegment(e.Name())), true
+	}
+	info, err := e.Info()
+	if err != nil {
+		return listItem{}, false
+	}
+	return s.fileItem(bucket, folder, info), true
 }
 
 // holdsAnObject reports whether a file lies anywhere below dir, so an empty tree is not a folder.
@@ -512,14 +599,15 @@ func holdsAnObject(dir string) bool {
 
 // fileItem is the list entry of a file directly in the folder, named by its own name.
 func (s *store) fileItem(bucket, folder string, info os.FileInfo) listItem {
-	objPath := path.Join(folder, info.Name())
+	name := listedSegment(info.Name())
+	objPath := path.Join(folder, name)
 	meta, err := s.loadObjectMeta(bucket, objPath)
 	if err != nil {
 		fallback := sidecarlessMeta(bucket, objPath, info)
 		meta = &fallback
 	}
 	item := metaToListItem(*meta)
-	item.Name = info.Name()
+	item.Name = name
 	return item
 }
 
@@ -642,11 +730,7 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 // keeping the slashes between them. Serving reads the path from the token, so
 // the router only has to decode it back to the same route.
 func escapeSegments(objPath string) string {
-	segments := strings.Split(objPath, "/")
-	for i, segment := range segments {
-		segments[i] = url.PathEscape(segment)
-	}
-	return strings.Join(segments, "/")
+	return mapSegments(objPath, url.PathEscape)
 }
 
 // defaultSignedURLSeconds is the life of a signed URL that names none.

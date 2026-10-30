@@ -3,7 +3,6 @@ package objstore
 import (
 	"encoding/json"
 	"net/http"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -23,9 +22,6 @@ var encodedNames = []struct{ name, escaped string }{
 func TestAnEncodedObjectNameIsStoredDecoded(t *testing.T) {
 	for _, tc := range encodedNames {
 		t.Run(tc.name, func(t *testing.T) {
-			if runtime.GOOS == "windows" && strings.Contains(tc.name, ":") {
-				t.Skip("a colon cannot be in a Windows file name, so the store refuses it there")
-			}
 			handler, _ := newStore(t)
 			makeBucket(t, handler, "files", true)
 

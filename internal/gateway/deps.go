@@ -16,6 +16,7 @@ import (
 	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/outerhealth"
+	"github.com/supatype/server/internal/pluginwidgets"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/sqlrunner"
@@ -72,6 +73,9 @@ type Deps struct {
 	Hooks func(http.Handler) http.Handler
 	// HookCallback serves previous(), or is nil when it could not be built.
 	HookCallback *modelhooks.Callback
+	// PluginWidgets is the project's plugin widget manifest, read by both the route
+	// that lists the widgets and the one that serves their bundles.
+	PluginWidgets *pluginwidgets.Store
 	// Baseline is the manifest with no request in hand, used by the mounts whose
 	// existence is decided once at startup rather than per tenant.
 	Baseline *proxy.RouteManifest
@@ -120,6 +124,7 @@ func NewDeps(
 		Cache:         resources.Cache(),
 		PlatformCache: resources.PlatformCache(),
 		CacheStats:    restcache.NewCounter(),
+		PluginWidgets: pluginwidgets.NewStore(cfg.PluginWidgetsDir, pluginWidgetTrust(cfg)),
 		Baseline:      manifestFor(nil),
 	}
 	d.Studio = newStudioConfig(cfg, resources)
@@ -233,6 +238,21 @@ func (d *Deps) EditorPool() (sqlrunner.Pool, error) {
 // multi-tenant pod resolves its tenant per request, and one shared api_config key would give every
 // tenant the last one's settings. Without a reachable keyspace there is nothing to write to, and a
 // store that errors on every read is worse than a file that merely forgets.
+// pluginWidgetTrust is which plugin widget bundles this server serves: those signed
+// with Supatype's release key, and also unsigned ones (plugins built from source) only
+// when SUPATYPE_MODE is set to dev, as native and Docker dev set it. Not when the mode
+// is left to its dev default: a production server started without a mode must not
+// serve unsigned code. A configured key that does not parse is logged and treated as
+// no key, so nothing passes as signed by it.
+func pluginWidgetTrust(cfg *config.Config) pluginwidgets.Trust {
+	devMode := cfg.ModeSetExplicitly && strings.EqualFold(strings.TrimSpace(cfg.Mode), "dev")
+	trust, err := pluginwidgets.NewTrust(cfg.ReleasePublicKey, devMode)
+	if err != nil {
+		logrus.WithError(err).Error("plugin widgets: SUPATYPE_RELEASE_PUBLIC_KEY is not a minisign public key; no plugin widget will be served as signed")
+	}
+	return trust
+}
+
 func apiConfigStore(cfg *config.Config, platform keyspace.Client) apiconfig.Store {
 	ref := strings.TrimSpace(cfg.ManagedProjectRef)
 	if ref != "" && strings.TrimSpace(cfg.Mode) == "managed" && platform != nil && platform.Available() {

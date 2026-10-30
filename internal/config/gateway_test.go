@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // TestLoadReadsTheAbsorbedVariables covers the fields that used to be read with
 // os.Getenv from inside twelve packages. The point is not that envconfig works;
@@ -306,5 +309,32 @@ func TestProjectKeyspaceAddressFallsBackToTheKeyspaceAddress(t *testing.T) {
 				t.Errorf("ProjectKeyspaceAddress() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A server whose mode is left to its "dev" default is not a development server for
+// plugin widgets: only one whose SUPATYPE_MODE was set serves an unsigned widget.
+func TestLoadRecordsWhetherTheModeWasSet(t *testing.T) {
+	t.Setenv("SUPATYPE_MODE", "dev")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ModeSetExplicitly || cfg.Mode != "dev" {
+		t.Errorf("SUPATYPE_MODE=dev: Mode %q, ModeSetExplicitly %v", cfg.Mode, cfg.ModeSetExplicitly)
+	}
+}
+
+func TestLoadRecordsAModeLeftToItsDefault(t *testing.T) {
+	t.Setenv("SUPATYPE_MODE", "")
+	if err := os.Unsetenv("SUPATYPE_MODE"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModeSetExplicitly || cfg.Mode != "dev" {
+		t.Errorf("no SUPATYPE_MODE: Mode %q, ModeSetExplicitly %v", cfg.Mode, cfg.ModeSetExplicitly)
 	}
 }

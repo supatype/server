@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/supatype/server/internal/filestamp"
 )
 
 // The gaps: what the proxy sends upstream, what it refuses to relay back, and
@@ -985,7 +986,7 @@ func TestWatchReloadsARealFile(t *testing.T) {
 // A path with nothing at it cannot be watched, and saying so at startup is
 // better than a watcher that silently never fires.
 func TestWatchReportsAPathItCannotWatch(t *testing.T) {
-	if err := Watch(filepath.Join(t.TempDir(), "absent.json"), FileStamp{}, func(*RouteManifest) {}); err == nil {
+	if err := Watch(filepath.Join(t.TempDir(), "absent.json"), filestamp.Stamp{}, func(*RouteManifest) {}); err == nil {
 		t.Error("want an error")
 	}
 }
@@ -998,7 +999,7 @@ func TestWatchReportsAWatcherItCannotCreate(t *testing.T) {
 	t.Cleanup(func() { newWatcher = original })
 	newWatcher = func() (*fsnotify.Watcher, error) { return nil, errors.New("no handles left") }
 
-	if err := Watch("anything", FileStamp{}, func(*RouteManifest) {}); err == nil {
+	if err := Watch("anything", filestamp.Stamp{}, func(*RouteManifest) {}); err == nil {
 		t.Error("want an error")
 	}
 }

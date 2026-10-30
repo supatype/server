@@ -17,7 +17,11 @@ RUN make deps
 COPY . /go/src/github.com/supatype/server
 
 # Make sure you change the RELEASE_VERSION value before publishing an image.
-RUN RELEASE_VERSION=unspecified make build
+# RELEASE_PUBLIC_KEY is the minisign key plugin widgets must be signed with; the publish
+# workflows pass it (hack/release-public-key.sh). Left empty, the image serves no plugin
+# widget outside dev mode.
+ARG RELEASE_PUBLIC_KEY=
+RUN RELEASE_VERSION=unspecified RELEASE_PUBLIC_KEY="$RELEASE_PUBLIC_KEY" make build
 
 # Always use alpine:3 so the latest version is used. This will keep CA certs more up to date.
 FROM alpine:3

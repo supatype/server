@@ -108,6 +108,7 @@ require (
 )
 
 require (
+	aead.dev/minisign v0.3.0
 	github.com/aws/aws-sdk-go-v2 v1.32.3
 	github.com/bits-and-blooms/bloom/v3 v3.6.0
 	github.com/btcsuite/btcutil v1.0.2

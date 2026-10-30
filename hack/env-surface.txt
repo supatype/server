@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 647 names
+# total: 649 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -877,6 +877,7 @@ SUPATYPE_MFA_WEB_AUTHN_ENROLL_ENABLED
 SUPATYPE_MFA_WEB_AUTHN_VERIFY_ENABLED
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MODE
+    call internal/config/gateway.go:343
     struct internal/conf.GlobalConfiguration
     struct internal/config.Config
 SUPATYPE_NONPROD
@@ -915,6 +916,8 @@ SUPATYPE_PASSWORD_MIN_LENGTH
     struct internal/conf.GlobalConfiguration
 SUPATYPE_PASSWORD_REQUIRED_CHARACTERS
     struct internal/conf.GlobalConfiguration
+SUPATYPE_PLUGIN_WIDGETS_DIR
+    struct internal/config.Config
 SUPATYPE_POSTGREST_URL
     struct internal/config.Config
 SUPATYPE_PROFILER_ENABLED
@@ -946,6 +949,8 @@ SUPATYPE_RATE_LIMIT_VERIFY
 SUPATYPE_RATE_LIMIT_WEB3
     struct internal/conf.GlobalConfiguration
 SUPATYPE_REALTIME_URL
+    struct internal/config.Config
+SUPATYPE_RELEASE_PUBLIC_KEY
     struct internal/config.Config
 SUPATYPE_RELOADING_GRACE_PERIOD_INTERVAL
     struct internal/conf.GlobalConfiguration

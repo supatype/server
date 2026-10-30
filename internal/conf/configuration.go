@@ -17,9 +17,10 @@ import (
 	"github.com/gobwas/glob"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
-	"github.com/kelseyhightower/envconfig"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"gopkg.in/gomail.v2"
+
+	"github.com/supatype/server/internal/envparse"
 )
 
 const defaultMinPasswordLength int = 6
@@ -1091,7 +1092,7 @@ func LoadGlobal(filename string) (*GlobalConfiguration, error) {
 const EnvPrefix = "supatype"
 
 func loadGlobal(config *GlobalConfiguration) error {
-	if err := envconfig.Process(EnvPrefix, config); err != nil {
+	if err := envparse.Process(EnvPrefix, config); err != nil {
 		return err
 	}
 
@@ -1467,9 +1468,10 @@ func (t *SmsProviderConfiguration) IsTwilioVerifyProvider() bool {
 
 // IndexWorkerConfiguration holds the configuration for creating database indexes on the users table.
 type IndexWorkerConfiguration struct {
-	// user opt-in — when true, always create indexes (threshold is ignored).
+	// An opt-in: when true, indexes are always created and the threshold is ignored.
 	EnsureUserSearchIndexesExist bool `json:"ensure_user_search_indexes_exist" split_words:"true" default:"false"`
-	// progressive rollout — when > 0, create indexes only if user count ≤ threshold.
+	// A progressive rollout: when above 0, indexes are created only while the user
+	// count is at or below this threshold.
 	// A value of 0 means disabled. Has no effect when EnsureUserSearchIndexesExist is true.
 	MaxUsersThreshold int64 `json:"max_users_threshold" split_words:"true" default:"0"`
 }

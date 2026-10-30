@@ -18,7 +18,7 @@ It can:
 - Proxy PostgREST (`/rest/v1`) and GraphQL (`/graphql/v1`).
 - Serve Storage via built-in local filesystem mode or proxy mode (`/storage/v1`).
 - Proxy Edge Functions to a functions worker or in-process Deno (`/functions/v1`).
-- Expose Functions admin endpoints (`/functions/v1/admin`).
+- Expose Functions admin endpoints (`/admin/v1/functions`) when a functions directory is set.
 - Serve Realtime WebSockets when enabled (`/realtime/v1`).
 - Expose admin and Studio support endpoints (`/admin/v1`, `/studio-config`, `/sql`).
 - Serve application content from `/` (none/static/proxy modes).
@@ -29,13 +29,18 @@ It can:
 - `/rest/v1/*` -> PostgREST
 - `/graphql/v1/*` -> GraphQL
 - `/storage/v1/*` -> local storage handler or storage proxy
-- `/functions/v1/admin/*` -> functions admin API
-- `/functions/v1/*` -> Deno functions proxy
+- `/functions/v1/*` -> Deno functions proxy, including a project function named `admin`
 - `/realtime/v1/*` -> realtime WebSocket handler
+- `/admin/v1/functions/*` -> functions admin API (service-role key required)
 - `/admin/v1/*` -> admin API
 - `/studio-config` -> Studio config payload
 - `/sql` -> SQL runner endpoint
 - `/*` -> app runtime (`none`, `static`, or `proxy`)
+
+The functions admin API's old address, `/functions/v1/admin/*`, still answers for a transition: a
+request there that carries the service-role key and names one of the API's own routes (`/list`,
+`/env`, `/{name}/logs`, ...) goes to the admin API, and every other request there is a call to the
+project's function named `admin`. Move callers to `/admin/v1/functions`.
 
 ## Runtime Modes
 

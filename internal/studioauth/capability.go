@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Studio roles and what each may do.
@@ -102,8 +102,11 @@ func KnownStudioRoles() []string {
 // dataPlanePrefixes are the routes that carry content: rows, files, realtime and
 // function invocation. Every role works with content, so these are the only
 // routes that `Read` and `Write` open. Function administration lives under
-// `/functions/v1/admin` and bucket management under `/storage/v1/bucket`, and
-// neither is content.
+// `/admin/v1/functions` and bucket management under `/storage/v1/bucket`, and
+// neither is content. The admin API's old address, `/functions/v1/admin`, is
+// also where a project function named admin is called: by its path it is a
+// function call, and the proxy judges it as administration only when the
+// gateway will hand it to the admin API (servesFunctionsAdmin).
 var dataPlanePrefixes = []string{"/rest/v1", "/graphql/v1", "/storage/v1", "/realtime/v1", "/functions/v1"}
 
 // AllowsRequest reports whether a capability set covers one proxied request.
@@ -230,9 +233,6 @@ func IsRealtimeInspectorRoute(method, path string) bool {
 }
 
 func isDataPlane(path string) bool {
-	if under(path, "/functions/v1/admin") {
-		return false
-	}
 	for _, prefix := range dataPlanePrefixes {
 		if under(path, prefix) {
 			return true
@@ -245,7 +245,7 @@ func isDataPlane(path string) bool {
 // but the service role: the admin API, GoTrue's user administration, storage
 // bucket management and function administration. A caller's own token is
 // refused by each of them, whatever their Studio role.
-var serviceRoleOnlyPrefixes = []string{"/admin/v1", "/auth/v1/admin", "/storage/v1/bucket", "/functions/v1/admin"}
+var serviceRoleOnlyPrefixes = []string{"/admin/v1", "/auth/v1/admin", "/storage/v1/bucket"}
 
 // isServiceRoleOnly reports whether a proxied request goes to an upstream that
 // admits only the service role. The self-host control plane is one, except for
@@ -281,13 +281,11 @@ func under(path, prefix string) bool {
 // decoded path. Judging the decoded path alone would let `/%72est/v1` read as
 // content rows while the router sends it to the catch-all.
 func routedPath(req *http.Request) string {
-	if rctx := chi.RouteContext(req.Context()); rctx != nil && rctx.RoutePath != "" {
-		return rctx.RoutePath
-	}
+	unrouted := req.URL.Path
 	if req.URL.RawPath != "" {
-		return req.URL.RawPath
+		unrouted = req.URL.RawPath
 	}
-	return req.URL.Path
+	return utilities.RoutePath(req, unrouted)
 }
 
 // legacyAdminPermissions is what a deployment still on the claim-based path

@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/studioctx"
 )
@@ -194,22 +195,20 @@ func Routes() []Route {
 			DataPlane: true,
 		},
 		{
-			Pattern: "/functions/v1/admin",
+			// More specific than /admin/v1, so the router sends it here rather than to the admin API.
+			Pattern: "/admin/v1/functions",
 			Verb:    MountAll,
-			When:    func(d *Deps) bool { return d.Config.DenoFunctionsDir != "" },
+			When:    functionsDirSet,
 			Build:   buildFunctionsAdmin,
 		},
 		{
-			Pattern: "/functions/v1",
+			// The admin API's old address, for a transition: see legacyFunctionsAdmin.
+			Pattern: "/functions/v1/admin",
 			Verb:    MountAll,
-			Strip:   true,
-			When: func(d *Deps) bool {
-				return d.Config.DenoFunctionsDir != "" || strings.TrimSpace(d.Config.FunctionsWorkerURL) != ""
-			},
-			Build:     buildFunctions,
-			DataPlane: true,
-			Log:       "mux: Functions invocation proxy mounted at /functions/v1",
+			When:    functionsDirSet,
+			Build:   buildLegacyFunctionsAdmin,
 		},
+		functionsInvocationRoute(),
 		{
 			Pattern: "/platform/v1",
 			Verb:    MountAll,
@@ -257,20 +256,49 @@ func Routes() []Route {
 	}
 }
 
-// attach adds one route to the router, honouring its verb and prefix handling.
-func attach(r chi.Router, route Route, d *Deps) {
-	if route.When != nil && !route.When(d) {
-		return
+// functionsDirSet is whether the server has a functions directory, which mounts the admin API.
+func functionsDirSet(d *Deps) bool { return functions.Mounted(d.Config) }
+
+// functionsInvocationRoute is /functions/v1, the invocation proxy. A function of its own, since the
+// admin API's old address hands it every request that is not administration (legacyFunctionsAdmin).
+func functionsInvocationRoute() Route {
+	return Route{
+		Pattern: "/functions/v1",
+		Verb:    MountAll,
+		Strip:   true,
+		When: func(d *Deps) bool {
+			return functionsDirSet(d) || strings.TrimSpace(d.Config.FunctionsWorkerURL) != ""
+		},
+		Build:     buildFunctions,
+		DataPlane: true,
+		Log:       "mux: Functions invocation proxy mounted at /functions/v1",
 	}
+}
+
+// wrappedHandler is a route's handler with its forged-claim refusal and prefix stripping applied,
+// or nil when the route builds none.
+func wrappedHandler(route Route, d *Deps) http.Handler {
 	handler := route.Build(d)
 	if handler == nil {
-		return
+		return nil
 	}
 	if route.DataPlane {
 		handler = studioctx.RefuseForgedClaim(handler)
 	}
 	if route.Strip {
 		handler = http.StripPrefix(strings.TrimSuffix(route.Pattern, "/*"), handler)
+	}
+	return handler
+}
+
+// attach adds one route to the router, honouring its verb and prefix handling.
+func attach(r chi.Router, route Route, d *Deps) {
+	if route.When != nil && !route.When(d) {
+		return
+	}
+	handler := wrappedHandler(route, d)
+	if handler == nil {
+		return
 	}
 	switch route.Verb {
 	case MountAll:

@@ -459,10 +459,13 @@ func TestABucketHoldingOnlySidecarsIsEmpty(t *testing.T) {
 	}
 }
 
-// The sidecar directory is recognised however its name is cased, as every
-// object route recognises it. No object can be stored under ".META", so a
-// bucket holding only that directory holds no objects.
+// Where the file system ignores case, ".META" is the sidecar directory, as
+// every object route takes it to be, so a bucket holding only that directory
+// holds no objects.
 func TestABucketHoldingOnlyACaseVariantSidecarDirIsEmpty(t *testing.T) {
+	if !hostRules.foldsCase {
+		t.Skip("this file system keeps case, so .META is an ordinary folder")
+	}
 	handler, root := newStore(t)
 	makeBucket(t, handler, "avatars", false)
 

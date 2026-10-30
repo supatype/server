@@ -434,7 +434,7 @@ func (s *store) emptyBucketDir(w http.ResponseWriter, id string) (string, bool) 
 		return "", false
 	}
 	for _, e := range entries {
-		if !inSidecarTree(e.Name()) {
+		if !hostRules.inSidecarTree(e.Name()) {
 			writeError(w, http.StatusBadRequest, "bucket must be empty before deletion")
 			return "", false
 		}

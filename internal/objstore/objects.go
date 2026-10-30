@@ -230,7 +230,7 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fileRel, err := s.objectFileRel(bucket, objPath)
+	loc, err := s.locate(bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -241,7 +241,7 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	size, ok := s.storeUpload(w, fileRel, body, r.Header.Get("x-upsert") == "true")
+	size, ok := s.storeUpload(w, loc, body, r.Header.Get("x-upsert") == "true")
 	if !ok {
 		return
 	}
@@ -253,10 +253,13 @@ func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
 	utilities.WriteJSON(w, http.StatusOK, map[string]string{"path": objPath})
 }
 
-// storeUpload writes body to fileRel under the storage root and returns its
+// storeUpload writes body to loc's file under the storage root and returns its
 // size, answering the request itself when it cannot. Without upsert an
-// object already there is refused rather than replaced.
-func (s *store) storeUpload(w http.ResponseWriter, fileRel string, body io.Reader, upsert bool) (int64, bool) {
+// object already there, under either layout, is refused rather than
+// replaced. An upsert over an object stored under the old layout removes the
+// old file and sidecar once the new file is written, so the name is not left
+// answering from two places.
+func (s *store) storeUpload(w http.ResponseWriter, loc objectLocation, body io.Reader, upsert bool) (int64, bool) {
 	root, ok := s.openStorageRoot(w)
 	if !ok {
 		return 0, false
@@ -265,12 +268,22 @@ func (s *store) storeUpload(w http.ResponseWriter, fileRel string, body io.Reade
 		_ = root.Close()
 	}()
 
-	if !upsert {
-		if _, err := root.Stat(fileRel); err == nil {
-			writeError(w, http.StatusConflict, "object already exists")
-			return 0, false
-		}
+	existingFile, existingMeta := s.stored(root, loc)
+	if _, err := root.Stat(existingFile); err == nil && !upsert {
+		writeError(w, http.StatusConflict, "object already exists")
+		return 0, false
 	}
+	size, ok := s.writeUpload(w, root, loc.fileRel, body)
+	if ok && existingFile != loc.fileRel {
+		_ = root.Remove(existingFile)
+		_ = root.Remove(existingMeta)
+	}
+	return size, ok
+}
+
+// writeUpload writes body to fileRel under root, creating its folders, and
+// returns its size, answering the request itself when it cannot.
+func (s *store) writeUpload(w http.ResponseWriter, root *os.Root, fileRel string, body io.Reader) (int64, bool) {
 	filePath := filepath.Join(s.root, fileRel)
 	if err := mkdirAll(filepath.Dir(filePath), 0o700); err != nil { // #nosec G703 -- filePath is built from validated bucket and object paths under storageRoot.
 		writeError(w, http.StatusInternalServerError, "failed to create directory")
@@ -334,7 +347,7 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 	defer func() {
 		_ = root.Close()
 	}()
-	f, metaRel, ok := openObject(w, root, bucket, objPath)
+	f, metaRel, ok := s.openObject(w, root, bucket, objPath)
 	if !ok {
 		return
 	}
@@ -356,12 +369,13 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 
 // openObject opens a stored object under root for reading and returns where
 // its sidecar is, answering the request itself when it cannot.
-func openObject(w http.ResponseWriter, root *os.Root, bucket, objPath string) (*os.File, string, bool) {
-	fileRel, metaRel, err := storedAt(root, bucket, objPath)
+func (s *store) openObject(w http.ResponseWriter, root *os.Root, bucket, objPath string) (*os.File, string, bool) {
+	loc, err := s.locate(bucket, objPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return nil, "", false
 	}
+	fileRel, metaRel := s.stored(root, loc)
 	f, err := openIn(root, fileRel)
 	if os.IsNotExist(err) {
 		writeError(w, http.StatusNotFound, "object not found")
@@ -374,30 +388,39 @@ func openObject(w http.ResponseWriter, root *os.Root, bucket, objPath string) (*
 	return f, metaRel, true
 }
 
-// storedAt is where an object that should already exist and its sidecar are
-// under root: where objectPaths stores it now, or, when no file is there,
-// where it was stored before names were encoded, if a file is there instead.
-// Only reads and removals look here; an upload always writes where
-// objectPaths says. It fails when the bucket or name is refused.
-func storedAt(root *os.Root, bucket, objPath string) (fileRel, metaRel string, err error) {
-	bucket, rel, err := cleanObject(bucket, objPath)
+// objectLocation is a validated object name: its bucket, the name, and where
+// its file and sidecar are stored now, relative to the storage root.
+type objectLocation struct {
+	bucket, name, fileRel, metaRel string
+}
+
+// locate validates bucket and objPath and says where the object is stored now.
+func (s *store) locate(bucket, objPath string) (objectLocation, error) {
+	bucket, rel, err := s.cleanObject(bucket, objPath)
 	if err != nil {
-		return "", "", err
+		return objectLocation{}, err
 	}
-	if fileRel, metaRel, err = bucketPaths(bucket, rel); err != nil {
-		return "", "", err
+	fileRel, metaRel := joinPaths(bucket, rel)
+	return objectLocation{bucket: bucket, name: objPath, fileRel: fileRel, metaRel: metaRel}, nil
+}
+
+// stored is where loc's file and sidecar are under root: where it is stored
+// now, or, when no file is there, where it was stored before names were
+// encoded, if a file is there instead. Uploads look here only to find what
+// they replace; they always write where loc says.
+func (s *store) stored(root *os.Root, loc objectLocation) (fileRel, metaRel string) {
+	rel, ok := hostRules.legacyRel(loc.name)
+	if !ok || s.reachesSidecarTree(hostRules, loc.bucket, rel) {
+		return loc.fileRel, loc.metaRel
 	}
-	legacyFile, legacyMeta, ok := hostRules.legacyPaths(bucket, rel, objPath)
-	if !ok {
-		return fileRel, metaRel, nil
-	}
-	if _, err := root.Stat(fileRel); !os.IsNotExist(err) {
-		return fileRel, metaRel, nil
+	legacyFile, legacyMeta := joinPaths(loc.bucket, rel)
+	if _, err := root.Stat(loc.fileRel); !os.IsNotExist(err) {
+		return loc.fileRel, loc.metaRel
 	}
 	if info, err := root.Stat(legacyFile); err != nil || !info.Mode().IsRegular() {
-		return fileRel, metaRel, nil
+		return loc.fileRel, loc.metaRel
 	}
-	return legacyFile, legacyMeta, nil
+	return legacyFile, legacyMeta
 }
 
 // applyObjectMeta sets Content-Type from the sidecar at metaRel under root
@@ -440,7 +463,7 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 
 	deleted := []removedItem{}
 	for _, prefix := range prefixes {
-		removed, err := removeObject(root, bucket, prefix)
+		removed, err := s.removeObject(root, bucket, prefix)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -467,11 +490,12 @@ func removePrefixes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 
 // removeObject removes one object and its sidecar, reporting whether there
 // was an object to remove, or an error when the name is refused.
-func removeObject(root *os.Root, bucket, objPath string) (bool, error) {
-	fileRel, metaRel, err := storedAt(root, bucket, objPath)
+func (s *store) removeObject(root *os.Root, bucket, objPath string) (bool, error) {
+	loc, err := s.locate(bucket, objPath)
 	if err != nil {
 		return false, err
 	}
+	fileRel, metaRel := s.stored(root, loc)
 	removed := root.Remove(fileRel) == nil
 	if removed {
 		_ = root.Remove(metaRel)
@@ -552,7 +576,7 @@ func (s *store) listFolder(bucket, prefix string) (dir, folder string, err error
 // are sorted again only when a stored name was decoded into a different one,
 // which can move it.
 func (s *store) folderChildren(root *os.Root, bucket, dir, folder string) []listItem {
-	if inSidecarTree(folder) {
+	if s.reachesSidecarTree(hostRules, bucket, folder) {
 		return []listItem{}
 	}
 	entries, err := os.ReadDir(dir)
@@ -586,7 +610,7 @@ func (s *store) folderChildren(root *os.Root, bucket, dir, folder string) []list
 // anywhere below it, or a file removed since the directory was read.
 func (s *store) childItem(root *os.Root, bucket, dir, folder string, e fs.DirEntry) (listItem, bool) {
 	switch {
-	case folder == "" && inSidecarTree(e.Name()):
+	case folder == "" && hostRules.inSidecarTree(e.Name()):
 		return listItem{}, false
 	case e.IsDir():
 		if !holdsAnObject(filepath.Join(dir, e.Name())) {

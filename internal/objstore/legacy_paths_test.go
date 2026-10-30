@@ -20,18 +20,17 @@ func placeFile(t *testing.T, root, rel, content string) {
 	}
 }
 
-// Before names were encoded, Windows split a name at a backslash into folders.
-// An object stored that way is still read, served, signed and removed under
-// the name it was uploaded as, along with the sidecar it was given then.
+// Before names were encoded, a name starting with the marker was stored as
+// written. An object stored that way is still read, served, signed and
+// removed under the name it was uploaded as, along with the sidecar it was
+// given then.
+//
+// A name Windows split at a backslash is not reached this way: its old file
+// is where the object of the split name is stored now, so it answers to that
+// name, which is also the one it is listed as.
 func TestAnObjectStoredBeforeTheEncodingIsStillReachedByName(t *testing.T) {
-	if !onWindows {
-		t.Skip("names were only stored differently on Windows")
-	}
-	for name, legacy := range map[string]string{
-		`photos\a.txt`:    "photos/a.txt",
-		`deep\er\b.txt`:   "deep/er/b.txt",
-		`dir/inner\c.txt`: "dir/inner/c.txt",
-	} {
+	for _, name := range []string{"%%x", "dir/%%y"} {
+		legacy := name
 		t.Run(name, func(t *testing.T) {
 			handler, root := newStore(t)
 			makeBucket(t, handler, "files", true)

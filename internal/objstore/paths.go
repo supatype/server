@@ -1,9 +1,11 @@
 package objstore
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -51,14 +53,45 @@ func (s *store) bucketDir(bucket string) (string, error) {
 // It is this store's own bookkeeping, never an object or a folder of objects.
 const sidecarDir = ".meta"
 
-// inSidecarTree reports whether rel, a path relative to a bucket, resolves into
-// the sidecar tree, however it is spelled: "./.meta" and "a/../.meta" are the
-// same directory. Case is ignored because the file systems of Windows and
-// macOS ignore it, so ".META" opens the same directory there.
-func inSidecarTree(rel string) bool {
+// firstSegment is the first segment of rel, a path relative to a bucket, as
+// it resolves: "./.meta/x" and "a/../.meta" both start with ".meta".
+func firstSegment(rel string) string {
 	first, _, _ := strings.Cut(filepath.ToSlash(filepath.Clean(rel)), "/")
-	return strings.EqualFold(first, sidecarDir)
+	return first
 }
+
+// inSidecarTree reports whether rel, a path relative to a bucket, names the
+// sidecar tree, however it is spelled: "./.meta" and "a/../.meta" are the same
+// directory. Where the file system ignores case, as those of Windows and
+// macOS do, ".META" opens the same directory and is refused too; elsewhere it
+// is an ordinary folder of objects.
+func (r nameRules) inSidecarTree(rel string) bool {
+	return r.sameName(firstSegment(rel), sidecarDir)
+}
+
+// reachesSidecarTree reports whether rel in bucket resolves into the sidecar
+// tree under r: by name, or, under Windows rules, by another name the
+// directory answers to, such as its 8.3 short name META~1. Such a name is
+// not decided by its spelling: Windows makes it up when the directory is
+// created, so the disk is asked whether the two names are one directory.
+func (s *store) reachesSidecarTree(r nameRules, bucket, rel string) bool {
+	if r.inSidecarTree(rel) {
+		return true
+	}
+	if !r.windows {
+		return false
+	}
+	dir := filepath.Join(s.root, bucket)
+	alias, err := os.Stat(filepath.Join(dir, firstSegment(rel)))
+	if err != nil {
+		return false
+	}
+	sidecars, err := os.Stat(filepath.Join(dir, sidecarDir))
+	return err == nil && os.SameFile(alias, sidecars)
+}
+
+// errInvalidObjectPath refuses an object name that cannot be stored.
+var errInvalidObjectPath = errors.New("invalid object path")
 
 // objectPaths returns where an object and its sidecar live, relative to the
 // storage root, validating the bucket and path once.
@@ -68,55 +101,86 @@ func inSidecarTree(rel string) bool {
 // handle a second failure that could not happen: if the first call refused the
 // input, the second never ran.
 func (s *store) objectPaths(bucket, objPath string) (fileRel, metaRel string, err error) {
-	bucket, rel, err := cleanObject(bucket, objPath)
+	bucket, rel, err := s.cleanObject(bucket, objPath)
 	if err != nil {
 		return "", "", err
 	}
-	return bucketPaths(bucket, rel)
+	fileRel, metaRel = joinPaths(bucket, rel)
+	return fileRel, metaRel, nil
 }
 
 // cleanObject is the bucket id and the object's path on disk relative to its
-// bucket, or an error when either is refused.
-func cleanObject(bucket, objPath string) (cleanBucket, rel string, err error) {
+// bucket, or an error when either is refused: a name that leaves the bucket
+// or reaches the sidecar tree by any name.
+func (s *store) cleanObject(bucket, objPath string) (cleanBucket, rel string, err error) {
 	if cleanBucket, err = cleanBucketID(bucket); err != nil {
 		return "", "", err
 	}
 	if rel, err = cleanObjectPath(objPath, false); err != nil {
 		return "", "", err
 	}
+	if s.reachesSidecarTree(hostRules, cleanBucket, rel) {
+		return "", "", errInvalidObjectPath
+	}
 	return cleanBucket, rel, nil
 }
 
-// bucketPaths is where the object at rel in bucket and its sidecar live,
-// relative to the storage root, refusing a rel inside the sidecar tree.
-func bucketPaths(bucket, rel string) (fileRel, metaRel string, err error) {
-	if inSidecarTree(rel) {
-		return "", "", fmt.Errorf("invalid object path")
-	}
+// joinPaths is where the object at rel in bucket and its sidecar live,
+// relative to the storage root. rel has been checked already.
+func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 	dir, file := filepath.Split(rel)
-	return filepath.Join(bucket, rel), filepath.Join(bucket, sidecarDir, dir, file+".json"), nil
+	return filepath.Join(bucket, rel), filepath.Join(bucket, sidecarDir, dir, file+".json")
 }
 
-// legacyPaths is where the object objPath and its sidecar were stored before
-// names were encoded, when that is somewhere other than current, where the
-// object is stored now relative to its bucket. bucket is already validated.
-// On every OS a name starting with encodedMarker was stored as written, and
-// on Windows a backslash in a name split it into folders. The legacy location
-// passes the same checks as the current one, so it never leaves the bucket
-// or reaches the sidecar tree. It is only ever read from or removed: writes
-// always use the encoded name.
+// legacyRel is where the object objPath was stored, relative to its bucket,
+// before names were encoded, when that may be looked at: on every OS a name
+// starting with encodedMarker was stored as written, and on Windows a
+// backslash in a name split it into folders. It is only ever read from or
+// removed: writes always use the encoded name.
 //
-// Windows also dropped a trailing dot or space from a name, so the old file
-// of "notes." is "notes", which may as well be the object "notes" itself. A
-// name with such a part therefore has no legacy location under Windows rules:
-// reading or removing it must never reach another object.
-func (r nameRules) legacyPaths(bucket, current, objPath string) (fileRel, metaRel string, ok bool) {
-	rel := filepath.FromSlash(strings.TrimPrefix(objPath, "/"))
-	if rel == current || !filepath.IsLocal(rel) || (r.windows && renamesAPart(rel)) {
-		return "", "", false
+// The old location is refused wherever it could be some other object's file:
+//   - where it is the current location of some object name, which covers
+//     the object's own current location too. "%%%25%25foo" was stored as
+//     written, which is where "%%foo" is stored now; on Windows "%%CON" is
+//     where "CON" is stored now, and `a\b` was split into a/b.
+//   - under Windows rules, where a part ends in a dot or space: Windows
+//     dropped it, so the old file of "notes." is "notes", which may as well
+//     be the object "notes" itself.
+func (r nameRules) legacyRel(objPath string) (string, bool) {
+	name := strings.TrimPrefix(objPath, "/")
+	rel := filepath.FromSlash(name)
+	if !filepath.IsLocal(rel) || (r.windows && r.renamesAPart(name)) || r.isStoredLocation(name) {
+		return "", false
 	}
-	fileRel, metaRel, err := bucketPaths(bucket, rel)
-	return fileRel, metaRel, err == nil
+	return rel, true
+}
+
+// isStoredLocation reports whether name, split into parts as r splits a
+// path, is where r stores some object now: every part is the stored form of
+// a name segment.
+func (r nameRules) isStoredLocation(name string) bool {
+	for segment := range strings.FieldsFuncSeq(name, r.isSeparator) {
+		if !r.isStoredSegment(segment) {
+			return false
+		}
+	}
+	return true
+}
+
+// isStoredSegment reports whether r stores some name segment under the file
+// name segment: the segment itself, or the name it decodes to. Where the file
+// system ignores case, a spelling that differs only in case counts, since it
+// opens the same file.
+func (r nameRules) isStoredSegment(segment string) bool {
+	if r.sameName(r.diskSegment(segment), segment) {
+		return true
+	}
+	body, ok := strings.CutPrefix(segment, encodedMarker)
+	if !ok {
+		return false
+	}
+	name, err := url.PathUnescape(body)
+	return err == nil && r.sameName(r.diskSegment(name), segment)
 }
 
 func (s *store) objectFileRel(bucket, objPath string) (string, error) {
@@ -196,12 +260,31 @@ type nameRules struct {
 	// reserved reports whether the OS takes a name for a device rather than
 	// a file. It is consulted only under Windows rules.
 	reserved func(name string) bool
+	// foldsCase is set where the file system takes names that differ only in
+	// case for the same name.
+	foldsCase bool
 }
 
 // hostRules are the rules of this OS. On Windows a device name is asked of
 // the OS through filepath.IsLocal, which knows that Windows 11 no longer
-// reserves "CON.txt".
-var hostRules = nameRules{windows: onWindows, reserved: func(name string) bool { return !filepath.IsLocal(name) }}
+// reserves "CON.txt". The file systems of Windows and macOS ignore case by
+// default; Linux's do not.
+var hostRules = nameRules{
+	windows:   onWindows,
+	reserved:  func(name string) bool { return !filepath.IsLocal(name) },
+	foldsCase: onWindows || runtime.GOOS == "darwin",
+}
+
+// sameName reports whether the file system takes a and b for the same name.
+func (r nameRules) sameName(a, b string) bool {
+	return a == b || (r.foldsCase && strings.EqualFold(a, b))
+}
+
+// isSeparator reports whether c separates the parts of a path: a slash, and
+// under Windows rules a backslash too.
+func (r nameRules) isSeparator(c rune) bool {
+	return c == '/' || (r.windows && c == '\\')
+}
 
 // refusedByte reports whether Windows refuses c in a file name. Every byte it
 // refuses is ASCII, so no byte of a multi-byte character is refused.
@@ -215,11 +298,11 @@ func renamedSuffix(name string) bool {
 	return strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ")
 }
 
-// renamesAPart reports whether any part of rel, split at either slash, would
-// be renamed by Windows. The dot segments are path structure, not names, and
-// are left to the traversal check.
-func renamesAPart(rel string) bool {
-	for part := range strings.FieldsFuncSeq(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
+// renamesAPart reports whether any part of rel would be renamed by Windows.
+// The dot segments are path structure, not names, and are left to the
+// traversal check.
+func (r nameRules) renamesAPart(rel string) bool {
+	for part := range strings.FieldsFuncSeq(rel, r.isSeparator) {
 		if part != "." && part != ".." && renamedSuffix(part) {
 			return true
 		}

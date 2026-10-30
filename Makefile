@@ -9,7 +9,9 @@ else
 	VERSION=$(shell git describe --tags)
 endif
 
-FLAGS=-ldflags "-X github.com/supatype/server/internal/utilities.Version=$(VERSION)" -buildvcs=false
+# RELEASE_PUBLIC_KEY is the minisign release key plugin widget bundles must be signed with
+# (hack/release-public-key.sh). Empty in a source build, which then serves no widget outside dev.
+FLAGS=-ldflags "-X github.com/supatype/server/internal/utilities.Version=$(VERSION) -X github.com/supatype/server/internal/pluginwidgets.embeddedReleaseKey=$(RELEASE_PUBLIC_KEY)" -buildvcs=false
 
 ifneq ($(shell docker compose version 2>/dev/null),)
   DOCKER_COMPOSE=docker compose

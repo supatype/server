@@ -28,9 +28,13 @@ func ManifestHandler(store *Store) http.Handler {
 			manifestUnreadable(w)
 			return
 		}
+		// Only bundles that may run are listed, so Studio shows its built-in editor for the
+		// rest instead of importing a URL that answers with an error.
 		widgets := make([]published, 0, len(entries))
 		for _, e := range entries {
-			widgets = append(widgets, published{Widget: e.Widget, URL: BundlePrefix + e.Bundle()})
+			if store.servableOnDisk(e.SHA256) {
+				widgets = append(widgets, published{Widget: e.Widget, URL: BundlePrefix + e.Bundle()})
+			}
 		}
 		w.Header().Set("Cache-Control", "no-cache")
 		utilities.WriteJSON(w, http.StatusOK, map[string][]published{"widgets": widgets})
@@ -44,10 +48,10 @@ func ManifestHandler(store *Store) http.Handler {
 // holds no project data, and nothing from the request reaches the filesystem but a
 // hash the manifest names, whose file is checked to hash to that name.
 //
-// Which plugin a bundle belongs to is what the manifest says, and the manifest is a
-// file in the project: the first-party list keeps other plugins' widgets out of a
-// project that is built with the CLI, but it does not prove a bundle is Supatype's
-// code to anyone who can write the project's .supatype directory.
+// What proves a bundle is Supatype's code is its minisign signature, checked against
+// the release key (Trust); the first-party list only says which plugins may name a
+// widget at all. A development server also serves an unsigned bundle, as a plugin
+// built from source has; a production server never does.
 func BundleHandler(store *Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		hash := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, BundlePrefix), ".js")
@@ -71,7 +75,8 @@ func manifestUnreadable(w http.ResponseWriter) {
 }
 
 // serveBundle sends the bundle the manifest names by hash, once its bytes are shown
-// to hash to that name, leaving conditional and Range requests to http.ServeContent.
+// to hash to that name and its signature to be Supatype's, leaving conditional and
+// Range requests to http.ServeContent.
 func serveBundle(w http.ResponseWriter, req *http.Request, store *Store, hash string) {
 	f, err := os.Open(filepath.Join(store.Dir, hash+".js"))
 	if err != nil {
@@ -84,8 +89,10 @@ func serveBundle(w http.ResponseWriter, req *http.Request, store *Store, hash st
 		http.NotFound(w, req)
 		return
 	}
-	if !store.bundleMatches(hash, f, info) {
-		http.Error(w, "plugin widget bundle does not match its hash", http.StatusInternalServerError)
+	// A file the manifest names that may not run (its bytes or signature are not what
+	// they should be) is the server's problem, not a missing page; the Store has logged why.
+	if !store.bundleServable(hash, f, info) {
+		http.Error(w, "plugin widget bundle may not be served", http.StatusInternalServerError)
 		return
 	}
 	h := w.Header()

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 
 	"github.com/supatype/server/internal/envparse"
@@ -98,6 +99,16 @@ type Config struct {
 	// config: `manifest.json` and one `<sha256>.js` per bundle. Served to Studio at
 	// /studio/plugins, for Supatype's own plugins only (internal/pluginwidgets).
 	PluginWidgetsDir string `envconfig:"SUPATYPE_PLUGIN_WIDGETS_DIR" default:".supatype/plugin-widgets"`
+
+	// ReleasePublicKey is the minisign public key Supatype signs its releases with,
+	// overriding the one embedded when the server is built. A plugin widget bundle is
+	// served only when its signature verifies against it. The CLI reads the same name.
+	ReleasePublicKey string `envconfig:"SUPATYPE_RELEASE_PUBLIC_KEY"`
+
+	// ModeSetExplicitly says SUPATYPE_MODE was set rather than left to its "dev"
+	// default. Filled by Load. Only an explicit dev mode, which native and Docker dev
+	// set, serves an unsigned (source-built) plugin widget.
+	ModeSetExplicitly bool `ignored:"true"`
 
 	// ApiConfigPath is the path to the .supatype/api-config.json file managed by the admin API.
 	ApiConfigPath string `envconfig:"SUPATYPE_API_CONFIG_PATH" default:".supatype/api-config.json"`
@@ -329,6 +340,7 @@ func Load() (*Config, error) {
 	if err := envparse.Process("", &cfg); err != nil {
 		return nil, err
 	}
+	_, cfg.ModeSetExplicitly = os.LookupEnv("SUPATYPE_MODE")
 	return &cfg, nil
 }
 

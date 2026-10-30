@@ -55,14 +55,16 @@ type Store struct {
 	warned map[string]bool
 
 	bundles verifiedBundles
+	trust   Trust
 }
 
-// NewStore is a Store for the widgets directory dir.
-func NewStore(dir string) *Store {
+// NewStore is a Store for the widgets directory dir, serving the bundles trust allows.
+func NewStore(dir string, trust Trust) *Store {
 	return &Store{
 		Dir:     dir,
 		warned:  map[string]bool{},
-		bundles: verifiedBundles{stamps: map[string]filestamp.Stamp{}},
+		bundles: verifiedBundles{checked: map[string]checkedBundle{}},
+		trust:   trust,
 	}
 }
 

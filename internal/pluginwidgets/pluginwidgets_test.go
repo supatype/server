@@ -33,6 +33,11 @@ func writeManifest(t *testing.T, dir string, entries ...Entry) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), raw, 0o600))
 }
 
+// devTrust serves unsigned bundles, as a development server does: these tests are about
+// the manifest and the hash, and write bundles with no signature. signing_test.go covers
+// the signature.
+var devTrust = Trust{allowUnsigned: true}
+
 func get(h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -45,7 +50,7 @@ func TestManifestListsOnlyFirstPartyWidgetsWithTheirURLs(t *testing.T) {
 	theirs := writeWidget(t, dir, "@acme/plugin-phone", "export default () => 1\n")
 	writeManifest(t, dir, ours, theirs)
 
-	rec := get(ManifestHandler(NewStore(dir)), "/studio/plugins")
+	rec := get(ManifestHandler(NewStore(dir, devTrust)), "/studio/plugins")
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body struct {
 		Widgets []published `json:"widgets"`
@@ -56,7 +61,7 @@ func TestManifestListsOnlyFirstPartyWidgetsWithTheirURLs(t *testing.T) {
 }
 
 func TestNoManifestMeansNoWidgets(t *testing.T) {
-	rec := get(ManifestHandler(NewStore(t.TempDir())), "/studio/plugins")
+	rec := get(ManifestHandler(NewStore(t.TempDir(), devTrust)), "/studio/plugins")
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"widgets":[]}`, rec.Body.String())
 }
@@ -66,7 +71,7 @@ func TestABundleTheManifestNamesIsServedAsAnImmutableModule(t *testing.T) {
 	ours := writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n")
 	writeManifest(t, dir, ours)
 
-	rec := get(BundleHandler(NewStore(dir)), BundlePrefix+ours.Bundle())
+	rec := get(BundleHandler(NewStore(dir, devTrust)), BundlePrefix+ours.Bundle())
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "export default () => null\n", rec.Body.String())
 	assert.Equal(t, "text/javascript; charset=utf-8", rec.Header().Get("Content-Type"))
@@ -78,14 +83,14 @@ func TestABundleFromAPluginNotOnTheListIsNotServed(t *testing.T) {
 	dir := t.TempDir()
 	theirs := writeWidget(t, dir, "@acme/plugin-phone", "export default () => 1\n")
 	writeManifest(t, dir, theirs)
-	assert.Equal(t, http.StatusNotFound, get(BundleHandler(NewStore(dir)), BundlePrefix+theirs.Bundle()).Code)
+	assert.Equal(t, http.StatusNotFound, get(BundleHandler(NewStore(dir, devTrust)), BundlePrefix+theirs.Bundle()).Code)
 }
 
 func TestAFileTheManifestDoesNotNameIsNotServed(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir)
 	stray := writeWidget(t, dir, "@supatype/plugin-seo", "export default () => 2\n")
-	h := BundleHandler(NewStore(dir))
+	h := BundleHandler(NewStore(dir, devTrust))
 	assert.Equal(t, http.StatusNotFound, get(h, BundlePrefix+stray.Bundle()).Code)
 	assert.Equal(t, http.StatusNotFound, get(h, BundlePrefix+"..%2fmanifest.json").Code)
 	assert.Equal(t, http.StatusNotFound, get(h, BundlePrefix+"manifest").Code)
@@ -93,7 +98,7 @@ func TestAFileTheManifestDoesNotNameIsNotServed(t *testing.T) {
 
 func TestAChangedManifestIsReadAgain(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(dir, devTrust)
 	writeManifest(t, dir)
 	entries, err := store.Entries()
 	require.NoError(t, err)
@@ -121,7 +126,7 @@ func TestAManifestThatCannotBeReadIsAServerErrorForABundle(t *testing.T) {
 	dir := t.TempDir()
 	ours := writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{not json"), 0o600))
-	rec := get(BundleHandler(NewStore(dir)), BundlePrefix+ours.Bundle())
+	rec := get(BundleHandler(NewStore(dir, devTrust)), BundlePrefix+ours.Bundle())
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
@@ -129,7 +134,7 @@ func TestAManifestThatCannotBeReadIsAServerErrorForABundle(t *testing.T) {
 // still tells the two versions apart.
 func TestARewrittenManifestWithTheSameMtimeIsReadAgainWhenItsSizeChanged(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(dir, devTrust)
 	path := filepath.Join(dir, "manifest.json")
 	writeManifest(t, dir)
 	info, err := os.Stat(path)
@@ -150,7 +155,7 @@ func TestABundleAnswersConditionalAndRangeRequests(t *testing.T) {
 	dir := t.TempDir()
 	ours := writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n")
 	writeManifest(t, dir, ours)
-	h := BundleHandler(NewStore(dir))
+	h := BundleHandler(NewStore(dir, devTrust))
 
 	revalidate := httptest.NewRequest(http.MethodGet, BundlePrefix+ours.Bundle(), nil)
 	revalidate.Header.Set("If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
@@ -175,7 +180,7 @@ func TestABundleWhoseBytesDoNotMatchItsNameIsNotServed(t *testing.T) {
 	writeManifest(t, dir, ours)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ours.Bundle()), []byte("export default"), 0o600))
 
-	rec := get(BundleHandler(NewStore(dir)), BundlePrefix+ours.Bundle())
+	rec := get(BundleHandler(NewStore(dir, devTrust)), BundlePrefix+ours.Bundle())
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.NotContains(t, rec.Header().Get("Cache-Control"), "immutable")
 	assert.NotContains(t, rec.Body.String(), "export default")
@@ -186,7 +191,7 @@ func TestABundleWhoseBytesDoNotMatchItsNameIsNotServed(t *testing.T) {
 func TestAManifestBrokenMidWriteKeepsTheLastGoodWidgets(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "manifest.json")
-	store := NewStore(dir)
+	store := NewStore(dir, devTrust)
 	writeManifest(t, dir, writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n"))
 	entries, err := store.Entries()
 	require.NoError(t, err)
@@ -212,7 +217,7 @@ func TestABrokenManifestIsReadAndLoggedOnceUntilItChanges(t *testing.T) {
 	t.Cleanup(hook.Reset)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{not json"), 0o600))
-	h := BundleHandler(NewStore(dir))
+	h := BundleHandler(NewStore(dir, devTrust))
 
 	for range 2 {
 		assert.Equal(t, http.StatusInternalServerError, get(h, BundlePrefix+"0000.js").Code)
@@ -231,7 +236,7 @@ func TestABundleIsHashedOncePerVersionOfItsFile(t *testing.T) {
 	dir := t.TempDir()
 	ours := writeWidget(t, dir, "@supatype/plugin-seo", "export default () => null\n")
 	writeManifest(t, dir, ours)
-	h := BundleHandler(NewStore(dir))
+	h := BundleHandler(NewStore(dir, devTrust))
 	for range 2 {
 		require.Equal(t, http.StatusOK, get(h, BundlePrefix+ours.Bundle()).Code)
 	}

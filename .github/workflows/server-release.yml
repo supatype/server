@@ -1,4 +1,4 @@
-# Phase 10.6 A25 — cross-compile supatype-server, strip, publish binaries to CDN,
+# Phase 10.6 A25: cross-compile supatype-server, strip, publish binaries to CDN,
 # combined SHA256 checksums + minisign (same pattern as engine), GitHub Release assets.
 # Optional Windows amd64 build; A25 core targets: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64.
 name: Server release
@@ -62,7 +62,7 @@ jobs:
             goarch: arm64
             runner: ubuntu-24.04
             cross: true
-          # macos-13 retired 2025-12-04 — cross-compile amd64 on Linux (CGO_ENABLED=0).
+          # macos-13 retired 2025-12-04, so amd64 is cross compiled on Linux (CGO_ENABLED=0).
           - goos: darwin
             goarch: amd64
             runner: ubuntu-24.04
@@ -97,13 +97,16 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
           CC: ${{ matrix.cross == true && 'aarch64-linux-gnu-gcc' || '' }}
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
         run: |
           VERSION="${{ inputs.version || github.ref_name }}"
           EXT="${{ matrix.goos == 'windows' && '.exe' || '' }}"
           OUTPUT="supatype-server-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+          # The key plugin widget bundles must be signed with; fails when the secret is missing.
+          RELEASE_KEY="$(bash hack/release-public-key.sh)"
           go build \
             -trimpath \
-            -ldflags="-s -w -X github.com/supatype/server/internal/utilities.Version=${VERSION}" \
+            -ldflags="-s -w -X github.com/supatype/server/internal/utilities.Version=${VERSION} -X github.com/supatype/server/internal/pluginwidgets.embeddedReleaseKey=${RELEASE_KEY}" \
             -o "${OUTPUT}" \
             .
           echo "output=${OUTPUT}" >> "$GITHUB_OUTPUT"
@@ -119,7 +122,7 @@ jobs:
           OUTPUT="${{ steps.build.outputs.output }}"
           MAGIC=$(xxd -p -l 4 "${OUTPUT}")
           if [ "${MAGIC}" = "213c6172" ]; then
-            echo "::error::${OUTPUT} is Go c-archive (magic=${MAGIC}) — build package main (.), not ./cmd/"
+            echo "::error::${OUTPUT} is Go c-archive (magic=${MAGIC}); build package main (.), not ./cmd/"
             exit 1
           fi
           case "${{ matrix.goos }}" in
@@ -203,7 +206,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Hetzner Object Storage — do not use configure-aws-credentials (it calls AWS STS).
+    # Hetzner Object Storage. Do not use configure-aws-credentials: it calls AWS STS.
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.CDN_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.CDN_AWS_SECRET_ACCESS_KEY }}

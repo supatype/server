@@ -366,24 +366,28 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 // elevated for a caller who may elevate, whichever mode they chose: acting as
 // yourself applies to project rows, not to administration the role holds. A
 // role that cannot elevate is not elevated by these routes either.
+//
+// A mode the caller cannot act in, one the proxy does not know included, is
+// refused first, on every route: no route elevates a request whose mode was
+// not understood.
 func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, perms StudioPermissions, path string, functionsAdmin bool) (admission, bool) {
+	mode, ok := resolveActingMode(req, perms)
+	if !ok {
+		WriteErrorBody(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot act in the mode it asked for")
+		return admission{}, false
+	}
 	adm := admission{mode: ModeElevated, actor: result.Sub, role: result.Role, perms: perms, claims: result.Claims}
 	if under(path, "/sql") || under(path, "/metadata") || under(path, "/studio-admin") {
 		return adm, true
 	}
 	// Anonymous is asked for by name and means it, on every route: an
 	// administration route refuses it upstream, as it refuses any anon client.
-	if mode, _ := resolveActingMode(req, perms); mode == ModeAnon {
+	if mode == ModeAnon {
 		adm.mode = ModeAnon
 		return adm, true
 	}
 	if perms.ElevatedSQL && (functionsAdmin || isServiceRoleOnly(req.Method, path)) {
 		return adm, true
-	}
-	mode, ok := resolveActingMode(req, perms)
-	if !ok {
-		WriteErrorBody(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot act in the mode it asked for")
-		return admission{}, false
 	}
 	adm.mode = mode
 	if mode == ModeStudio {

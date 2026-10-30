@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,30 @@ func TestElevationRequiresTheCapability(t *testing.T) {
 func TestUnknownActingModeIsRefused(t *testing.T) {
 	if _, ok := modeFor(t, "admin", "root"); ok {
 		t.Fatal("an unrecognised acting mode must be refused")
+	}
+}
+
+// An acting mode the caller cannot act in is refused on every route, with the same 403 a data
+// route gives, before anything decides to elevate. The routes that admit only the service role
+// used to elevate a caller who may, whatever they asked for, so a mode the proxy does not know
+// was forwarded with the service role's key.
+func TestUnknownActingModeIsRefusedOnEveryRoute(t *testing.T) {
+	const refusal = "cannot act in the mode it asked for"
+	for _, path := range []string{
+		"/admin/v1/config",
+		"/admin/v1/functions/list",
+		"/auth/v1/admin/users",
+		"/storage/v1/bucket",
+		"/platform/v1/projects/default/settings",
+		"/functions/v1/admin/list",
+		"/sql",
+		"/metadata/introspect",
+		"/rest/v1/posts",
+	} {
+		next, rec := proxyAs(t, RoleAdmin, "bogus", http.MethodGet, path)
+		if next.reached || rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), refusal) {
+			t.Errorf("GET %s: got %d (%s) with %q, want the invalid-mode 403", path, rec.Code, rec.Body.String(), next.auth)
+		}
 	}
 }
 

@@ -88,12 +88,23 @@ func (s *store) reachesSidecarTree(r nameRules, bucket, rel string) bool {
 // store's own bookkeeping, such as buckets.json. It is never a bucket.
 const storeMetaDir = ".supatype"
 
-// isStoreMetaDir reports whether id, a bucket id, would be the store's own
-// directory under r: by name, or, under Windows rules, by any other name the
-// disk resolves to it, such as its 8.3 short name SUPATY~1 or a spelling
-// with a trailing dot, which Windows drops.
-func (s *store) isStoreMetaDir(r nameRules, id string) bool {
-	return r.sameName(id, storeMetaDir) || (r.windows && s.sameDir(id, storeMetaDir))
+// aliasesDir reports whether id, a bucket id, would be the directory dir
+// under the storage root under r: by name, or, under Windows rules, by any
+// other name the disk resolves to it, such as an 8.3 short name (SUPATY~1
+// for .supatype) or a spelling with a trailing dot, which Windows drops.
+func (s *store) aliasesDir(r nameRules, id, dir string) bool {
+	return r.sameName(id, dir) || (r.windows && s.sameDir(id, dir))
+}
+
+// aliasedBucket is the registered bucket whose directory id would be under
+// r, or nil when it would be a directory of its own.
+func (s *store) aliasedBucket(r nameRules, buckets []Bucket, id string) *Bucket {
+	for i := range buckets {
+		if s.aliasesDir(r, id, buckets[i].ID) {
+			return &buckets[i]
+		}
+	}
+	return nil
 }
 
 // sameDir reports whether a and b, relative to the storage root, are both

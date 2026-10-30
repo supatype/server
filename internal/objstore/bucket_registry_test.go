@@ -117,3 +117,64 @@ func TestACreatedBucketStillServesItsObjects(t *testing.T) {
 		t.Errorf("remove: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// createBucketAs posts a create for id and returns the answer.
+func createBucketAs(t *testing.T, handler http.Handler, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"id":` + jsonString(t, id) + `,"name":` + jsonString(t, id) + `}`
+	return do(t, handler, http.MethodPost, "/bucket", serviceToken(t), strings.NewReader(body))
+}
+
+// A bucket id the file system takes for an existing bucket's directory is
+// that bucket: creating it is refused as a duplicate, rather than giving two
+// registry entries one directory.
+func TestABucketCannotAliasAnotherBucket(t *testing.T) {
+	handler, root := newStore(t)
+	makeBucket(t, handler, "files", true)
+	makeBucket(t, handler, "longbucketname", true)
+	var ids []string
+	if hostRules.foldsCase {
+		ids = append(ids, "FILES", "Files")
+	}
+	if onWindows {
+		ids = append(ids, "files.", "files. .")
+		if short := "LONGBU~1"; (&store{root: root}).sameDir(short, "longbucketname") {
+			ids = append(ids, short)
+		} else {
+			t.Log("this volume gives longbucketname no 8.3 short name")
+		}
+	}
+	for _, id := range ids {
+		if rec := createBucketAs(t, handler, id); rec.Code != http.StatusConflict {
+			t.Errorf("create %q beside files: %d %s, want 409", id, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := createBucketAs(t, handler, "files2"); rec.Code != http.StatusOK {
+		t.Errorf("create files2: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Under Windows rules FILES is the bucket files, as its directory is; under
+// posix rules it is a bucket of its own.
+func TestABucketAliasFollowsTheNameRules(t *testing.T) {
+	root := t.TempDir()
+	s := &store{root: root}
+	placeFile(t, root, "files/a.txt", "a")
+	registered := []Bucket{{ID: "files"}}
+	for _, tc := range []struct {
+		rules string
+		id    string
+		want  bool
+	}{
+		{"windows", "FILES", true},
+		{"windows", "files", true},
+		{"windows", "other", false},
+		{"posix", "FILES", false},
+		{"posix", "files", true},
+	} {
+		got := s.aliasedBucket(bothRules[tc.rules], registered, tc.id) != nil
+		if got != tc.want {
+			t.Errorf("%s: %q aliases files = %t, want %t", tc.rules, tc.id, got, tc.want)
+		}
+	}
+}

@@ -324,7 +324,7 @@ func (s *store) listBuckets(w http.ResponseWriter, _ *http.Request) {
 // this file system takes for it.
 func (s *store) newBucketBody(w http.ResponseWriter, r *http.Request) (bucketCreate, bool) {
 	body, err := decodeBucketCreate(r.Body)
-	if err == nil && s.isStoreMetaDir(hostRules, body.ID) {
+	if err == nil && s.aliasesDir(hostRules, body.ID, storeMetaDir) {
 		err = errInvalidBucketID
 	}
 	if err != nil {
@@ -351,7 +351,7 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load buckets")
 		return
 	}
-	if _, existing := s.findBucket(buckets, body.ID); existing != nil {
+	if s.aliasedBucket(hostRules, buckets, body.ID) != nil {
 		writeError(w, http.StatusConflict, "bucket already exists")
 		return
 	}

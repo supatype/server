@@ -246,7 +246,8 @@ func (b *boundedRecorder) Write(p []byte) (int, error) {
 // streaming auth response would be buffered by the wrapper rather than reaching
 // the client as it is produced.
 func (b *boundedRecorder) Flush() {
-	if flusher, ok := b.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
+	_ = http.NewResponseController(b.ResponseWriter).Flush()
 }
+
+// Unwrap lets http.ResponseController reach the writer underneath.
+func (b *boundedRecorder) Unwrap() http.ResponseWriter { return b.ResponseWriter }

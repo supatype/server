@@ -25,7 +25,9 @@ func (a *API) getSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
 
 		externalURL = url
 	} else {
-		url, err := url.ParseRequestURI(a.config.API.ExternalURL)
+		// The SSO routes are under the gateway's /auth/v1 mount, the same as
+		// every other route of this API.
+		url, err := url.ParseRequestURI(authMountURL(a.config.API.ExternalURL))
 		if err != nil {
 			// this should not fail as a.config should have been validated using #Validate()
 			panic(err)

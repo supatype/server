@@ -83,9 +83,9 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		logrus.Warn(warning)
 	}
 
-	authCfg, err := conf.LoadGlobalFromEnv()
+	authCfg, err := loadAuthConfig()
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
+		return nil, nil, err
 	}
 
 	// Include serve ctx which carries cancelation signals so DialContext does
@@ -319,4 +319,20 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	tenantGateway = platform.New(srvCfg, ksPlatform)
 	handler := tenantGateway.Wrap(outerMux)
 	return handler, drain, nil
+}
+
+// loadAuthConfig decodes the auth configuration from the environment and sets up logging
+// from it. "supatype-server serve" comes straight here, without the root command's
+// loadGlobalConfig, so without this LOG_LEVEL, LOG_FILE and LOG_FIELDS were never applied on
+// that path. ConfigureLogging runs once per process, so the root command's own call wins
+// where it ran first.
+func loadAuthConfig() (*conf.GlobalConfiguration, error) {
+	authCfg, err := conf.LoadGlobalFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("unable to load authCfg: %w", err)
+	}
+	if err := observability.ConfigureLogging(&authCfg.Logging); err != nil {
+		logrus.WithError(err).Error("unable to configure logging")
+	}
+	return authCfg, nil
 }

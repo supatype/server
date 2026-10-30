@@ -17,13 +17,22 @@ import (
 //
 // Everything below is the real thing unless a test says otherwise.
 var (
-	openRoot  = os.OpenRoot
+	openRoot = os.OpenRoot
+
+	// probeFoldsCase asks the storage file system whether it ignores case. A
+	// test states the answer of a file system other than the one it runs on.
+	probeFoldsCase = foldsCaseAt
+
 	mkdirAll  = os.MkdirAll
 	readDir   = os.ReadDir
 	removeAll = os.RemoveAll
 	readFile  = os.ReadFile
 	writeFile = os.WriteFile
 	readAll   = io.ReadAll
+
+	// openIn opens a stored object. Every name the store accepts is a legal file
+	// name, so a file that is there and still will not open has to be stated.
+	openIn = (*os.Root).Open
 
 	// statFile describes an already-open file. It does not fail on a handle
 	// this package just opened, which is exactly why the branch that handles it
@@ -43,8 +52,8 @@ var marshalIndent = func(v any) ([]byte, error) {
 
 // writeTo streams src into rel under root, creating or truncating it.
 //
-// A copy that fails and a close that fails are the same thing to the caller —
-// the object is not stored — so they are reported together rather than as two
+// A copy that fails and a close that fails are the same thing to the caller:
+// the object is not stored. So they are reported together rather than as two
 // branches saying the same thing in different words. The close still has to
 // happen on the failing path, or a failed upload leaks the handle.
 func writeTo(root *os.Root, rel string, src io.Reader) (int64, error) {

@@ -64,8 +64,7 @@ func tailFunctionLogs(stream *logStream) http.HandlerFunc {
 			return
 		}
 
-		flusher, ok := w.(http.Flusher)
-		if !ok {
+		if !canFlush(w) {
 			utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "this server cannot stream"})
 			return
 		}
@@ -78,17 +77,23 @@ func tailFunctionLogs(stream *logStream) http.HandlerFunc {
 		}
 		defer func() { _ = upstream.Close() }()
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		// Kong and any other proxy in front of this must not buffer a stream whose whole purpose is
-		// to arrive as it happens.
-		w.Header().Set("X-Accel-Buffering", "no")
-		w.WriteHeader(http.StatusOK)
-		flusher.Flush()
-
-		relay(r.Context(), upstream, w, flusher, keepAliveInterval)
+		relay(r.Context(), upstream, w, startEventStream(w), keepAliveInterval)
 	}
+}
+
+// startEventStream sends the status and the headers of an event stream, flushed so the client
+// sees the stream open at once, and returns the flusher the relay keeps using.
+func startEventStream(w http.ResponseWriter) http.Flusher {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Kong and any other proxy in front of this must not buffer a stream whose whole purpose is
+	// to arrive as it happens.
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher := controllerFlusher{http.NewResponseController(w)}
+	flusher.Flush()
+	return flusher
 }
 
 // How often an idle tail emits a comment. A parameter on relay rather than a literal inside it so a
@@ -160,3 +165,25 @@ func relay(ctx context.Context, upstream io.Reader, w io.Writer, flusher http.Fl
 		}
 	}
 }
+
+// canFlush reports whether w, or a writer it wraps, can flush. A middleware's wrapper reaches
+// the writer underneath through Unwrap, as http.ResponseController does; asking the wrapper
+// alone refused every tail behind the gateway's CORS layer.
+func canFlush(w http.ResponseWriter) bool {
+	for {
+		if _, ok := w.(http.Flusher); ok {
+			return true
+		}
+		inner, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return false
+		}
+		w = inner.Unwrap()
+	}
+}
+
+// controllerFlusher flushes through http.ResponseController, so a wrapped writer flushes the
+// connection underneath.
+type controllerFlusher struct{ rc *http.ResponseController }
+
+func (f controllerFlusher) Flush() { _ = f.rc.Flush() }

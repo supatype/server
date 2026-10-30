@@ -118,3 +118,31 @@ func TestWhereEdgeFunctionsAnswer(t *testing.T) {
 		}
 	}
 }
+
+// The gateway forwards function calls to the port the supervisor started Deno
+// on. A blank or unparseable setting falls back to the default for the
+// supervisor, so it has to for the proxy and the probes too, or calls go to
+// port 80 where nothing listens.
+func TestFunctionCallsReachThePortDenoListensOn(t *testing.T) {
+	dir := t.TempDir()
+	installed(t, true)
+	for configured, want := range map[string]string{
+		"9001":       "127.0.0.1:9001",
+		"":           "127.0.0.1:8001",
+		"   ":        "127.0.0.1:8001",
+		"not-a-port": "127.0.0.1:8001",
+	} {
+		cfg := &config.Config{DenoFunctionsDir: dir, DenoPath: "deno", DenoPort: configured}
+		u, err := functionsUpstreamURL(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.Host != want {
+			t.Errorf("upstream for %q = %s, want %s", configured, u.Host, want)
+		}
+		supervisor := denoSupervisor(cfg, "")
+		if got := denoBaseURL(cfg, "", supervisor); got != "http://"+want {
+			t.Errorf("base for %q = %s, want http://%s", configured, got, want)
+		}
+	}
+}

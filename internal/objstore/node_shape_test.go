@@ -186,3 +186,52 @@ func TestTheSidecarTreeIsNeverListed(t *testing.T) {
 		}
 	}
 }
+
+// A prefix that only resolves to the sidecar tree, or to the bucket root by a
+// detour, hides the sidecars as the plain prefix does. Comparing the prefix as
+// written let "./.meta" list every sidecar's JSON.
+func TestTheSidecarTreeIsNeverListedByAnotherSpelling(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	upload(t, handler, "avatars", "photos/a.txt", "four")
+
+	for _, prefix := range []string{"./.meta", "photos/../.meta", "photos/../.meta/photos", ".//.meta/"} {
+		names, total := listNames(t, handler, `{"prefix":"`+prefix+`"}`)
+		if len(names) != 0 || total != "0" {
+			t.Errorf("prefix %q listed %q (total %q), want an empty listing", prefix, names, total)
+		}
+	}
+	for _, prefix := range []string{"photos/..", "./", "photos/../."} {
+		names, _ := listNames(t, handler, `{"prefix":"`+prefix+`"}`)
+		if want := []string{"photos/"}; !slices.Equal(names, want) {
+			t.Errorf("prefix %q listed %q, want %q", prefix, names, want)
+		}
+	}
+}
+
+// No object route reaches a sidecar, however its path is spelled: a download
+// would hand out the bookkeeping, and a delete or an upload would corrupt it.
+func TestNoObjectRouteReachesASidecar(t *testing.T) {
+	handler, root := newStore(t)
+	makeBucket(t, handler, "avatars", true)
+	upload(t, handler, "avatars", "photos/a.txt", "four")
+	sidecar := filepath.Join(root, "avatars", ".meta", "photos", "a.txt.json")
+
+	for _, objPath := range []string{".meta/photos/a.txt.json", "photos/%2E%2E/.meta/photos/a.txt.json", "./.meta/photos/a.txt.json"} {
+		for _, target := range []string{"/object/public/avatars/", "/object/authenticated/avatars/"} {
+			if rec := do(t, handler, http.MethodGet, target+objPath, userToken(t), nil); rec.Code == http.StatusOK {
+				t.Errorf("GET %s%s served the sidecar: %s", target, objPath, rec.Body.String())
+			}
+		}
+		rec := do(t, handler, http.MethodPost, "/object/avatars/"+objPath, userToken(t), strings.NewReader("{}"))
+		if rec.Code == http.StatusOK {
+			t.Errorf("upload over %s was accepted", objPath)
+		}
+	}
+	body := `{"prefixes":["photos/../.meta/photos/a.txt.json"]}`
+	do(t, handler, http.MethodDelete, "/object/avatars", userToken(t), strings.NewReader(body))
+	// #nosec G304 -- this test's own temp dir
+	if data, err := os.ReadFile(sidecar); err != nil || !strings.Contains(string(data), `"name": "photos/a.txt"`) {
+		t.Errorf("sidecar after the attempts: %v %q", err, data)
+	}
+}

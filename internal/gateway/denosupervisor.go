@@ -10,6 +10,7 @@ package gateway
 // to start: the rest of the stack is still worth serving.
 
 import (
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -71,6 +72,13 @@ func denoPort(configured string) int {
 	return port
 }
 
+// denoAddr is the address the in-process subprocess listens on, with the port
+// resolved as denoPort resolves it, so the proxy and the probes always look
+// where the supervisor started it.
+func denoAddr(cfg *config.Config) string {
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(denoPort(cfg.DenoPort)))
+}
+
 // denoBaseURL is where the health probes and the functions admin API look for
 // edge functions: an external worker if one is configured, this deployment's own
 // subprocess if it started one, and nowhere when it serves no functions at all.
@@ -84,5 +92,5 @@ func denoBaseURL(cfg *config.Config, worker string, supervisor *deno.Manager) st
 	if supervisor == nil {
 		return ""
 	}
-	return "http://127.0.0.1:" + utilities.FirstNonEmpty(cfg.DenoPort, defaultDenoPort)
+	return "http://" + denoAddr(cfg)
 }

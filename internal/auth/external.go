@@ -679,20 +679,27 @@ func (a *API) Provider(ctx context.Context, name string, scopes string) (provide
 // authRoutePrefix is where the gateway mounts this API.
 const authRoutePrefix = "/auth/v1"
 
-// customProviderCallbackURL is where a custom provider sends the browser back.
+// authMountURL is the public address of this API's routes, with no trailing
+// slash.
 //
-// It has to name the public path of the /callback route, which is under the
-// gateway's /auth/v1 mount: built-in providers are configured with
-// "<external URL>/auth/v1/callback", and "<external URL>/callback" lands on the
-// app route and answers 404. A deployment whose external URL already names the
-// auth mount (Cloud's platform server uses ".../auth/v1") keeps its own path
+// The external URL is the gateway's root in Docker and on Cloud tenants, and
+// the gateway routes only /auth/v1/* here, so "<external URL>/callback" lands on
+// the app route and answers 404. A deployment whose external URL already names
+// the auth mount (native dev, Cloud's platform server) keeps its own path
 // rather than gaining a second prefix.
-func customProviderCallbackURL(externalURL string) string {
+func authMountURL(externalURL string) string {
 	base := strings.TrimRight(externalURL, "/")
 	if !strings.HasSuffix(base, authRoutePrefix) {
 		base += authRoutePrefix
 	}
-	return base + "/callback"
+	return base
+}
+
+// customProviderCallbackURL is where a custom provider sends the browser back.
+// Built-in providers are configured with "<external URL>/auth/v1/callback";
+// custom ones must agree.
+func customProviderCallbackURL(externalURL string) string {
+	return authMountURL(externalURL) + "/callback"
 }
 
 // loadCustomProvider loads a custom OAuth or OIDC provider from the database

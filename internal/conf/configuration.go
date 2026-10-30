@@ -17,9 +17,10 @@ import (
 	"github.com/gobwas/glob"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
-	"github.com/kelseyhightower/envconfig"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"gopkg.in/gomail.v2"
+
+	"github.com/supatype/server/internal/envparse"
 )
 
 const defaultMinPasswordLength int = 6
@@ -135,7 +136,30 @@ type DBConfiguration struct {
 
 func (c *DBConfiguration) Validate() error {
 	c.ConnPercentage = min(max(c.ConnPercentage, 0), 100)
+	if reason := badNamespace(c.Namespace); reason != "" {
+		return fmt.Errorf("SUPATYPE_DB_NAMESPACE %q %s: the migrations name it unquoted "+
+			"(CREATE SCHEMA %s, %s.users), so it must be a name Postgres takes bare and reads "+
+			"the same way the connection's search_path does", c.Namespace, reason, c.Namespace, c.Namespace)
+	}
 	return nil
+}
+
+// dbNamespacePattern is a lower-case identifier within Postgres's 63-byte limit.
+var dbNamespacePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// badNamespace says why a namespace cannot be used, or returns "" when it can.
+func badNamespace(ns string) string {
+	if !dbNamespacePattern.MatchString(ns) {
+		return "is not a plain lower-case identifier (a letter or underscore, then letters, " +
+			"digits or underscores, at most 63)"
+	}
+	if _, reserved := reservedSQLKeywords[ns]; reserved {
+		return "is a reserved SQL keyword"
+	}
+	if strings.HasPrefix(ns, "pg_") {
+		return "starts with pg_, which Postgres keeps for system schemas"
+	}
+	return ""
 }
 
 // JWTConfiguration holds all the JWT related configuration.
@@ -392,6 +416,12 @@ type GlobalConfiguration struct {
 	// InternalHTTPTimeout bounds outbound calls to identity and SMS providers.
 	// Same story as the captcha timeout: it used to be read in a package init.
 	InternalHTTPTimeout time.Duration `split_words:"true" default:"10s"`
+
+	// Mode is SUPATYPE_MODE, the same variable the gateway reads. The auth
+	// service only asks whether it is "dev", and unset is not dev here: what
+	// hangs off it (the console mailer logging live sign-in links) must be
+	// asked for.
+	Mode string
 
 	RateLimitHeader                     string  `split_words:"true"`
 	RateLimitEmailSent                  Rate    `split_words:"true" default:"30"`
@@ -1085,7 +1115,7 @@ func LoadGlobal(filename string) (*GlobalConfiguration, error) {
 const EnvPrefix = "supatype"
 
 func loadGlobal(config *GlobalConfiguration) error {
-	if err := envconfig.Process(EnvPrefix, config); err != nil {
+	if err := envparse.Process(EnvPrefix, config); err != nil {
 		return err
 	}
 
@@ -1178,6 +1208,12 @@ func populateGlobal(config *GlobalConfiguration) error {
 
 // ApplyDefaults sets defaults for a GlobalConfiguration
 func (config *GlobalConfiguration) ApplyDefaults() error {
+	// The namespace is trimmed here, once, and an empty one takes the default the struct tag
+	// gives an unset variable. Validate then only refuses a name that cannot be used.
+	config.DB.Namespace = strings.TrimSpace(config.DB.Namespace)
+	if config.DB.Namespace == "" {
+		config.DB.Namespace = "auth"
+	}
 	if len(config.JWT.AdminRoles) == 0 {
 		config.JWT.AdminRoles = []string{"service_role", "supatype_admin"}
 	}
@@ -1461,9 +1497,10 @@ func (t *SmsProviderConfiguration) IsTwilioVerifyProvider() bool {
 
 // IndexWorkerConfiguration holds the configuration for creating database indexes on the users table.
 type IndexWorkerConfiguration struct {
-	// user opt-in — when true, always create indexes (threshold is ignored).
+	// An opt-in: when true, indexes are always created and the threshold is ignored.
 	EnsureUserSearchIndexesExist bool `json:"ensure_user_search_indexes_exist" split_words:"true" default:"false"`
-	// progressive rollout — when > 0, create indexes only if user count ≤ threshold.
+	// A progressive rollout: when above 0, indexes are created only while the user
+	// count is at or below this threshold.
 	// A value of 0 means disabled. Has no effect when EnsureUserSearchIndexesExist is true.
 	MaxUsersThreshold int64 `json:"max_users_threshold" split_words:"true" default:"0"`
 }

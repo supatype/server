@@ -89,6 +89,11 @@ func (w *interceptingResponseWriter) Header() http.Header {
 	return w.writer.Header()
 }
 
+// Unwrap lets http.ResponseController reach Flush and Hijack on the writer underneath.
+func (w *interceptingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.writer
+}
+
 // countStatusCodesSafely counts the number of HTTP status codes per route that
 // occurred while the service was running. If it is not able to identify the route
 // via chi.RouteContext(ctx).RoutePattern() it counts with a noroute attribute.

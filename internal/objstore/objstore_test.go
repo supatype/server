@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -455,6 +456,22 @@ func TestABucketHoldingOnlySidecarsIsEmpty(t *testing.T) {
 	}
 	if rec := do(t, handler, http.MethodDelete, "/bucket/avatars", serviceToken(t), nil); rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want the sidecar directory not to count", rec.Code)
+	}
+}
+
+// Where the file system ignores case, ".META" is the sidecar directory, as
+// every object route takes it to be, so a bucket holding only that directory
+// holds no objects.
+func TestABucketHoldingOnlyACaseVariantSidecarDirIsEmpty(t *testing.T) {
+	if !hostRules.foldsCase {
+		t.Skip("this file system keeps case, so .META is an ordinary folder")
+	}
+	handler, root := newStore(t)
+	makeBucket(t, handler, "avatars", false)
+
+	placeFile(t, root, "avatars/.META/a.png.json", "{}")
+	if rec := do(t, handler, http.MethodDelete, "/bucket/avatars", serviceToken(t), nil); rec.Code != http.StatusOK {
+		t.Errorf("status = %d %s, want .META not to count", rec.Code, rec.Body.String())
 	}
 }
 
@@ -949,6 +966,7 @@ func TestAnObjectWithNoSidecarGetsAStableID(t *testing.T) {
 
 func TestListObjectsRefusals(t *testing.T) {
 	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
 
 	for name, tc := range map[string]struct {
 		path, body string
@@ -1007,6 +1025,45 @@ func TestSignedURLRoundTrip(t *testing.T) {
 	}
 	if rec.Body.String() != "secret bytes" {
 		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+// signURL signs an object through the handler and parses the URL it returns.
+func signURL(t *testing.T, handler http.Handler, escaped string) *url.URL {
+	t.Helper()
+	rec := do(t, handler, http.MethodPost, "/object/sign/private/"+escaped, userToken(t), strings.NewReader(`{"expiresIn":60}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sign: %d %s", rec.Code, rec.Body.String())
+	}
+	var signed struct {
+		SignedURL string `json:"signedURL"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &signed); err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(signed.SignedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// A signed URL is a URL: a name holding a space, "?" or "#" is escaped in it,
+// or the token ends up in the path or the fragment and the link answers 400.
+func TestASignedURLEscapesTheObjectName(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "private", false)
+
+	u := signURL(t, handler, "dir/my%20file%3F%23.png")
+	if u.Path != "/storage/v1/object/sign/private/dir/my file?#.png" || u.Fragment != "" || u.Query().Get("token") == "" {
+		t.Fatalf("signed URL = %q", u)
+	}
+
+	upload(t, handler, "private", "dir/my%20file%3F%23.png", "odd name")
+	u = signURL(t, handler, "dir/my%20file%3F%23.png")
+	rec := do(t, handler, http.MethodGet, strings.TrimPrefix(u.RequestURI(), "/storage/v1"), "", nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "odd name" {
+		t.Errorf("serve %q: %d %q", u, rec.Code, rec.Body.String())
 	}
 }
 
@@ -1182,7 +1239,7 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	upload(t, handler, "avatars", "a.png", "png bytes")
 
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
-	before, err := s.loadObjectMeta("avatars", "a.png")
+	before, err := loadMeta(t, s, "avatars", "a.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1190,7 +1247,7 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond) // RFC3339 has second resolution.
 	do(t, handler, http.MethodGet, "/object/public/avatars/a.png", "", nil)
 
-	after, err := s.loadObjectMeta("avatars", "a.png")
+	after, err := loadMeta(t, s, "avatars", "a.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1202,20 +1259,30 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	}
 }
 
+// loadMeta reads the sidecar of objPath in bucket from s's storage root.
+func loadMeta(t *testing.T, s *store, bucket, objPath string) (*ObjectMeta, error) {
+	t.Helper()
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+	return s.loadObjectMeta(root, bucket, objPath)
+}
+
 func TestLoadObjectMetaRefusals(t *testing.T) {
 	s := &store{root: t.TempDir(), mu: &sync.RWMutex{}}
 
-	if _, err := s.loadObjectMeta("..", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "..", "a.png"); err == nil {
 		t.Error("a bucket that escapes was accepted")
 	}
-	if _, err := s.loadObjectMeta("avatars", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "avatars", "a.png"); err == nil {
 		t.Error("a sidecar that is not there was read")
 	}
 
 	absent := &store{root: filepath.Join(t.TempDir(), "gone"), mu: &sync.RWMutex{}}
-	if _, err := absent.loadObjectMeta("avatars", "a.png"); err == nil {
-		t.Error("a storage root that is not there was read")
-	}
 	// Writing creates what it needs, root included, so a first upload into a
 	// freshly configured directory works rather than failing once.
 	if err := absent.saveObjectMeta(&ObjectMeta{}, "avatars", "a.png"); err != nil {
@@ -1365,6 +1432,7 @@ func TestAStorageRootThatCannotBeOpened(t *testing.T) {
 		"upload":   {http.MethodPost, "/object/avatars/b.png", userToken(t), "x"},
 		"download": {http.MethodGet, "/object/public/avatars/a.png", "", ""},
 		"remove":   {http.MethodDelete, "/object/avatars", userToken(t), `{"prefixes":["a.png"]}`},
+		"list":     {http.MethodPost, "/object/list/avatars", userToken(t), `{"prefix":""}`},
 	} {
 		rec := do(t, handler, tc.method, tc.path, tc.bearer, strings.NewReader(tc.body))
 		if rec.Code != http.StatusInternalServerError {
@@ -1427,7 +1495,7 @@ func TestASidecarThatCannotBeRead(t *testing.T) {
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
 	failing(t, &readAll, func(io.Reader) ([]byte, error) { return nil, errDisk })
 
-	if _, err := s.loadObjectMeta("avatars", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "avatars", "a.png"); err == nil {
 		t.Error("want an error")
 	}
 }
@@ -1626,15 +1694,12 @@ func TestAnUploadThatCannotMakeItsDirectory(t *testing.T) {
 // A file that exists and still cannot be opened is not a missing object, and
 // answering 404 would send someone looking for a file that is right there.
 func TestServingAFileThatCannotBeOpened(t *testing.T) {
-	handler, root := newStore(t)
+	handler, _ := newStore(t)
 	makeBucket(t, handler, "avatars", true)
 	upload(t, handler, "avatars", "a.png", "x")
+	failing(t, &openIn, func(*os.Root, string) (*os.File, error) { return nil, errDisk })
 
-	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
-	rec := httptest.NewRecorder()
-	// A name no filesystem will open, and not one that is merely absent.
-	s.serveFile(rec, httptest.NewRequest(http.MethodGet, "/", nil), "avatars", "a\x00.png")
-
+	rec := do(t, handler, http.MethodGet, "/object/public/avatars/a.png", "", nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
 	}

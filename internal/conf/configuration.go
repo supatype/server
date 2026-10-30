@@ -136,8 +136,19 @@ type DBConfiguration struct {
 
 func (c *DBConfiguration) Validate() error {
 	c.ConnPercentage = min(max(c.ConnPercentage, 0), 100)
+	c.Namespace = strings.TrimSpace(c.Namespace)
+	if !dbNamespacePattern.MatchString(c.Namespace) {
+		return fmt.Errorf("SUPATYPE_DB_NAMESPACE %q is not a plain lower-case identifier "+
+			"(a letter or underscore, then letters, digits or underscores, at most 63): the migrations "+
+			"name it unquoted, where Postgres folds it to lower case, so any other name would put "+
+			"the auth tables in a different schema from the one the server connects to", c.Namespace)
+	}
 	return nil
 }
+
+// dbNamespacePattern is a schema name Postgres reads the same quoted or bare, within its
+// 63-byte identifier limit.
+var dbNamespacePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 // JWTConfiguration holds all the JWT related configuration.
 type JWTConfiguration struct {
@@ -1185,6 +1196,10 @@ func populateGlobal(config *GlobalConfiguration) error {
 
 // ApplyDefaults sets defaults for a GlobalConfiguration
 func (config *GlobalConfiguration) ApplyDefaults() error {
+	if strings.TrimSpace(config.DB.Namespace) == "" {
+		// The same default the struct tag gives an unset variable.
+		config.DB.Namespace = "auth"
+	}
 	if len(config.JWT.AdminRoles) == 0 {
 		config.JWT.AdminRoles = []string{"service_role", "supatype_admin"}
 	}

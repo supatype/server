@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"strings"
 	"time"
 
@@ -34,28 +33,10 @@ const (
 // Returns an error either from index creation failure (partial or complete) or if the advisory lock
 // could not be acquired.
 func CreateIndexes(ctx context.Context, config *conf.GlobalConfiguration, le *logrus.Entry) error {
-	rawURL := config.DB.URL
-	if nu, err := storage.EnsurePostgresSearchPathInURL(rawURL, config.DB.Namespace); err == nil {
-		rawURL = nu
-	}
-	u, err := url.Parse(rawURL)
+	deets, err := storage.MigrationConnectionDetails(
+		config.DB.URL, config.DB.Driver, config.DB.Namespace, "auth_indexworker")
 	if err != nil {
 		le.WithError(err).Fatal("Error parsing db connection url")
-	}
-
-	if config.DB.Driver == "" && config.DB.URL != "" {
-		config.DB.Driver = u.Scheme
-	}
-
-	q := u.Query()
-	q.Set("application_name", "auth_indexworker")
-	u.RawQuery = q.Encode()
-	deets := &pop.ConnectionDetails{
-		Dialect: config.DB.Driver,
-		URL:     u.String(),
-	}
-	deets.Options = map[string]string{
-		"Namespace": config.DB.Namespace,
 	}
 
 	db, err := pop.NewConnection(deets)

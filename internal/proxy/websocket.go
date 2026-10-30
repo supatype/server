@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net"
 	"net/http"
@@ -79,20 +80,26 @@ func targetAddr(target *url.URL) string {
 	return net.JoinHostPort(target.Hostname(), portOrDefault(target, port))
 }
 
-// upstreamTLSConfig is the TLS configuration for an upstream named
-// serverName. The HTTP proxy leaves its transport unset, so its upstreams are
-// reached through http.DefaultTransport; this takes that transport's TLS
-// settings too, so both paths trust the same roots, and fills in the server
-// name as the transport would.
+// upstreamRoots is the certificate pool a TLS upstream is verified against;
+// nil is the system's roots. The HTTP proxy reaches its upstreams through
+// http.DefaultTransport, which this server never configures, so it verifies
+// against the system's roots too.
+var upstreamRoots *x509.CertPool
+
+// upstreamTLSConfig is the TLS configuration for a WebSocket upstream named
+// serverName. It offers only HTTP/1.1, because the upgrade is an HTTP/1.1
+// request: offered h2, an upstream that speaks it would agree to it and then
+// read the upgrade as a broken HTTP/2 preface. The config is built afresh
+// rather than cloned from http.DefaultTransport, whose TLS settings the HTTP/2
+// support rewrites, adding h2, on the transport's first request; reading them
+// here would race that write.
 func upstreamTLSConfig(serverName string) *tls.Config {
-	config := &tls.Config{MinVersion: tls.VersionTLS12}
-	if shared, ok := http.DefaultTransport.(*http.Transport); ok && shared.TLSClientConfig != nil {
-		config = shared.TLSClientConfig.Clone()
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: serverName,
+		RootCAs:    upstreamRoots,
+		NextProtos: []string{"http/1.1"},
 	}
-	if config.ServerName == "" {
-		config.ServerName = serverName
-	}
-	return config
 }
 
 // hijackClient takes over the client connection, answering the request itself

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/x509"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,10 +12,11 @@ import (
 )
 
 // tlsEchoUpstream is a TLS server that answers a WebSocket upgrade with 101
-// and echoes the first bytes it reads back.
-func tlsEchoUpstream(t *testing.T) *httptest.Server {
+// and echoes the first bytes it reads back. With h2 it also offers HTTP/2 in
+// its TLS handshake, as a realtime server behind a modern TLS front does.
+func tlsEchoUpstream(t *testing.T, h2 bool) *httptest.Server {
 	t.Helper()
-	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			http.Error(w, "expected websocket", http.StatusBadRequest)
 			return
@@ -34,27 +36,31 @@ func tlsEchoUpstream(t *testing.T) *httptest.Server {
 		}
 		_, _ = conn.Write(buf[:n])
 	}))
+	upstream.EnableHTTP2 = h2
+	upstream.StartTLS()
 	t.Cleanup(upstream.Close)
 	return upstream
 }
 
-// trustForUpstreams makes the shared HTTP transport, whose TLS settings the
-// HTTP proxy uses for every upstream, trust the given test server. The
-// WebSocket proxy must take its TLS settings from the same place.
+// trustForUpstreams makes both proxies trust the given test server: the
+// shared HTTP transport, which the HTTP proxy uses for every upstream, and
+// upstreamRoots, which the WebSocket proxy verifies against.
 func trustForUpstreams(t *testing.T, upstream *httptest.Server) {
 	t.Helper()
-	previous := http.DefaultTransport
-	t.Cleanup(func() { http.DefaultTransport = previous })
+	previous, previousRoots := http.DefaultTransport, upstreamRoots
+	t.Cleanup(func() { http.DefaultTransport, upstreamRoots = previous, previousRoots })
 	shared := previous.(*http.Transport).Clone()
 	shared.TLSClientConfig = upstream.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	http.DefaultTransport = shared
+	upstreamRoots = x509.NewCertPool()
+	upstreamRoots.AddCert(upstream.Certificate())
 }
 
 // A wss or https target is reached over TLS, verified with the settings the
 // HTTP proxy uses. Dialing it over plain TCP sends the upgrade in the clear to
 // a TLS server, which answers with an error instead of 101.
 func TestWebSocketProxy_ReachesATLSTargetOverTLS(t *testing.T) {
-	upstream := tlsEchoUpstream(t)
+	upstream := tlsEchoUpstream(t, false)
 	trustForUpstreams(t, upstream)
 	for _, scheme := range []string{"https", "wss"} {
 		t.Run(scheme, func(t *testing.T) {
@@ -87,5 +93,32 @@ func TestWebSocketTargetDefaultPorts(t *testing.T) {
 		if got := targetAddr(u); got != want {
 			t.Errorf("targetAddr(%s) = %s, want %s", raw, got, want)
 		}
+	}
+}
+
+// A WebSocket upgrade is HTTP/1.1, so the TLS handshake must offer only
+// HTTP/1.1. Once the HTTP proxy has made a request, the shared transport's
+// TLS settings offer h2 as well; a WebSocket dial that took them as they are
+// would agree on h2 with an upstream that speaks it, then write an HTTP/1.1
+// upgrade the upstream reads as a broken HTTP/2 preface.
+func TestWebSocketProxy_UpgradesOverHTTP1WithAnH2Upstream(t *testing.T) {
+	upstream := tlsEchoUpstream(t, true)
+	trustForUpstreams(t, upstream)
+	resp, err := http.Get(upstream.URL)
+	if err != nil {
+		t.Fatalf("plain request through the shared transport: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.ProtoMajor != 2 {
+		t.Fatalf("the upstream answered over %s, want HTTP/2 so the test means something", resp.Proto)
+	}
+
+	conn, br := dialUpgraded(t, &url.URL{Scheme: "wss", Host: upstream.Listener.Addr().String()})
+	if _, err := io.WriteString(conn, "ping"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := make([]byte, 4)
+	if _, err := io.ReadFull(br, got); err != nil || string(got) != "ping" {
+		t.Fatalf("echo = %q, %v; want ping", got, err)
 	}
 }

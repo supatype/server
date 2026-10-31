@@ -80,10 +80,14 @@ var errInvalidObjectPath = errors.New("invalid object path")
 
 // cleanObject is the bucket id and the object's path on disk relative to its
 // bucket, or an error when either is refused: a name that leaves the bucket,
-// names the sidecar tree, or reaches a file on disk under another name.
+// names the sidecar tree, steps through folders, or reaches a file on disk
+// under another name.
 func (s *store) cleanObject(bucket, objPath string) (cleanBucket, rel string, err error) {
 	if cleanBucket, err = cleanBucketID(bucket); err != nil {
 		return "", "", err
+	}
+	if stepsThroughFolders(objPath) {
+		return "", "", errInvalidObjectPath
 	}
 	if rel, err = cleanObjectPath(objPath, false); err != nil {
 		return "", "", err
@@ -92,6 +96,19 @@ func (s *store) cleanObject(bucket, objPath string) (cleanBucket, rel string, er
 		return "", "", errInvalidObjectPath
 	}
 	return cleanBucket, rel, nil
+}
+
+// stepsThroughFolders reports whether a slash-separated part of objPath is ".", ".." or empty.
+// Those are path structure, not names: the path on disk is cleaned, so "x/../a", "./a" and
+// "x//a" reached the file of another object, and "x/a/.." the folder x, answered for under a
+// name nobody stored. The leading slash a route may carry is not a part.
+func stepsThroughFolders(objPath string) bool {
+	for part := range strings.SplitSeq(strings.TrimPrefix(objPath, "/"), "/") {
+		if part == "" || part == "." || part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // joinPaths is where the object at rel in bucket and its sidecar live,

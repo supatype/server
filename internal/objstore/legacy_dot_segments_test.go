@@ -2,6 +2,7 @@ package objstore
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -34,5 +35,30 @@ func TestADotSegmentNameIsNotServedAsAnotherObject(t *testing.T) {
 	}
 	if rec := do(t, handler, http.MethodGet, "/object/public/files/"+escapeSegments(name), "", nil); rec.Code == http.StatusOK {
 		t.Errorf("GET %q: %d %q, want it not to reach object a", name, rec.Code, rec.Body.String())
+	}
+}
+
+// Any name, not only a legacy-looking one: "x/../a", "./a" and "x//a" were cleaned to the path of
+// another object on disk, so a GET answered with that object's bytes under a name nobody uploaded,
+// and an upload under it overwrote that object. Such a name is refused, never served or written.
+func TestADotOrEmptySegmentNeverReachesAnotherObject(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "files", true)
+	upload(t, handler, "files", "a", "real")
+	upload(t, handler, "files", "x/a", "nested")
+	for _, name := range []string{"x/../a", "./a", "x/./a", "x//a", "x/a/..", "x/a/."} {
+		target := "/object/public/files/" + escapeSegments(name)
+		if rec := do(t, handler, http.MethodGet, target, "", nil); rec.Code == http.StatusOK {
+			t.Errorf("GET %q: %d %q, want it refused", name, rec.Code, rec.Body.String())
+		}
+		rec := do(t, handler, http.MethodPost, "/object/files/"+escapeSegments(name), serviceToken(t), strings.NewReader("overwritten"))
+		if rec.Code < 400 {
+			t.Errorf("upload %q: %d, want it refused", name, rec.Code)
+		}
+	}
+	for name, want := range map[string]string{"a": "real", "x/a": "nested"} {
+		if rec := do(t, handler, http.MethodGet, "/object/public/files/"+name, "", nil); rec.Body.String() != want {
+			t.Errorf("object %q now holds %q, want %q", name, rec.Body.String(), want)
+		}
 	}
 }

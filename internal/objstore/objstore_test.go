@@ -137,6 +137,10 @@ func TestCleanObjectPath(t *testing.T) {
 		"a parent reference":    {"../secrets", false, true},
 		"a deeper escape":       {"a/../../secrets", false, true},
 		"an absolute path":      {"//etc/passwd", false, true},
+		"a step back to a file": {"x/../a", false, true},
+		"an empty part":         {"x//a", false, true},
+		"a trailing slash":      {"x/", false, true},
+		"a folder step":         {"a/..", true, false},
 	} {
 		_, err := cleanObjectPath(tc.path, tc.allowEmpty)
 		if (err != nil) != tc.wantErr {

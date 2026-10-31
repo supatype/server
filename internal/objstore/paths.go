@@ -24,13 +24,22 @@ func cleanBucketID(bucket string) (string, error) {
 	return bucket, nil
 }
 
-func cleanObjectPath(objPath string, allowEmpty bool) (string, error) {
+// cleanObjectPath is objPath as a path on disk relative to its bucket, or an error when it
+// leaves the bucket. An object name (folder false) is also refused when a slash-separated part
+// is ".", ".." or empty: those are path structure, not names, and the path on disk is cleaned,
+// so "x/../a", "./a" and "x//a" reached the file of another object, and "x/a/.." the folder x,
+// answered for under a name nobody stored. A folder may be empty, and the caller cleans its
+// steps itself: "a/.." lists the bucket root.
+func cleanObjectPath(objPath string, folder bool) (string, error) {
 	objPath = strings.TrimPrefix(objPath, "/")
 	if objPath == "" {
-		if allowEmpty {
+		if folder {
 			return "", nil
 		}
 		return "", fmt.Errorf("invalid object path")
+	}
+	if !folder && hasStepPart(objPath, isSlash) {
+		return "", errInvalidObjectPath
 	}
 
 	// The traversal check runs on the path as it will be on disk: an encoded
@@ -86,9 +95,6 @@ func (s *store) cleanObject(bucket, objPath string) (cleanBucket, rel string, er
 	if cleanBucket, err = cleanBucketID(bucket); err != nil {
 		return "", "", err
 	}
-	if stepsThroughFolders(objPath) {
-		return "", "", errInvalidObjectPath
-	}
 	if rel, err = cleanObjectPath(objPath, false); err != nil {
 		return "", "", err
 	}
@@ -96,19 +102,6 @@ func (s *store) cleanObject(bucket, objPath string) (cleanBucket, rel string, er
 		return "", "", errInvalidObjectPath
 	}
 	return cleanBucket, rel, nil
-}
-
-// stepsThroughFolders reports whether a slash-separated part of objPath is ".", ".." or empty.
-// Those are path structure, not names: the path on disk is cleaned, so "x/../a", "./a" and
-// "x//a" reached the file of another object, and "x/a/.." the folder x, answered for under a
-// name nobody stored. The leading slash a route may carry is not a part.
-func stepsThroughFolders(objPath string) bool {
-	for part := range strings.SplitSeq(strings.TrimPrefix(objPath, "/"), "/") {
-		if part == "" || part == "." || part == ".." {
-			return true
-		}
-	}
-	return false
 }
 
 // joinPaths is where the object at rel in bucket and its sidecar live,
@@ -133,8 +126,9 @@ func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 //     dropped it, so the old file of "notes." is "notes", which may as well
 //     be the object "notes" itself.
 //   - where a part is ".", "..", or empty: the path steps through folders or
-//     collapses, so "%%x/../a" would open the file of the object "a" and
-//     answer for it under another name.
+//     collapses, so on Windows `%%x\..\a` would open the file of the object
+//     "a" and answer for it under another name. The slash forms never get
+//     here: cleanObjectPath refuses them first.
 //
 // So a name Windows once split at a backslash no longer answers under that
 // name, by decision: its file is exactly where the split name is stored now,
@@ -145,22 +139,33 @@ func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 func (r nameRules) legacyRel(objPath string) (string, bool) {
 	name := strings.TrimPrefix(objPath, "/")
 	rel := filepath.FromSlash(name)
-	if !filepath.IsLocal(rel) || r.hasStepPart(name) || (r.windows && r.renamesAPart(name)) || r.isStoredLocation(name) {
+	if !filepath.IsLocal(rel) || hasStepPart(name, r.isSeparator) || (r.windows && r.renamesAPart(name)) || r.isStoredLocation(name) {
 		return "", false
 	}
 	return rel, true
 }
 
-// hasStepPart reports whether name, split into parts as r splits a path, has a part that is
-// not a name of its own: ".", "..", or an empty part between two separators.
-func (r nameRules) hasStepPart(name string) bool {
+// isStepPart reports whether part of a path is not a name of its own: ".", "..", or an empty
+// part between two separators.
+func isStepPart(part string) bool {
+	return part == "" || part == "." || part == ".."
+}
+
+// isSlash is the separator of an object name.
+func isSlash(c rune) bool {
+	return c == '/'
+}
+
+// hasStepPart reports whether name, split into parts at each rune isSeparator accepts, has a
+// step part.
+func hasStepPart(name string, isSeparator func(rune) bool) bool {
 	for {
-		i := strings.IndexFunc(name, r.isSeparator)
+		i := strings.IndexFunc(name, isSeparator)
 		part := name
 		if i >= 0 {
 			part = name[:i]
 		}
-		if part == "" || part == "." || part == ".." {
+		if isStepPart(part) {
 			return true
 		}
 		if i < 0 {
@@ -310,7 +315,7 @@ func renamedSuffix(name string) bool {
 // traversal check.
 func (r nameRules) renamesAPart(rel string) bool {
 	for part := range strings.FieldsFuncSeq(rel, r.isSeparator) {
-		if part != "." && part != ".." && renamedSuffix(part) {
+		if !isStepPart(part) && renamedSuffix(part) {
 			return true
 		}
 	}
@@ -352,7 +357,7 @@ func (r nameRules) diskSegment(segment string) string {
 // as they are for the traversal check to judge.
 func (r nameRules) storableAsIs(segment string) bool {
 	switch {
-	case segment == "" || segment == "." || segment == "..":
+	case isStepPart(segment):
 		return true
 	case strings.HasPrefix(segment, encodedMarker) || strings.ContainsRune(segment, 0):
 		return false

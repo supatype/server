@@ -23,30 +23,23 @@ func TestALegacyLookupNeverStepsThroughDotSegments(t *testing.T) {
 	}
 }
 
-// Through the API, on the host's own rules: the object "a" exists, and a name that steps
-// back to it from a legacy-looking folder must not be served.
-func TestADotSegmentNameIsNotServedAsAnotherObject(t *testing.T) {
-	handler, _ := newStore(t)
-	makeBucket(t, handler, "files", true)
-	upload(t, handler, "files", "a", "real")
-	name := "%%x/../a"
-	if onWindows {
-		name = `%%x\..\a`
-	}
-	if rec := do(t, handler, http.MethodGet, "/object/public/files/"+escapeSegments(name), "", nil); rec.Code == http.StatusOK {
-		t.Errorf("GET %q: %d %q, want it not to reach object a", name, rec.Code, rec.Body.String())
-	}
-}
-
-// Any name, not only a legacy-looking one: "x/../a", "./a" and "x//a" were cleaned to the path of
+// Through the API, on the host's own rules: "x/../a", "./a" and "x//a" were cleaned to the path of
 // another object on disk, so a GET answered with that object's bytes under a name nobody uploaded,
 // and an upload under it overwrote that object. Such a name is refused, never served or written.
+// On Windows the legacy name `%%x\..\a` is one segment, stored encoded, so it may be uploaded,
+// but its old location must not be read as object "a".
 func TestADotOrEmptySegmentNeverReachesAnotherObject(t *testing.T) {
 	handler, _ := newStore(t)
 	makeBucket(t, handler, "files", true)
 	upload(t, handler, "files", "a", "real")
 	upload(t, handler, "files", "x/a", "nested")
-	for _, name := range []string{"x/../a", "./a", "x/./a", "x//a", "x/a/..", "x/a/."} {
+	if onWindows {
+		name := `%%x\..\a`
+		if rec := do(t, handler, http.MethodGet, "/object/public/files/"+escapeSegments(name), "", nil); rec.Code == http.StatusOK {
+			t.Errorf("GET %q: %d %q, want it not to reach object a", name, rec.Code, rec.Body.String())
+		}
+	}
+	for _, name := range []string{"x/../a", "./a", "x/./a", "x//a", "x/a/..", "x/a/.", "%%x/../a"} {
 		target := "/object/public/files/" + escapeSegments(name)
 		if rec := do(t, handler, http.MethodGet, target, "", nil); rec.Code == http.StatusOK {
 			t.Errorf("GET %q: %d %q, want it refused", name, rec.Code, rec.Body.String())

@@ -321,6 +321,10 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	return handler, drain, nil
 }
 
+// configureLogging applies the logging settings; a variable so a test can make it fail, which
+// observability.ConfigureLogging, run once per process, cannot be made to do twice.
+var configureLogging = observability.ConfigureLogging
+
 // loadAuthConfig decodes the auth configuration from the environment and sets up logging
 // from it. "supatype-server serve" comes straight here, without the root command's
 // loadGlobalConfig, so without this LOG_LEVEL, LOG_FILE and LOG_FIELDS were never applied on
@@ -331,7 +335,7 @@ func loadAuthConfig() (*conf.GlobalConfiguration, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to load authCfg: %w", err)
 	}
-	if err := observability.ConfigureLogging(&authCfg.Logging); err != nil {
+	if err := configureLogging(&authCfg.Logging); err != nil {
 		logrus.WithError(err).Error("unable to configure logging")
 	}
 	return authCfg, nil

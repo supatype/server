@@ -2,6 +2,7 @@ package envparse
 
 import (
 	"os"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -73,5 +74,30 @@ func TestProcessNeverChangesTheProcessEnvironment(t *testing.T) {
 	close(stop)
 	if <-vanished {
 		t.Fatal("T_PORT went missing from the environment while Process ran")
+	}
+}
+
+// Where environment names are case-insensitive, as on Windows, a lower-case spelling of a
+// setting's name still sets it. Elsewhere it is another variable, and the setting keeps its
+// default.
+func TestALowerCaseNameReachesTheSettingOnlyWhereNamesIgnoreCase(t *testing.T) {
+	original := namesIgnoreCase
+	t.Cleanup(func() { namesIgnoreCase = original })
+	t.Setenv("t_port", "25")
+	for _, tc := range []struct {
+		ignoreCase bool
+		want       int
+	}{{true, 25}, {false, 587}} {
+		if !tc.ignoreCase && runtime.GOOS == "windows" {
+			continue // the OS folds the name itself there, so t_port is T_PORT
+		}
+		namesIgnoreCase = tc.ignoreCase
+		var s spec
+		if err := Process("t", &s); err != nil {
+			t.Fatal(err)
+		}
+		if s.Port != tc.want {
+			t.Errorf("names ignore case = %v: port %d, want %d", tc.ignoreCase, s.Port, tc.want)
+		}
 	}
 }

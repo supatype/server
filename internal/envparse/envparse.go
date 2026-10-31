@@ -85,10 +85,14 @@ func environment() map[string]string {
 	return env
 }
 
-// envName is the name envconfig would match key against. Windows names are
-// case-insensitive, so there a lower-case spelling still reaches the field.
+// namesIgnoreCase is whether environment variable names are case-insensitive,
+// as they are on Windows. A variable so tests cover both rules on any OS.
+var namesIgnoreCase = runtime.GOOS == "windows"
+
+// envName is the name envconfig would match key against. Where names are
+// case-insensitive, a lower-case spelling still reaches the field.
 func envName(key string) string {
-	if runtime.GOOS == "windows" {
+	if namesIgnoreCase {
 		return strings.ToUpper(key)
 	}
 	return key

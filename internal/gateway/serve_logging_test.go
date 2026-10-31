@@ -1,12 +1,15 @@
 package gateway
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/supatype/server/internal/conf"
 )
 
@@ -39,4 +42,30 @@ func serveLoggingChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	logrus.Warn("after the auth config")
+}
+
+// Logging that cannot be set up, a LOG_FILE that cannot be opened say, does not stop serve: it
+// says why and carries on with the configuration it loaded.
+func TestServeCarriesOnWhenLoggingCannotBeSetUp(t *testing.T) {
+	if err := conf.LoadFile(authTestConfig); err != nil {
+		t.Fatal(err)
+	}
+	original := configureLogging
+	t.Cleanup(func() { configureLogging = original })
+	configureLogging = func(*conf.LoggingConfig) error {
+		return errors.New("open /nowhere/server.log: no such file or directory")
+	}
+	hook := logtest.NewGlobal()
+	t.Cleanup(hook.Reset)
+
+	cfg, err := loadAuthConfig()
+	if err != nil || cfg == nil {
+		t.Fatalf("loadAuthConfig: %v, %v; want the configuration despite the logging failure", cfg, err)
+	}
+	for _, entry := range hook.AllEntries() {
+		if entry.Level == logrus.ErrorLevel && entry.Message == "unable to configure logging" && strings.Contains(fmt.Sprint(entry.Data[logrus.ErrorKey]), "/nowhere/server.log") {
+			return
+		}
+	}
+	t.Errorf("want an error line naming why logging could not be set up, got %d line(s)", len(hook.AllEntries()))
 }

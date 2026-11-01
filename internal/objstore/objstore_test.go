@@ -124,27 +124,28 @@ func TestCleanBucketID(t *testing.T) {
 
 func TestCleanObjectPath(t *testing.T) {
 	for name, tc := range map[string]struct {
-		path       string
-		allowEmpty bool
-		wantErr    bool
+		path    string
+		folder  bool
+		wantErr bool
 	}{
-		"a file":                {"avatar.png", false, false},
-		"a nested file":         {"users/1/avatar.png", false, false},
-		"a leading slash":       {"/avatar.png", false, false},
-		"empty, not allowed":    {"", false, true},
-		"empty, allowed":        {"", true, false},
-		"a slash only, allowed": {"/", true, false},
-		"a parent reference":    {"../secrets", false, true},
-		"a deeper escape":       {"a/../../secrets", false, true},
-		"an absolute path":      {"//etc/passwd", false, true},
-		"a step back to a file": {"x/../a", false, true},
-		"an empty part":         {"x//a", false, true},
-		"a trailing slash":      {"x/", false, true},
-		"a folder step":         {"a/..", true, false},
+		"a file":        {"avatar.png", false, false},
+		"a nested file": {"users/1/avatar.png", false, false},
+		// The request layer strips the one leading slash a name may carry; one left is a part.
+		"a leading slash":        {"/avatar.png", false, true},
+		"empty, not allowed":     {"", false, true},
+		"empty, allowed":         {"", true, false},
+		"a slash only, a folder": {"/", true, true},
+		"a parent reference":     {"../secrets", false, true},
+		"a deeper escape":        {"a/../../secrets", false, true},
+		"an absolute path":       {"//etc/passwd", false, true},
+		"a step back to a file":  {"x/../a", false, true},
+		"an empty part":          {"x//a", false, true},
+		"a trailing slash":       {"x/", false, true},
+		"a folder step":          {"a/..", true, false},
 	} {
-		_, err := cleanObjectPath(tc.path, tc.allowEmpty)
+		_, err := cleanObjectPath(tc.path, tc.folder)
 		if (err != nil) != tc.wantErr {
-			t.Errorf("%s: cleanObjectPath(%q, %v) = %v", name, tc.path, tc.allowEmpty, err)
+			t.Errorf("%s: cleanObjectPath(%q, %v) = %v", name, tc.path, tc.folder, err)
 		}
 	}
 }

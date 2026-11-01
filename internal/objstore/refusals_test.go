@@ -131,3 +131,53 @@ func TestTheHostReservesWhatItsFileSystemCannotName(t *testing.T) {
 		t.Error(`"NUL" is not reserved on Windows`)
 	}
 }
+
+// The request layer strips one leading slash from a name, and only one. A name that still starts
+// with "/" has an empty first part and is refused: "///a" reached object "a", one slash stripped by
+// the route and another by the path check.
+func TestAnExtraLeadingSlashNeverReachesAnotherObject(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "files", true)
+	upload(t, handler, "files", "a", "real")
+	if rec := do(t, handler, http.MethodGet, "/object/public/files///a", "", nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("GET ///a: %d %q, want 400", rec.Code, rec.Body.String())
+	}
+	rec := do(t, handler, http.MethodDelete, "/object/files", serviceToken(t), strings.NewReader(`{"prefixes":["//a"]}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("remove //a: %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if got := do(t, handler, http.MethodGet, "/object/public/files/a", "", nil).Body.String(); got != "real" {
+		t.Errorf("object a now reads %q, want it kept", got)
+	}
+}
+
+// A remove that names one object it refuses removes nothing: every name is checked before the
+// first is deleted. It used to delete the names before the refused one and then answer 400.
+func TestARemoveWithARefusedNameRemovesNothing(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "files", true)
+	upload(t, handler, "files", "a", "first")
+	upload(t, handler, "files", "b", "second")
+	rec := do(t, handler, http.MethodDelete, "/object/files", serviceToken(t), strings.NewReader(`{"prefixes":["a","x/../b","b"]}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("remove: %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	for name, want := range map[string]string{"a": "first", "b": "second"} {
+		if got := do(t, handler, http.MethodGet, "/object/public/files/"+name, "", nil).Body.String(); got != want {
+			t.Errorf("object %q now reads %q, want it kept", name, got)
+		}
+	}
+}
+
+// A signed URL is only made for a name that could be served: one the store refuses gets 400, not
+// a URL that can never work.
+func TestASignedURLIsRefusedForANameThatCannotBeServed(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "files", false)
+	for _, name := range []string{"x/../a", ".meta/a.json", "a//b"} {
+		rec := do(t, handler, http.MethodPost, "/object/sign/files/"+escapeSegments(name), userToken(t), strings.NewReader(`{"expiresIn":60}`))
+		if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "signedURL") {
+			t.Errorf("sign %q: %d %s, want 400 and no URL", name, rec.Code, rec.Body.String())
+		}
+	}
+}

@@ -447,18 +447,33 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 		_ = root.Close()
 	}()
 
+	locs, ok := s.locateAll(w, bucket, prefixes)
+	if !ok {
+		return
+	}
 	deleted := []removedItem{}
-	for _, prefix := range prefixes {
-		removed, err := s.removeObject(root, bucket, prefix)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if removed {
-			deleted = append(deleted, removedItem{Name: prefix, BucketID: bucket})
+	for _, loc := range locs {
+		if s.removeObject(root, loc) {
+			deleted = append(deleted, removedItem{Name: loc.name, BucketID: bucket})
 		}
 	}
 	utilities.WriteJSON(w, http.StatusOK, deleted)
+}
+
+// locateAll is where each of names is stored, answering the request itself with 400 when one is
+// refused. Every name is checked before the first is deleted, so a refused name refuses the whole
+// remove and nothing is gone when it answers.
+func (s *store) locateAll(w http.ResponseWriter, bucket string, names []string) ([]objectLocation, bool) {
+	locs := make([]objectLocation, 0, len(names))
+	for _, name := range names {
+		loc, err := s.locate(bucket, name)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return nil, false
+		}
+		locs = append(locs, loc)
+	}
+	return locs, true
 }
 
 // removePrefixes is the object names a remove's body lists, answering the
@@ -471,22 +486,22 @@ func removePrefixes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return nil, false
 	}
+	// The one leading slash a name may carry, as objectRoute strips it from a route.
+	for i, prefix := range body.Prefixes {
+		body.Prefixes[i] = strings.TrimPrefix(prefix, "/")
+	}
 	return body.Prefixes, true
 }
 
-// removeObject removes one object and its sidecar, reporting whether there
-// was an object to remove, or an error when the name is refused.
-func (s *store) removeObject(root *os.Root, bucket, objPath string) (bool, error) {
-	loc, err := s.locate(bucket, objPath)
-	if err != nil {
-		return false, err
-	}
+// removeObject removes the object at loc, whose name is checked already, and
+// its sidecar, reporting whether there was an object to remove.
+func (s *store) removeObject(root *os.Root, loc objectLocation) bool {
 	fileRel, metaRel := s.stored(root, loc)
 	removed := root.Remove(fileRel) == nil
 	if removed {
 		_ = root.Remove(metaRel)
 	}
-	return removed, nil
+	return removed
 }
 
 // ─── List objects ─────────────────────────────────────────────────────────────
@@ -737,6 +752,11 @@ func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bucket := b.ID
+	// Only a name that could be served is signed: a URL for one the store refuses could never work.
+	if _, err := s.locate(bucket, objPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	expiresIn, err := signingExpiry(r)
 	if err != nil {

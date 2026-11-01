@@ -45,8 +45,8 @@ func TestADotOrEmptySegmentNeverReachesAnotherObject(t *testing.T) {
 			t.Errorf("GET %q: %d %q, want it refused", name, rec.Code, rec.Body.String())
 		}
 		rec := do(t, handler, http.MethodPost, "/object/files/"+escapeSegments(name), serviceToken(t), strings.NewReader("overwritten"))
-		if rec.Code < 400 {
-			t.Errorf("upload %q: %d, want it refused", name, rec.Code)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("upload %q: %d, want 400", name, rec.Code)
 		}
 	}
 	for name, want := range map[string]string{"a": "real", "x/a": "nested"} {

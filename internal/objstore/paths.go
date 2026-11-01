@@ -2,7 +2,6 @@ package objstore
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -29,14 +28,15 @@ func cleanBucketID(bucket string) (string, error) {
 // is ".", ".." or empty: those are path structure, not names, and the path on disk is cleaned,
 // so "x/../a", "./a" and "x//a" reached the file of another object, and "x/a/.." the folder x,
 // answered for under a name nobody stored. A folder may be empty, and the caller cleans its
-// steps itself: "a/.." lists the bucket root.
+// steps itself: "a/.." lists the bucket root. Nothing is stripped here: the request layer strips
+// the one leading slash a name may carry (objectRoute, removePrefixes), so a name still starting
+// with "/" has an empty first part.
 func cleanObjectPath(objPath string, folder bool) (string, error) {
-	objPath = strings.TrimPrefix(objPath, "/")
 	if objPath == "" {
 		if folder {
 			return "", nil
 		}
-		return "", fmt.Errorf("invalid object path")
+		return "", errInvalidObjectPath
 	}
 	if !folder && hasStepPart(objPath, isSlash) {
 		return "", errInvalidObjectPath
@@ -47,7 +47,7 @@ func cleanObjectPath(objPath string, folder bool) (string, error) {
 	// never act as a separator or a parent reference.
 	rel := filepath.FromSlash(diskPath(objPath))
 	if !filepath.IsLocal(rel) {
-		return "", fmt.Errorf("invalid object path")
+		return "", errInvalidObjectPath
 	}
 	return rel, nil
 }
@@ -225,7 +225,8 @@ func routeParam(w http.ResponseWriter, r *http.Request, key string) (string, boo
 	return decoded, true
 }
 
-// objectRoute returns the bucket and object path of an object route.
+// objectRoute returns the bucket and object path of an object route, with the one leading slash
+// a name may carry stripped. Only one: what is left is checked as the name.
 func objectRoute(w http.ResponseWriter, r *http.Request) (bucket, objPath string, ok bool) {
 	if bucket, ok = routeParam(w, r, "bucket"); !ok {
 		return "", "", false

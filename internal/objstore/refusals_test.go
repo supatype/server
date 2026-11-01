@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // requestWithRawPath is a request whose raw path is rawPath as given, as a proxy in front of the
@@ -179,5 +181,79 @@ func TestASignedURLIsRefusedForANameThatCannotBeServed(t *testing.T) {
 		if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "signedURL") {
 			t.Errorf("sign %q: %d %s, want 400 and no URL", name, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// deletedNames is the names a remove answered as deleted, none when it refused.
+func deletedNames(rec *httptest.ResponseRecorder) []string {
+	var items []struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &items)
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+// listPrefix is the names a list of prefix in bucket answers, and its status.
+func listPrefix(t *testing.T, handler http.Handler, bucket, prefix string) (int, []string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"prefix": prefix})
+	rec := do(t, handler, http.MethodPost, "/object/list/"+bucket, serviceToken(t), strings.NewReader(string(body)))
+	var items []struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &items)
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+	return rec.Code, names
+}
+
+// A list prefix follows the rule a name does: one leading slash is stripped, and so is the one
+// trailing slash a folder is normally written with. "///a" is refused, as GET refuses it, rather
+// than listing folder a with every slash around it stripped. Past that a folder path is cleaned,
+// as "a/.." is the bucket root.
+func TestAListPrefixStripsOneSlashAtEachEnd(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "files", true)
+	upload(t, handler, "files", "a/x", "inside")
+	for _, prefix := range []string{"a", "a/", "/a", "/a/"} {
+		if code, names := listPrefix(t, handler, "files", prefix); code != http.StatusOK || len(names) != 1 || names[0] != "x" {
+			t.Errorf("list %q: %d %v, want 200 [x]", prefix, code, names)
+		}
+	}
+	for _, prefix := range []string{"///a", "//a"} {
+		if code, names := listPrefix(t, handler, "files", prefix); code != http.StatusBadRequest {
+			t.Errorf("list %q: %d %v, want 400", prefix, code, names)
+		}
+	}
+}
+
+// A refused remove says which name it refused, among the ones it lists.
+func TestARefusedRemoveNamesTheNameItRefused(t *testing.T) {
+	handler, _ := newStore(t)
+	makeBucket(t, handler, "files", true)
+	rec := do(t, handler, http.MethodDelete, "/object/files", serviceToken(t), strings.NewReader(`{"prefixes":["a","x/../b"]}`))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `\"x/../b\"`) {
+		t.Errorf("remove: %d %s, want 400 naming \"x/../b\"", rec.Code, rec.Body.String())
+	}
+}
+
+// A signed URL whose token holds a name the store refuses, one signed before names were checked
+// when a URL is made, is refused with 400 rather than served from the path the name resolves to.
+func TestASignedURLForARefusedNameIsRefused(t *testing.T) {
+	handler, root := newStore(t)
+	makeBucket(t, handler, "files", false)
+	upload(t, handler, "files", "a", "real")
+	signer := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
+	token := signer.signToken(signedPayload{B: "files", P: "x/../a", Exp: time.Now().Add(time.Hour).Unix()})
+
+	rec := do(t, handler, http.MethodGet, "/object/sign/files/a?token="+token, "", nil)
+	if rec.Code != http.StatusBadRequest || rec.Body.String() == "real" {
+		t.Errorf("GET: %d %q, want 400", rec.Code, rec.Body.String())
 	}
 }

@@ -111,7 +111,8 @@ func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 	return filepath.Join(bucket, rel), filepath.Join(bucket, sidecarDir, dir, file+".json")
 }
 
-// legacyRel is where the object objPath was stored, relative to its bucket,
+// legacyRel is where the object objPath, a name already checked by
+// cleanObjectPath, was stored relative to its bucket,
 // before names were encoded, when that may be looked at: on every OS a name
 // starting with encodedMarker was stored as written, and on Windows a
 // backslash in a name split it into folders. It is only ever read from or
@@ -137,9 +138,8 @@ func joinPaths(bucket, rel string) (fileRel, metaRel string) {
 // which is also the name it is listed as. Names starting with the marker
 // that were stored as written are still found.
 func (r nameRules) legacyRel(objPath string) (string, bool) {
-	name := strings.TrimPrefix(objPath, "/")
-	rel := filepath.FromSlash(name)
-	if !filepath.IsLocal(rel) || hasStepPart(name, r.isSeparator) || (r.windows && r.renamesAPart(name)) || r.isStoredLocation(name) {
+	rel := filepath.FromSlash(objPath)
+	if !filepath.IsLocal(rel) || hasStepPart(objPath, r.isSeparator) || (r.windows && r.renamesAPart(objPath)) || r.isStoredLocation(objPath) {
 		return "", false
 	}
 	return rel, true
@@ -225,8 +225,15 @@ func routeParam(w http.ResponseWriter, r *http.Request, key string) (string, boo
 	return decoded, true
 }
 
-// objectRoute returns the bucket and object path of an object route, with the one leading slash
-// a name may carry stripped. Only one: what is left is checked as the name.
+// objectName is s with the one leading slash an object name may carry stripped, and only that
+// one: "/a" is "a", while "//a" keeps a slash and is refused as a name with an empty first part.
+// Every route and body that takes an object name or a folder reads it here.
+func objectName(s string) string {
+	return strings.TrimPrefix(s, "/")
+}
+
+// objectRoute returns the bucket and object path of an object route, the name as objectName
+// reads it.
 func objectRoute(w http.ResponseWriter, r *http.Request) (bucket, objPath string, ok bool) {
 	if bucket, ok = routeParam(w, r, "bucket"); !ok {
 		return "", "", false
@@ -234,7 +241,7 @@ func objectRoute(w http.ResponseWriter, r *http.Request) (bucket, objPath string
 	if objPath, ok = routeParam(w, r, "*"); !ok {
 		return "", "", false
 	}
-	return bucket, strings.TrimPrefix(objPath, "/"), true
+	return bucket, objectName(objPath), true
 }
 
 // ─── Object names on disk ─────────────────────────────────────────────────────

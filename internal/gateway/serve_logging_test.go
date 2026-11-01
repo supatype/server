@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/supatype/server/internal/conf"
+	"github.com/supatype/server/internal/observability"
 )
 
 // Logging is configured once per process, so this runs in a child process of its own, where
@@ -38,7 +40,7 @@ func serveLoggingChild(t *testing.T) {
 	}
 	t.Setenv("SUPATYPE_LOG_FIELDS", "service:serve-test")
 	logrus.SetOutput(os.Stdout)
-	if _, err := loadAuthConfig(); err != nil {
+	if _, err := loadAuthConfig(observability.ConfigureLogging); err != nil {
 		t.Fatal(err)
 	}
 	logrus.Warn("after the auth config")
@@ -47,18 +49,13 @@ func serveLoggingChild(t *testing.T) {
 // Logging that cannot be set up, a LOG_FILE that cannot be opened say, does not stop serve: it
 // says why and carries on with the configuration it loaded.
 func TestServeCarriesOnWhenLoggingCannotBeSetUp(t *testing.T) {
-	if err := conf.LoadFile(authTestConfig); err != nil {
-		t.Fatal(err)
-	}
-	original := configureLogging
-	t.Cleanup(func() { configureLogging = original })
-	configureLogging = func(*conf.LoggingConfig) error {
+	loadTestEnvRestored(t)
+	hook := globalLogHook(t)
+	failing := func(*conf.LoggingConfig) error {
 		return errors.New("open /nowhere/server.log: no such file or directory")
 	}
-	hook := logtest.NewGlobal()
-	t.Cleanup(hook.Reset)
 
-	cfg, err := loadAuthConfig()
+	cfg, err := loadAuthConfig(failing)
 	if err != nil || cfg == nil {
 		t.Fatalf("loadAuthConfig: %v, %v; want the configuration despite the logging failure", cfg, err)
 	}
@@ -68,4 +65,46 @@ func TestServeCarriesOnWhenLoggingCannotBeSetUp(t *testing.T) {
 		}
 	}
 	t.Errorf("want an error line naming why logging could not be set up, got %d line(s)", len(hook.AllEntries()))
+}
+
+// loadTestEnvRestored loads hack/test.env into the process environment, as the server reads it,
+// and puts every variable it sets back as it was when the test ends: conf.LoadFile overwrites them
+// for good, and the rest of the package would run with them.
+func loadTestEnvRestored(t *testing.T) {
+	t.Helper()
+	values, err := godotenv.Read(authTestConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key := range values {
+		restoreEnvAfter(t, key)
+	}
+	if err := conf.LoadFile(authTestConfig); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// restoreEnvAfter puts key back as it is now, set or not, when the test ends.
+func restoreEnvAfter(t *testing.T, key string) {
+	t.Helper()
+	value, set := os.LookupEnv(key)
+	t.Cleanup(func() {
+		if set {
+			_ = os.Setenv(key, value)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+// globalLogHook is a hook recording the global logger's entries for the test, with the logger's
+// own hooks put back when it ends.
+func globalLogHook(t *testing.T) *logtest.Hook {
+	t.Helper()
+	saved := logrus.LevelHooks{}
+	for level, hooks := range logrus.StandardLogger().Hooks {
+		saved[level] = append([]logrus.Hook(nil), hooks...)
+	}
+	t.Cleanup(func() { logrus.StandardLogger().ReplaceHooks(saved) })
+	return logtest.NewGlobal()
 }

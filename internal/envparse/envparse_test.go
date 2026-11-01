@@ -81,8 +81,6 @@ func TestProcessNeverChangesTheProcessEnvironment(t *testing.T) {
 // setting's name still sets it. Elsewhere it is another variable, and the setting keeps its
 // default.
 func TestALowerCaseNameReachesTheSettingOnlyWhereNamesIgnoreCase(t *testing.T) {
-	original := namesIgnoreCase
-	t.Cleanup(func() { namesIgnoreCase = original })
 	t.Setenv("t_port", "25")
 	for _, tc := range []struct {
 		ignoreCase bool
@@ -91,9 +89,8 @@ func TestALowerCaseNameReachesTheSettingOnlyWhereNamesIgnoreCase(t *testing.T) {
 		if !tc.ignoreCase && runtime.GOOS == "windows" {
 			continue // the OS folds the name itself there, so t_port is T_PORT
 		}
-		namesIgnoreCase = tc.ignoreCase
 		var s spec
-		if err := Process("t", &s); err != nil {
+		if err := process("t", &s, tc.ignoreCase); err != nil {
 			t.Fatal(err)
 		}
 		if s.Port != tc.want {

@@ -1721,7 +1721,11 @@ func TestServingAFileThatCannotBeDescribed(t *testing.T) {
 
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
 	rec := httptest.NewRecorder()
-	s.serveFile(rec, httptest.NewRequest(http.MethodGet, "/", nil), "avatars", "a.png")
+	loc, err := s.locate("avatars", "a.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.serveFile(rec, httptest.NewRequest(http.MethodGet, "/", nil), loc)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", rec.Code)

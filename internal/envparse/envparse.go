@@ -30,11 +30,17 @@ import (
 // process environment is read once and never written, so a goroutine reading
 // it while a load runs sees it exactly as it is.
 func Process(prefix string, spec any) error {
+	return process(prefix, spec, runtime.GOOS == "windows")
+}
+
+// process is Process with the OS's rule for environment names given:
+// ignoreCase when names are case-insensitive, as they are on Windows.
+func process(prefix string, spec any, ignoreCase bool) error {
 	settings, err := settingsOf(prefix, spec)
 	if err != nil {
 		return err
 	}
-	env := environment()
+	env := environment(ignoreCase)
 	for _, s := range settings {
 		if err := s.load(env); err != nil {
 			return err
@@ -75,24 +81,20 @@ func settingsOf(prefix string, spec any) ([]setting, error) {
 // envconfig would match. It walks os.Environ rather than looking each name up,
 // so the only names it reads are the struct-derived ones envconfig already
 // reads, which the environment surface in hack/env-surface.txt lists.
-func environment() map[string]string {
+func environment(ignoreCase bool) map[string]string {
 	env := make(map[string]string)
 	for _, entry := range os.Environ() {
 		if key, value, ok := strings.Cut(entry, "="); ok {
-			env[envName(key)] = value
+			env[envName(key, ignoreCase)] = value
 		}
 	}
 	return env
 }
 
-// namesIgnoreCase is whether environment variable names are case-insensitive,
-// as they are on Windows. A variable so tests cover both rules on any OS.
-var namesIgnoreCase = runtime.GOOS == "windows"
-
 // envName is the name envconfig would match key against. Where names are
-// case-insensitive, a lower-case spelling still reaches the field.
-func envName(key string) string {
-	if namesIgnoreCase {
+// case-insensitive (ignoreCase), a lower-case spelling still reaches the field.
+func envName(key string, ignoreCase bool) string {
+	if ignoreCase {
 		return strings.ToUpper(key)
 	}
 	return key

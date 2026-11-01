@@ -209,16 +209,11 @@ func formatUUID(b []byte, version byte) string {
 // Requires a valid JWT. Stores the request body as a file on disk.
 // Header x-upsert: true allows overwriting existing objects.
 func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
-	b, objPath, ok := s.knownObjectRoute(w, r)
+	b, loc, ok := s.knownObjectRoute(w, r)
 	if !ok {
 		return
 	}
-	bucket := b.ID
-	loc, err := s.locate(bucket, objPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+	bucket, objPath := b.ID, loc.name
 	// Keep the parsed media type only, never the header as written.
 	contentType := storedContentType(r.Header.Get("Content-Type"))
 	body, ok := acceptUpload(w, r, b, objPath, contentType)
@@ -295,23 +290,22 @@ func stampedMeta(m ObjectMeta) *ObjectMeta {
 // downloadPublic: GET /object/public/{bucket}/*
 // No auth required. The bucket's access mode must be public.
 func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
-	b, objPath, ok := s.knownObjectRoute(w, r)
+	b, loc, ok := s.knownObjectRoute(w, r)
 	if !ok {
 		return
 	}
-	bucket := b.ID
 	if !b.servesAnonymously() {
 		writeError(w, http.StatusForbidden, "bucket is not public")
 		return
 	}
-	s.serveFile(w, r, bucket, objPath)
+	s.serveFile(w, r, loc)
 }
 
 // downloadAuthenticated: GET /object/authenticated/{bucket}/*
 // Requires a valid JWT.
 func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
-	if b, objPath, ok := s.knownObjectRoute(w, r); ok {
-		s.serveFile(w, r, b.ID, objPath)
+	if _, loc, ok := s.knownObjectRoute(w, r); ok {
+		s.serveFile(w, r, loc)
 	}
 }
 
@@ -320,7 +314,7 @@ func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
 // accepted but silently ignored, because local dev serves the raw file.
 // Public, authenticated and signed downloads all arrive here, so this is the
 // one place the stored-XSS header policy has to be applied.
-func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPath string) {
+func (s *store) serveFile(w http.ResponseWriter, r *http.Request, loc objectLocation) {
 	root, ok := s.openStorageRoot(w)
 	if !ok {
 		return
@@ -328,7 +322,7 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 	defer func() {
 		_ = root.Close()
 	}()
-	f, metaRel, ok := s.openObject(w, root, bucket, objPath)
+	f, metaRel, ok := s.openObject(w, root, loc)
 	if !ok {
 		return
 	}
@@ -345,17 +339,14 @@ func (s *store) serveFile(w http.ResponseWriter, r *http.Request, bucket, objPat
 
 	// http.ServeContent handles Range, ETag, and Last-Modified negotiation. The
 	// wrapper hardens the headers once ServeContent has settled the type.
-	http.ServeContent(SafeObjectWriter(w, path.Base(objPath)), r, path.Base(objPath), info.ModTime(), f)
+	name := path.Base(loc.name)
+	http.ServeContent(SafeObjectWriter(w, name), r, name, info.ModTime(), f)
 }
 
-// openObject opens a stored object under root for reading and returns where
-// its sidecar is, answering the request itself when it cannot.
-func (s *store) openObject(w http.ResponseWriter, root *os.Root, bucket, objPath string) (*os.File, string, bool) {
-	loc, err := s.locate(bucket, objPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return nil, "", false
-	}
+// openObject opens the object at loc, whose name is checked already, under
+// root for reading and returns where its sidecar is, answering the request
+// itself when it cannot.
+func (s *store) openObject(w http.ResponseWriter, root *os.Root, loc objectLocation) (*os.File, string, bool) {
 	fileRel, metaRel := s.stored(root, loc)
 	f, err := openIn(root, fileRel)
 	if os.IsNotExist(err) {
@@ -439,6 +430,10 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	locs, ok := s.locateAll(w, bucket, prefixes)
+	if !ok {
+		return
+	}
 	root, ok := s.openStorageRoot(w)
 	if !ok {
 		return
@@ -446,11 +441,6 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		_ = root.Close()
 	}()
-
-	locs, ok := s.locateAll(w, bucket, prefixes)
-	if !ok {
-		return
-	}
 	deleted := []removedItem{}
 	for _, loc := range locs {
 		if s.removeObject(root, loc) {
@@ -460,15 +450,15 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 	utilities.WriteJSON(w, http.StatusOK, deleted)
 }
 
-// locateAll is where each of names is stored, answering the request itself with 400 when one is
-// refused. Every name is checked before the first is deleted, so a refused name refuses the whole
-// remove and nothing is gone when it answers.
+// locateAll is where each of names is stored, answering the request itself with 400, naming the
+// name, when one is refused. Every name is checked before the first is deleted, so a refused name
+// refuses the whole remove and nothing is gone when it answers.
 func (s *store) locateAll(w http.ResponseWriter, bucket string, names []string) ([]objectLocation, bool) {
 	locs := make([]objectLocation, 0, len(names))
 	for _, name := range names {
 		loc, err := s.locate(bucket, name)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeError(w, http.StatusBadRequest, fmt.Errorf("%q: %w", name, err).Error())
 			return nil, false
 		}
 		locs = append(locs, loc)
@@ -486,9 +476,8 @@ func removePrefixes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return nil, false
 	}
-	// The one leading slash a name may carry, as objectRoute strips it from a route.
 	for i, prefix := range body.Prefixes {
-		body.Prefixes[i] = strings.TrimPrefix(prefix, "/")
+		body.Prefixes[i] = objectName(prefix)
 	}
 	return body.Prefixes, true
 }
@@ -556,12 +545,13 @@ type folderListing struct {
 }
 
 // listFolder is the folder a list prefix names in bucket, which the registry
-// has already vouched for. The slashes around the prefix are stripped and the
-// path cleaned, so the folder is spelled one way however the prefix reached
-// it: "a/.." is the bucket root, not a folder beside it that would list the
-// sidecar tree.
+// has already vouched for. The prefix is read as a name is (objectName), less
+// the one trailing slash a folder is normally written with, so "///a" is
+// refused as GET refuses it. The path is then cleaned, so the folder is
+// spelled one way however the prefix reached it: "a/.." is the bucket root,
+// not a folder beside it that would list the sidecar tree.
 func (s *store) listFolder(bucket, prefix string) (folderListing, error) {
-	folder := strings.Trim(prefix, "/")
+	folder := strings.TrimSuffix(objectName(prefix), "/")
 	rel, err := cleanObjectPath(folder, true)
 	if err != nil {
 		return folderListing{}, err
@@ -747,16 +737,12 @@ func (s *store) verifyToken(token string) (*signedPayload, bool) {
 // Requires a valid JWT. Body: { expiresIn: number (seconds) }
 // Returns: { signedURL: string }
 func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
-	b, objPath, ok := s.knownObjectRoute(w, r)
+	// Only a name that could be served is signed: the route refuses any other.
+	b, loc, ok := s.knownObjectRoute(w, r)
 	if !ok {
 		return
 	}
-	bucket := b.ID
-	// Only a name that could be served is signed: a URL for one the store refuses could never work.
-	if _, err := s.locate(bucket, objPath); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+	bucket, objPath := b.ID, loc.name
 
 	expiresIn, err := signingExpiry(r)
 	if err != nil {
@@ -836,7 +822,13 @@ func (s *store) serveSignedURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid or expired token")
 		return
 	}
-	if _, ok := s.registeredBucket(w, p.B); ok {
-		s.serveFile(w, r, p.B, p.P)
+	if _, ok := s.registeredBucket(w, p.B); !ok {
+		return
 	}
+	loc, err := s.locate(p.B, p.P)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.serveFile(w, r, loc)
 }

@@ -2,6 +2,7 @@ package objstore
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestAnObjectIsUnreachableByAnotherNameForIt(t *testing.T) {
 			t.Errorf("upsert %s: %d %s, want 400", name, rec.Code, rec.Body.String())
 		}
 		rec = do(t, handler, http.MethodDelete, "/object/files", userToken(t), strings.NewReader(`{"prefixes":["`+name+`"]}`))
-		if strings.Contains(rec.Body.String(), name) {
+		if slices.Contains(deletedNames(rec), name) {
 			t.Errorf("delete %s: %s", name, rec.Body.String())
 		}
 	}

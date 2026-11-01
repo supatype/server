@@ -188,18 +188,28 @@ func (s *store) resolveBucket(w http.ResponseWriter, id string) (*Bucket, bool) 
 	return bucket, true
 }
 
-// knownObjectRoute is the bucket and object path of an object route, when the
-// registry holds the bucket, answering the request itself otherwise. Every
-// object route goes through here or knownBucketRoute before it touches the
-// disk, so a directory under the storage root that is not a registered
-// bucket, such as the store's own .supatype, is never read or changed.
-func (s *store) knownObjectRoute(w http.ResponseWriter, r *http.Request) (*Bucket, string, bool) {
+// knownObjectRoute is the bucket of an object route and where its object is,
+// when the registry holds the bucket and the name is one the store takes,
+// answering the request itself otherwise: 404 for a bucket it does not hold,
+// 400 for a name it refuses. Every object route goes through here or
+// knownBucketRoute before it touches the disk, so a directory under the
+// storage root that is not a registered bucket, such as the store's own
+// .supatype, is never read or changed, and no handler can skip the name check.
+func (s *store) knownObjectRoute(w http.ResponseWriter, r *http.Request) (*Bucket, objectLocation, bool) {
 	bucket, objPath, ok := objectRoute(w, r)
 	if !ok {
-		return nil, "", false
+		return nil, objectLocation{}, false
 	}
 	b, ok := s.registeredBucket(w, bucket)
-	return b, objPath, ok
+	if !ok {
+		return nil, objectLocation{}, false
+	}
+	loc, err := s.locate(b.ID, objPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, objectLocation{}, false
+	}
+	return b, loc, true
 }
 
 // knownBucketRoute is the bucket id of a route naming only a bucket, when the

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -47,7 +46,7 @@ func TestTheSidecarDirIsUnreachableByItsShortName(t *testing.T) {
 		t.Errorf("upload into %s was stored", short)
 	}
 	rec = do(t, handler, http.MethodDelete, "/object/files", userToken(t), strings.NewReader(`{"prefixes":["`+sidecar+`"]}`))
-	if slices.Contains(deletedNames(rec), sidecar) {
+	if removedAs(t, rec, sidecar) {
 		t.Errorf("delete of %s: %s", sidecar, rec.Body.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "files", sidecarDir, "a.png.json")); err != nil {

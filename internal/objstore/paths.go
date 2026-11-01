@@ -232,8 +232,8 @@ func objectName(s string) string {
 	return strings.TrimPrefix(s, "/")
 }
 
-// objectRoute returns the bucket and object path of an object route, the name as objectName
-// reads it.
+// objectRoute returns the bucket and object name of an object route, the name as the client
+// sent it: locateOrRefuse reads it with objectName, and quotes it as sent when it refuses it.
 func objectRoute(w http.ResponseWriter, r *http.Request) (bucket, objPath string, ok bool) {
 	if bucket, ok = routeParam(w, r, "bucket"); !ok {
 		return "", "", false
@@ -241,7 +241,7 @@ func objectRoute(w http.ResponseWriter, r *http.Request) (bucket, objPath string
 	if objPath, ok = routeParam(w, r, "*"); !ok {
 		return "", "", false
 	}
-	return bucket, objectName(objPath), true
+	return bucket, objPath, true
 }
 
 // ─── Object names on disk ─────────────────────────────────────────────────────

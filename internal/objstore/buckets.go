@@ -189,27 +189,37 @@ func (s *store) resolveBucket(w http.ResponseWriter, id string) (*Bucket, bool) 
 }
 
 // knownObjectRoute is the bucket of an object route and where its object is,
-// when the registry holds the bucket and the name is one the store takes,
-// answering the request itself otherwise: 404 for a bucket it does not hold,
-// 400 for a name it refuses. Every object route goes through here or
+// when the registry holds the bucket, the request may use it, and the name is
+// one the store takes, answering the request itself otherwise: 404 for a
+// bucket it does not hold, what permitted answers for one the request may not
+// use, and 400 for a name it refuses. Every object route goes through here or
 // knownBucketRoute before it touches the disk, so a directory under the
 // storage root that is not a registered bucket, such as the store's own
 // .supatype, is never read or changed, and no handler can skip the name check.
-func (s *store) knownObjectRoute(w http.ResponseWriter, r *http.Request) (*Bucket, objectLocation, bool) {
-	bucket, objPath, ok := objectRoute(w, r)
+//
+// permitted, when given, runs before the name is looked at, so a request with
+// no access to the bucket learns nothing about which names it would take.
+func (s *store) knownObjectRoute(w http.ResponseWriter, r *http.Request, permitted func(http.ResponseWriter, *Bucket) bool) (*Bucket, objectLocation, bool) {
+	bucket, sent, ok := objectRoute(w, r)
 	if !ok {
 		return nil, objectLocation{}, false
 	}
 	b, ok := s.registeredBucket(w, bucket)
-	if !ok {
+	if !ok || (permitted != nil && !permitted(w, b)) {
 		return nil, objectLocation{}, false
 	}
-	loc, err := s.locate(b.ID, objPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return nil, objectLocation{}, false
+	loc, ok := s.locateOrRefuse(w, b.ID, sent)
+	return b, loc, ok
+}
+
+// servesPublicly permits a bucket that serves anonymous readers, answering 403
+// for any other.
+func servesPublicly(w http.ResponseWriter, b *Bucket) bool {
+	if b.servesAnonymously() {
+		return true
 	}
-	return b, loc, true
+	writeError(w, http.StatusForbidden, "bucket is not public")
+	return false
 }
 
 // knownBucketRoute is the bucket id of a route naming only a bucket, when the

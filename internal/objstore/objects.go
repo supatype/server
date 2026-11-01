@@ -209,7 +209,7 @@ func formatUUID(b []byte, version byte) string {
 // Requires a valid JWT. Stores the request body as a file on disk.
 // Header x-upsert: true allows overwriting existing objects.
 func (s *store) uploadObject(w http.ResponseWriter, r *http.Request) {
-	b, loc, ok := s.knownObjectRoute(w, r)
+	b, loc, ok := s.knownObjectRoute(w, r, nil)
 	if !ok {
 		return
 	}
@@ -290,21 +290,15 @@ func stampedMeta(m ObjectMeta) *ObjectMeta {
 // downloadPublic: GET /object/public/{bucket}/*
 // No auth required. The bucket's access mode must be public.
 func (s *store) downloadPublic(w http.ResponseWriter, r *http.Request) {
-	b, loc, ok := s.knownObjectRoute(w, r)
-	if !ok {
-		return
+	if _, loc, ok := s.knownObjectRoute(w, r, servesPublicly); ok {
+		s.serveFile(w, r, loc)
 	}
-	if !b.servesAnonymously() {
-		writeError(w, http.StatusForbidden, "bucket is not public")
-		return
-	}
-	s.serveFile(w, r, loc)
 }
 
 // downloadAuthenticated: GET /object/authenticated/{bucket}/*
 // Requires a valid JWT.
 func (s *store) downloadAuthenticated(w http.ResponseWriter, r *http.Request) {
-	if _, loc, ok := s.knownObjectRoute(w, r); ok {
+	if _, loc, ok := s.knownObjectRoute(w, r, nil); ok {
 		s.serveFile(w, r, loc)
 	}
 }
@@ -364,6 +358,19 @@ func (s *store) openObject(w http.ResponseWriter, root *os.Root, loc objectLocat
 // its file and sidecar are stored now, relative to the storage root.
 type objectLocation struct {
 	bucket, name, fileRel, metaRel string
+}
+
+// locateOrRefuse is where the object a request names is stored, the name read
+// as objectName reads it, answering the request itself with 400 when the store
+// refuses it: the refusal quotes the name as the client sent it. Every route,
+// remove and signed URL that names an object goes through here.
+func (s *store) locateOrRefuse(w http.ResponseWriter, bucket, sent string) (objectLocation, bool) {
+	loc, err := s.locate(bucket, objectName(sent))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%q: %v", sent, err))
+		return objectLocation{}, false
+	}
+	return loc, true
 }
 
 // locate validates bucket and objPath and says where the object is stored now.
@@ -456,9 +463,8 @@ func (s *store) removeObjects(w http.ResponseWriter, r *http.Request) {
 func (s *store) locateAll(w http.ResponseWriter, bucket string, names []string) ([]objectLocation, bool) {
 	locs := make([]objectLocation, 0, len(names))
 	for _, name := range names {
-		loc, err := s.locate(bucket, name)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("%q: %w", name, err).Error())
+		loc, ok := s.locateOrRefuse(w, bucket, name)
+		if !ok {
 			return nil, false
 		}
 		locs = append(locs, loc)
@@ -475,9 +481,6 @@ func removePrefixes(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return nil, false
-	}
-	for i, prefix := range body.Prefixes {
-		body.Prefixes[i] = objectName(prefix)
 	}
 	return body.Prefixes, true
 }
@@ -546,12 +549,17 @@ type folderListing struct {
 
 // listFolder is the folder a list prefix names in bucket, which the registry
 // has already vouched for. The prefix is read as a name is (objectName), less
-// the one trailing slash a folder is normally written with, so "///a" is
-// refused as GET refuses it. The path is then cleaned, so the folder is
-// spelled one way however the prefix reached it: "a/.." is the bucket root,
-// not a folder beside it that would list the sidecar tree.
+// the one trailing slash a folder is normally written with, and what is left
+// has no empty part, as GET refuses one: "//", "a//" and "a//b" are refused.
+// A "." or ".." part is cleaned, so the folder is spelled one way however the
+// prefix reached it: "a/.." is the bucket root, not a folder beside it that
+// would list the sidecar tree.
 func (s *store) listFolder(bucket, prefix string) (folderListing, error) {
-	folder := strings.TrimSuffix(objectName(prefix), "/")
+	name := objectName(prefix)
+	folder := strings.TrimSuffix(name, "/")
+	if name != "" && slices.Contains(strings.Split(folder, "/"), "") {
+		return folderListing{}, errInvalidObjectPath
+	}
 	rel, err := cleanObjectPath(folder, true)
 	if err != nil {
 		return folderListing{}, err
@@ -738,7 +746,7 @@ func (s *store) verifyToken(token string) (*signedPayload, bool) {
 // Returns: { signedURL: string }
 func (s *store) createSignedURL(w http.ResponseWriter, r *http.Request) {
 	// Only a name that could be served is signed: the route refuses any other.
-	b, loc, ok := s.knownObjectRoute(w, r)
+	b, loc, ok := s.knownObjectRoute(w, r, nil)
 	if !ok {
 		return
 	}
@@ -825,10 +833,7 @@ func (s *store) serveSignedURL(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.registeredBucket(w, p.B); !ok {
 		return
 	}
-	loc, err := s.locate(p.B, p.P)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	if loc, ok := s.locateOrRefuse(w, p.B, p.P); ok {
+		s.serveFile(w, r, loc)
 	}
-	s.serveFile(w, r, loc)
 }

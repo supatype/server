@@ -76,25 +76,13 @@ func loadTestEnvRestored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// t.Setenv puts each back as it was, set or not, when the test ends.
 	for key := range values {
-		restoreEnvAfter(t, key)
+		t.Setenv(key, os.Getenv(key))
 	}
 	if err := conf.LoadFile(authTestConfig); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// restoreEnvAfter puts key back as it is now, set or not, when the test ends.
-func restoreEnvAfter(t *testing.T, key string) {
-	t.Helper()
-	value, set := os.LookupEnv(key)
-	t.Cleanup(func() {
-		if set {
-			_ = os.Setenv(key, value)
-		} else {
-			_ = os.Unsetenv(key)
-		}
-	})
 }
 
 // globalLogHook is a hook recording the global logger's entries for the test, with the logger's

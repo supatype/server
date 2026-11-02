@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
+	"github.com/supatype/server/internal/filestamp"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -70,11 +73,47 @@ func (b *Bucket) mode() string {
 
 // bucketsPath returns the path to the bucket metadata JSON file.
 func (s *store) bucketsPath() string {
-	return filepath.Join(s.root, ".supatype", "buckets.json")
+	return filepath.Join(s.root, storeMetaDir, "buckets.json")
+}
+
+// registryCache holds the bucket list as last read from or written to
+// buckets.json, with the file's stamp at the time. Every object request looks
+// its bucket up, so the file is read and parsed only when its stamp has moved:
+// this store's own writes refresh the cache as they land, and a write by
+// anything else, such as the CLI provisioning buckets, moves the stamp.
+type registryCache struct {
+	mu      sync.Mutex
+	stamp   filestamp.Stamp
+	buckets []Bucket
+	valid   bool
+}
+
+// get is a copy of the cached list when it was taken at stamp.
+func (c *registryCache) get(stamp filestamp.Stamp) ([]Bucket, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.valid || !c.stamp.Same(stamp) {
+		return nil, false
+	}
+	return slices.Clone(c.buckets), true
+}
+
+// put caches a copy of buckets as the version of the file at stamp. Callers
+// replace a bucket's fields rather than writing through them, so a shallow
+// copy keeps the cache from changing under them.
+func (c *registryCache) put(stamp filestamp.Stamp, buckets []Bucket) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stamp, c.buckets, c.valid = stamp, slices.Clone(buckets), true
 }
 
 func (s *store) loadBuckets() ([]Bucket, error) {
-	data, err := readFile(s.bucketsPath())
+	path := s.bucketsPath()
+	stamp, statErr := filestamp.Of(path)
+	if cached, ok := s.registry.get(stamp); ok && statErr == nil {
+		return cached, nil
+	}
+	data, err := readFile(path)
 	if os.IsNotExist(err) {
 		return []Bucket{}, nil
 	}
@@ -82,7 +121,13 @@ func (s *store) loadBuckets() ([]Bucket, error) {
 		return nil, err
 	}
 	var buckets []Bucket
-	return buckets, json.Unmarshal(data, &buckets)
+	if err := json.Unmarshal(data, &buckets); err != nil {
+		return buckets, err
+	}
+	if statErr == nil {
+		s.registry.put(stamp, buckets)
+	}
+	return buckets, nil
 }
 
 func (s *store) saveBuckets(buckets []Bucket) error {
@@ -90,7 +135,13 @@ func (s *store) saveBuckets(buckets []Bucket) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(s.bucketsPath(), data, 0o600)
+	if err := writeFile(s.bucketsPath(), data, 0o600); err != nil {
+		return err
+	}
+	if stamp, err := filestamp.Of(s.bucketsPath()); err == nil {
+		s.registry.put(stamp, buckets)
+	}
+	return nil
 }
 
 // findBucket returns the index and pointer for a bucket with the given ID,
@@ -135,6 +186,65 @@ func (s *store) resolveBucket(w http.ResponseWriter, id string) (*Bucket, bool) 
 		return nil, false
 	}
 	return bucket, true
+}
+
+// knownObjectRoute is the bucket of an object route and where its object is,
+// when the registry holds the bucket, the request may use it, and the name is
+// one the store takes, answering the request itself otherwise: 404 for a
+// bucket it does not hold, what permitted answers for one the request may not
+// use, and 400 for a name it refuses. Every object route goes through here or
+// knownBucketRoute before it touches the disk, so a directory under the
+// storage root that is not a registered bucket, such as the store's own
+// .supatype, is never read or changed, and no handler can skip the name check.
+//
+// permitted, when given, runs before the name is looked at, so a request with
+// no access to the bucket learns nothing about which names it would take.
+func (s *store) knownObjectRoute(w http.ResponseWriter, r *http.Request, permitted func(http.ResponseWriter, *Bucket) bool) (*Bucket, objectLocation, bool) {
+	bucket, sent, ok := objectRoute(w, r)
+	if !ok {
+		return nil, objectLocation{}, false
+	}
+	b, ok := s.registeredBucket(w, bucket)
+	if !ok || (permitted != nil && !permitted(w, b)) {
+		return nil, objectLocation{}, false
+	}
+	loc, ok := s.locateOrRefuse(w, b.ID, sent)
+	return b, loc, ok
+}
+
+// servesPublicly permits a bucket that serves anonymous readers, answering 403
+// for any other.
+func servesPublicly(w http.ResponseWriter, b *Bucket) bool {
+	if b.servesAnonymously() {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "bucket is not public")
+	return false
+}
+
+// knownBucketRoute is the bucket id of a route naming only a bucket, when the
+// registry holds the bucket, answering the request itself otherwise.
+func (s *store) knownBucketRoute(w http.ResponseWriter, r *http.Request) (string, bool) {
+	bucket, ok := routeParam(w, r, "bucket")
+	if !ok {
+		return "", false
+	}
+	b, ok := s.registeredBucket(w, bucket)
+	if !ok {
+		return "", false
+	}
+	return b.ID, true
+}
+
+// registeredBucket is the registry's bucket named id, answering the request itself
+// when id could not name a bucket at all, which is the caller's mistake, or
+// names none the registry holds.
+func (s *store) registeredBucket(w http.ResponseWriter, id string) (*Bucket, bool) {
+	if _, err := cleanBucketID(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return s.resolveBucket(w, id)
 }
 
 // ─── Request bodies ───────────────────────────────────────────────────────────
@@ -283,6 +393,26 @@ func (s *store) listBuckets(w http.ResponseWriter, _ *http.Request) {
 	utilities.WriteJSON(w, http.StatusOK, buckets)
 }
 
+// refuseBucketID answers a create of id beside the registered buckets when
+// the id is refused, reporting whether it was. The store's own directory is
+// not a bucket under any name the file system takes for it (400), and an id
+// the file system takes for a registered bucket's directory is that bucket
+// (409, as for the same id). The disk is asked about id once.
+func (s *store) refuseBucketID(w http.ResponseWriter, buckets []Bucket, id string) bool {
+	aliases := s.aliases(id)
+	if aliases(storeMetaDir) {
+		writeError(w, http.StatusBadRequest, errInvalidBucketID.Error())
+		return true
+	}
+	for i := range buckets {
+		if aliases(buckets[i].ID) {
+			writeError(w, http.StatusConflict, "bucket already exists")
+			return true
+		}
+	}
+	return false
+}
+
 // createBucket: POST /bucket
 // Body: { id?, name, public?, file_size_limit?, allowed_mime_types?,
 // access_mode?, s3_bucket_policy? }
@@ -301,15 +431,12 @@ func (s *store) createBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load buckets")
 		return
 	}
-	if _, existing := s.findBucket(buckets, body.ID); existing != nil {
-		writeError(w, http.StatusConflict, "bucket already exists")
+	if s.refuseBucketID(w, buckets, body.ID) {
 		return
 	}
 
 	bucket := body.bucket(time.Now().UTC().Format(time.RFC3339))
-	buckets = append(buckets, bucket)
-
-	if err := s.saveBuckets(buckets); err != nil {
+	if err := s.saveBuckets(append(buckets, bucket)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save bucket")
 		return
 	}
@@ -394,35 +521,52 @@ func (s *store) deleteBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bucketDir, ok := s.emptyBucketDir(w, id)
+	if !ok {
+		return
+	}
+
+	if s.dropBucket(w, append(buckets[:i], buckets[i+1:]...), bucketDir) {
+		utilities.WriteJSON(w, http.StatusOK, map[string]string{"message": "Successfully deleted"})
+	}
+}
+
+// dropBucket saves the bucket list without a deleted bucket and removes the
+// bucket's directory, answering the request itself when either fails.
+func (s *store) dropBucket(w http.ResponseWriter, remaining []Bucket, bucketDir string) bool {
+	if err := s.saveBuckets(remaining); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save buckets")
+		return false
+	}
+	if err := removeAll(bucketDir); err != nil { // #nosec G703 -- bucketDir is under storageRoot after bucket id validation in emptyBucketDir.
+		writeError(w, http.StatusInternalServerError, "failed to delete bucket directory")
+		return false
+	}
+	return true
+}
+
+// emptyBucketDir is the directory of bucket id when it holds no objects,
+// answering the request itself when it does or cannot be read. The sidecar
+// directory is this implementation's own bookkeeping, not the caller's data,
+// so it does not make a bucket non-empty, however its name is cased.
+func (s *store) emptyBucketDir(w http.ResponseWriter, id string) (string, bool) {
 	bucketDir, err := s.bucketDir(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return "", false
 	}
 	entries, err := readDir(bucketDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read bucket")
-		return
+		return "", false
 	}
-	// The sidecar directory is this implementation's own bookkeeping, not the
-	// caller's data, so it does not make a bucket non-empty.
 	for _, e := range entries {
-		if e.Name() != sidecarDir {
+		if !s.rules.inSidecarTree(e.Name()) {
 			writeError(w, http.StatusBadRequest, "bucket must be empty before deletion")
-			return
+			return "", false
 		}
 	}
-
-	buckets = append(buckets[:i], buckets[i+1:]...)
-	if err := s.saveBuckets(buckets); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save buckets")
-		return
-	}
-	if err := removeAll(bucketDir); err != nil { // #nosec G703 -- bucketDir is under storageRoot after bucket id validation above.
-		writeError(w, http.StatusInternalServerError, "failed to delete bucket directory")
-		return
-	}
-	utilities.WriteJSON(w, http.StatusOK, map[string]string{"message": "Successfully deleted"})
+	return bucketDir, true
 }
 
 // emptyBucket: POST /bucket/{id}/empty

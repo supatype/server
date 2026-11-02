@@ -124,23 +124,28 @@ func TestCleanBucketID(t *testing.T) {
 
 func TestCleanObjectPath(t *testing.T) {
 	for name, tc := range map[string]struct {
-		path       string
-		allowEmpty bool
-		wantErr    bool
+		path    string
+		folder  bool
+		wantErr bool
 	}{
-		"a file":                {"avatar.png", false, false},
-		"a nested file":         {"users/1/avatar.png", false, false},
-		"a leading slash":       {"/avatar.png", false, false},
-		"empty, not allowed":    {"", false, true},
-		"empty, allowed":        {"", true, false},
-		"a slash only, allowed": {"/", true, false},
-		"a parent reference":    {"../secrets", false, true},
-		"a deeper escape":       {"a/../../secrets", false, true},
-		"an absolute path":      {"//etc/passwd", false, true},
+		"a file":        {"avatar.png", false, false},
+		"a nested file": {"users/1/avatar.png", false, false},
+		// The request layer strips the one leading slash a name may carry; one left is a part.
+		"a leading slash":        {"/avatar.png", false, true},
+		"empty, not allowed":     {"", false, true},
+		"empty, allowed":         {"", true, false},
+		"a slash only, a folder": {"/", true, true},
+		"a parent reference":     {"../secrets", false, true},
+		"a deeper escape":        {"a/../../secrets", false, true},
+		"an absolute path":       {"//etc/passwd", false, true},
+		"a step back to a file":  {"x/../a", false, true},
+		"an empty part":          {"x//a", false, true},
+		"a trailing slash":       {"x/", false, true},
+		"a folder step":          {"a/..", true, false},
 	} {
-		_, err := cleanObjectPath(tc.path, tc.allowEmpty)
+		_, err := cleanObjectPath(tc.path, tc.folder)
 		if (err != nil) != tc.wantErr {
-			t.Errorf("%s: cleanObjectPath(%q, %v) = %v", name, tc.path, tc.allowEmpty, err)
+			t.Errorf("%s: cleanObjectPath(%q, %v) = %v", name, tc.path, tc.folder, err)
 		}
 	}
 }
@@ -456,6 +461,22 @@ func TestABucketHoldingOnlySidecarsIsEmpty(t *testing.T) {
 	}
 	if rec := do(t, handler, http.MethodDelete, "/bucket/avatars", serviceToken(t), nil); rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want the sidecar directory not to count", rec.Code)
+	}
+}
+
+// Where the file system ignores case, ".META" is the sidecar directory, as
+// every object route takes it to be, so a bucket holding only that directory
+// holds no objects.
+func TestABucketHoldingOnlyACaseVariantSidecarDirIsEmpty(t *testing.T) {
+	if !hostRules.foldsCase {
+		t.Skip("this file system keeps case, so .META is an ordinary folder")
+	}
+	handler, root := newStore(t)
+	makeBucket(t, handler, "avatars", false)
+
+	placeFile(t, root, "avatars/.META/a.png.json", "{}")
+	if rec := do(t, handler, http.MethodDelete, "/bucket/avatars", serviceToken(t), nil); rec.Code != http.StatusOK {
+		t.Errorf("status = %d %s, want .META not to count", rec.Code, rec.Body.String())
 	}
 }
 
@@ -950,6 +971,7 @@ func TestAnObjectWithNoSidecarGetsAStableID(t *testing.T) {
 
 func TestListObjectsRefusals(t *testing.T) {
 	handler, _ := newStore(t)
+	makeBucket(t, handler, "avatars", true)
 
 	for name, tc := range map[string]struct {
 		path, body string
@@ -1222,7 +1244,7 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	upload(t, handler, "avatars", "a.png", "png bytes")
 
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
-	before, err := s.loadObjectMeta("avatars", "a.png")
+	before, err := loadMeta(t, s, "avatars", "a.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1230,7 +1252,7 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond) // RFC3339 has second resolution.
 	do(t, handler, http.MethodGet, "/object/public/avatars/a.png", "", nil)
 
-	after, err := s.loadObjectMeta("avatars", "a.png")
+	after, err := loadMeta(t, s, "avatars", "a.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1242,20 +1264,30 @@ func TestDownloadingUpdatesTheAccessTime(t *testing.T) {
 	}
 }
 
+// loadMeta reads the sidecar of objPath in bucket from s's storage root.
+func loadMeta(t *testing.T, s *store, bucket, objPath string) (*ObjectMeta, error) {
+	t.Helper()
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+	return s.loadObjectMeta(root, bucket, objPath)
+}
+
 func TestLoadObjectMetaRefusals(t *testing.T) {
 	s := &store{root: t.TempDir(), mu: &sync.RWMutex{}}
 
-	if _, err := s.loadObjectMeta("..", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "..", "a.png"); err == nil {
 		t.Error("a bucket that escapes was accepted")
 	}
-	if _, err := s.loadObjectMeta("avatars", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "avatars", "a.png"); err == nil {
 		t.Error("a sidecar that is not there was read")
 	}
 
 	absent := &store{root: filepath.Join(t.TempDir(), "gone"), mu: &sync.RWMutex{}}
-	if _, err := absent.loadObjectMeta("avatars", "a.png"); err == nil {
-		t.Error("a storage root that is not there was read")
-	}
 	// Writing creates what it needs, root included, so a first upload into a
 	// freshly configured directory works rather than failing once.
 	if err := absent.saveObjectMeta(&ObjectMeta{}, "avatars", "a.png"); err != nil {
@@ -1405,6 +1437,7 @@ func TestAStorageRootThatCannotBeOpened(t *testing.T) {
 		"upload":   {http.MethodPost, "/object/avatars/b.png", userToken(t), "x"},
 		"download": {http.MethodGet, "/object/public/avatars/a.png", "", ""},
 		"remove":   {http.MethodDelete, "/object/avatars", userToken(t), `{"prefixes":["a.png"]}`},
+		"list":     {http.MethodPost, "/object/list/avatars", userToken(t), `{"prefix":""}`},
 	} {
 		rec := do(t, handler, tc.method, tc.path, tc.bearer, strings.NewReader(tc.body))
 		if rec.Code != http.StatusInternalServerError {
@@ -1467,7 +1500,7 @@ func TestASidecarThatCannotBeRead(t *testing.T) {
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
 	failing(t, &readAll, func(io.Reader) ([]byte, error) { return nil, errDisk })
 
-	if _, err := s.loadObjectMeta("avatars", "a.png"); err == nil {
+	if _, err := loadMeta(t, s, "avatars", "a.png"); err == nil {
 		t.Error("want an error")
 	}
 }
@@ -1688,7 +1721,11 @@ func TestServingAFileThatCannotBeDescribed(t *testing.T) {
 
 	s := &store{root: root, jwtSecret: []byte(secret), mu: &sync.RWMutex{}}
 	rec := httptest.NewRecorder()
-	s.serveFile(rec, httptest.NewRequest(http.MethodGet, "/", nil), "avatars", "a.png")
+	loc, err := s.locate("avatars", "a.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.serveFile(rec, httptest.NewRequest(http.MethodGet, "/", nil), loc)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", rec.Code)

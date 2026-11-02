@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/supatype/server/internal/filestamp"
 )
 
 // The manifest is reloaded even where the OS never reports the write.
@@ -32,7 +34,7 @@ func poll(t *testing.T, path string) (<-chan *RouteManifest, func()) {
 	t.Helper()
 	reloaded := make(chan *RouteManifest, 4)
 	done := make(chan struct{})
-	seed, _ := statStamp(path)
+	seed, _ := filestamp.Of(path)
 	go pollLoop(path, 10*time.Millisecond, func(m *RouteManifest) { reloaded <- m }, done, seed)
 	return reloaded, func() { close(done) }
 }

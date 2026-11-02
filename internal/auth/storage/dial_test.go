@@ -128,7 +128,9 @@ func TestConnection(t *testing.T) {
 		config.DB.URL = string([]byte("\x00"))
 		config.DB.Driver = ""
 
-		const errStr = "invalid control character in URL"
+		// Not a Postgres URL, so it is passed on as written, and with no driver configured and
+		// no scheme there is no dialect to open it with.
+		const errStr = "no dialect provided"
 		db, err := DialContext(ctx, config)
 		require.Nil(t, db)
 		require.Error(t, err)

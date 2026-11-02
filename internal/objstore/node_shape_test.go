@@ -195,11 +195,15 @@ func TestTheSidecarTreeIsNeverListedByAnotherSpelling(t *testing.T) {
 	makeBucket(t, handler, "avatars", true)
 	upload(t, handler, "avatars", "photos/a.txt", "four")
 
-	for _, prefix := range []string{"./.meta", "photos/../.meta", "photos/../.meta/photos", ".//.meta/"} {
+	for _, prefix := range []string{"./.meta", "photos/../.meta", "photos/../.meta/photos"} {
 		names, total := listNames(t, handler, `{"prefix":"`+prefix+`"}`)
 		if len(names) != 0 || total != "0" {
 			t.Errorf("prefix %q listed %q (total %q), want an empty listing", prefix, names, total)
 		}
+	}
+	// An empty part is refused outright, as a name with one is.
+	if code, names := listPrefix(t, handler, "avatars", ".//.meta/"); code != http.StatusBadRequest {
+		t.Errorf("prefix %q: %d %q, want 400", ".//.meta/", code, names)
 	}
 	for _, prefix := range []string{"photos/..", "./", "photos/../."} {
 		names, _ := listNames(t, handler, `{"prefix":"`+prefix+`"}`)
@@ -230,6 +234,7 @@ func TestNoObjectRouteReachesASidecar(t *testing.T) {
 	}
 	body := `{"prefixes":["photos/../.meta/photos/a.txt.json"]}`
 	do(t, handler, http.MethodDelete, "/object/avatars", userToken(t), strings.NewReader(body))
+	// #nosec G304 -- this test's own temp dir
 	if data, err := os.ReadFile(sidecar); err != nil || !strings.Contains(string(data), `"name": "photos/a.txt"`) {
 		t.Errorf("sidecar after the attempts: %v %q", err, data)
 	}

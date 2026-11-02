@@ -39,7 +39,7 @@ type Claims struct {
 // ClaimsFunc reads the verified caller identity from a request, or nil for an anonymous one.
 type ClaimsFunc func(*http.Request) *Claims
 
-// HooksFunc returns the current hook map — read per request, since the manifest is hot-reloaded.
+// HooksFunc returns the current hook map. It is read per request, since the manifest is hot-reloaded.
 type HooksFunc func(*http.Request) map[string]TableHooksView
 
 // TableHooksView is one table's hooks, decoupled from the manifest type so this package does not
@@ -92,7 +92,7 @@ var marshalPayload = json.Marshal
 // Middleware runs a table's declared hooks around a write.
 //
 // Mounted inside the response cache, so a cached read never reaches it. A request with no hook work
-// is handed straight through with its body untouched — that is the overwhelmingly common case and it
+// is handed straight through with its body untouched. That is the overwhelmingly common case, and it
 // must stay free.
 func Middleware(opts Options) func(http.Handler) http.Handler {
 	maxBody := opts.MaxBodyBytes
@@ -117,7 +117,7 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 					"depth":     depth,
 				}).Error("hook chain too deep; refusing the write")
 				// Refused, not run without its hooks: a validation hook that stopped running must not
-				// let writes through. 508 is the honest status — the request is well formed and the
+				// let writes through. 508 is the honest status: the request is well formed and the
 				// server detected a loop while answering it.
 				utilities.WriteJSON(w, http.StatusLoopDetected, map[string]string{
 					"message": "This write is too many hooks deep, so it was not applied",
@@ -324,7 +324,7 @@ func runAfter(
 	outcome := opts.Dispatcher.Call(ctx, url, target.AfterEvent, view, encoded, depth+1)
 	switch outcome.Kind {
 	case OutcomeReject:
-		// An after hook cannot undo a committed write, so a rejection is only a log line — and worth
+		// An after hook cannot undo a committed write, so a rejection is only a log line. It is worth
 		// one, because a hook returning 4xx here probably expected to be able to stop something.
 		log.WithField("status", outcome.Status).Warn("after hook rejected, but the write already happened")
 	case OutcomeUnavailable:
@@ -400,6 +400,9 @@ type recorder struct {
 	captureBody bool
 	body        bytes.Buffer
 }
+
+// Unwrap lets http.ResponseController reach the writer underneath.
+func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (r *recorder) WriteHeader(status int) {
 	r.status = status

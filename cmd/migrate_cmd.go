@@ -2,13 +2,10 @@ package cmd
 
 import (
 	"embed"
-	"net/url"
 	"os"
-	"strings"
 
 	"github.com/gobuffalo/pop/v6"
 	"github.com/gobuffalo/pop/v6/logging"
-	"github.com/lib/pq"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -25,88 +22,65 @@ var migrateCmd = cobra.Command{
 
 func migrate(cmd *cobra.Command, args []string) {
 	globalConfig := loadGlobalConfig(cmd.Context())
-	dbURL := globalConfig.DB.URL
-	if nu, err := storage.EnsurePostgresSearchPathInURL(dbURL, globalConfig.DB.Namespace); err == nil {
-		dbURL = nu
-	} else {
-		logrus.WithError(err).Warn("could not normalize database URL (using config URL as-is)")
-	}
-	u, err := url.Parse(dbURL)
+	deets, err := storage.MigrationConnectionDetails(
+		globalConfig.DB.URL, globalConfig.DB.Driver, globalConfig.DB.Namespace, "auth_migrations")
 	if err != nil {
 		logrus.Fatalf("%+v", errors.Wrap(err, "parsing db connection url"))
 	}
 
-	if globalConfig.DB.Driver == "" && globalConfig.DB.URL != "" {
-		globalConfig.DB.Driver = u.Scheme
-	}
-
 	log := logrus.StandardLogger()
+	configureMigrateLogging(log, globalConfig.Logging.Level != "")
 
+	db := openMigrationDB(cmd, log, deets)
+	defer db.Close()
+	if err := storage.SettleMigrationSearchPath(db, globalConfig.DB.Namespace); err != nil {
+		log.Fatalf("%+v", err)
+	}
+
+	runMigrations(log, db)
+}
+
+// configureMigrateLogging shows Pop's query and migration logging only at debug. The level
+// itself was set once by loadGlobalConfig; with none configured, Pop keeps the logger that
+// set up.
+func configureMigrateLogging(log *logrus.Logger, levelConfigured bool) {
 	pop.Debug = false
-	if globalConfig.Logging.Level != "" {
-		level, err := logrus.ParseLevel(globalConfig.Logging.Level)
-		if err != nil {
-			log.Fatalf("Failed to parse log level: %+v", err)
-		}
-		log.SetLevel(level)
-		if level == logrus.DebugLevel {
-			// Set to true to display query info
-			pop.Debug = true
-		}
-		if level != logrus.DebugLevel {
-			var noopLogger = func(lvl logging.Level, s string, args ...interface{}) {
-			}
-			// Hide pop migration logging
-			pop.SetLogger(noopLogger)
-		}
+	if !levelConfigured {
+		return
 	}
+	if log.Level == logrus.DebugLevel {
+		// Set to true to display query info
+		pop.Debug = true
+	} else {
+		// Hide pop migration logging
+		pop.SetLogger(func(lvl logging.Level, s string, args ...interface{}) {})
+	}
+}
 
-	q := u.Query()
-	q.Set("application_name", "auth_migrations")
-	u.RawQuery = q.Encode()
-	deets := &pop.ConnectionDetails{
-		Dialect: globalConfig.DB.Driver,
-		URL:     u.String(),
-	}
-	deets.Options = map[string]string{
-		"migration_table_name": "schema_migrations",
-		"Namespace":            globalConfig.DB.Namespace,
-	}
-
+// openMigrationDB opens the migrate connection and waits for the database to answer.
+func openMigrationDB(cmd *cobra.Command, log *logrus.Logger, deets *pop.ConnectionDetails) *pop.Connection {
 	db, err := pop.NewConnection(deets)
 	if err != nil {
 		log.Fatalf("%+v", errors.Wrap(err, "opening db connection"))
 	}
-	defer db.Close()
 
 	if err := db.Open(); err != nil {
 		log.Fatalf("%+v", errors.Wrap(err, "checking database connection"))
 	}
 
 	// Open builds a pool and contacts nothing, so without this the first real
-	// contact is the search_path query below, and it exits the process. A
+	// contact is the first migration query, and it exits the process. A
 	// database that is still starting is a timing problem, not a configuration
 	// one: serving waits it out through DialWithRetry, and migrating did not,
 	// which lost the container on any host slow enough to open the gap.
 	if err := storage.WaitReachable(cmd.Context(), db); err != nil {
 		log.Fatalf("%+v", errors.Wrap(err, "waiting for the database"))
 	}
+	return db
+}
 
-	storage.TightenPoolForMigration(db)
-
-	// Persist default search_path for this database so every pooled connection
-	// (including Pop migrator) sees a valid path on PostgreSQL 15+.
-	if err := storage.TryAlterDatabaseSearchPathDefault(db, globalConfig.DB.Namespace); err != nil {
-		logrus.WithError(err).Warn("could not ALTER DATABASE SET search_path (continuing; ensure DB role or URL sets search_path)")
-	}
-
-	if ns := strings.TrimSpace(globalConfig.DB.Namespace); ns != "" {
-		setPath := "SET search_path TO " + pq.QuoteIdentifier(ns)
-		if err := db.RawQuery(setPath).Exec(); err != nil {
-			log.Fatalf("%+v", errors.Wrap(err, "setting search_path for migrations"))
-		}
-	}
-
+// runMigrations applies the embedded auth migrations, printing status around them at debug.
+func runMigrations(log *logrus.Logger, db *pop.Connection) {
 	log.Debugf("Reading migrations from executable")
 	box, err := pop.NewMigrationBox(EmbeddedMigrations, db)
 	if err != nil {
@@ -116,13 +90,7 @@ func migrate(cmd *cobra.Command, args []string) {
 	mig := box.Migrator
 
 	log.Debugf("before status")
-
-	if log.Level == logrus.DebugLevel {
-		err = mig.Status(os.Stdout)
-		if err != nil {
-			log.Fatalf("%+v", errors.Wrap(err, "migration status"))
-		}
-	}
+	printMigrationStatus(log, mig)
 
 	// turn off schema dump
 	mig.SchemaPath = ""
@@ -135,11 +103,15 @@ func migrate(cmd *cobra.Command, args []string) {
 	}
 
 	log.Debugf("after status")
+	printMigrationStatus(log, mig)
+}
 
-	if log.Level == logrus.DebugLevel {
-		err = mig.Status(os.Stdout)
-		if err != nil {
-			log.Fatalf("%+v", errors.Wrap(err, "migration status"))
-		}
+// printMigrationStatus writes the migration status table to stdout at debug level.
+func printMigrationStatus(log *logrus.Logger, mig pop.Migrator) {
+	if log.Level != logrus.DebugLevel {
+		return
+	}
+	if err := mig.Status(os.Stdout); err != nil {
+		log.Fatalf("%+v", errors.Wrap(err, "migration status"))
 	}
 }

@@ -295,7 +295,7 @@ func TestADeveloperAdministersTheProject(t *testing.T) {
 		{http.MethodPost, "/admin/v1/database/credentials/first-view"},
 		{http.MethodGet, "/admin/v1/database/connection"},
 		{http.MethodPost, "/platform/v1/projects/ref/schema/push"},
-		{http.MethodPost, "/functions/v1/admin/env"},
+		{http.MethodPost, "/admin/v1/functions/env"},
 		{http.MethodPost, "/admin/preview-links"},
 		{http.MethodPut, "/admin/cors-origins"},
 		{http.MethodGet, "/some/route/added/later"},

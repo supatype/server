@@ -32,17 +32,23 @@ func namesFor(prefix string, spec interface{}) map[string]bool {
 // a variable whose meaning depends on which struct you ask, and the two would
 // drift apart silently.
 //
-// Two overlaps are deliberate, and both are cases where a second value would be
-// a bug rather than a feature:
+// Three overlaps are deliberate, and each is a case where a second value would
+// be a bug rather than a feature:
 //
 //	DATABASE_URL         the auth service and the admin pool are pointed at the
 //	                     same database, and Config.SQLDSN states the precedence.
 //	SUPATYPE_JWT_SECRET  the gateway verifies tokens the auth service issues, so
 //	                     a second secret would mean rejecting its own tokens.
+//	SUPATYPE_MODE        one process runs in one mode. Only the default differs:
+//	                     unset is dev to the gateway, and not dev to the auth
+//	                     service, whose console mailer logs sign-in links only
+//	                     when dev is asked for.
+var deliberateOverlap = []string{"DATABASE_URL", "SUPATYPE_JWT_SECRET", "SUPATYPE_MODE"}
+
 func TestTheTwoConfigStructsDoNotFightOverAName(t *testing.T) {
-	allowed := map[string]bool{
-		"DATABASE_URL":        true,
-		"SUPATYPE_JWT_SECRET": true,
+	allowed := map[string]bool{}
+	for _, name := range deliberateOverlap {
+		allowed[name] = true
 	}
 
 	gateway := namesFor("", &Config{})
@@ -67,7 +73,7 @@ func TestTheTwoConfigStructsDoNotFightOverAName(t *testing.T) {
 func TestTheAllowedOverlapIsStillReal(t *testing.T) {
 	gateway := namesFor("", &Config{})
 	auth := namesFor(conf.EnvPrefix, &conf.GlobalConfiguration{})
-	for _, name := range []string{"DATABASE_URL", "SUPATYPE_JWT_SECRET"} {
+	for _, name := range deliberateOverlap {
 		if !gateway[name] || !auth[name] {
 			t.Errorf("%s is no longer claimed by both structs; drop the exception", name)
 		}

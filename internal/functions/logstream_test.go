@@ -303,3 +303,25 @@ func TestRelayStopsWhenAKeepAliveCannotBeWritten(t *testing.T) {
 		t.Fatal("relay kept going after a keep-alive write failed")
 	}
 }
+
+// unwrappingWriter is a middleware's wrapper: no Flush of its own, only Unwrap to the writer
+// underneath, as the gateway's CORS layer is outside dev mode.
+type unwrappingWriter struct{ http.ResponseWriter }
+
+func (w unwrappingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// The tail streams through such a wrapper by reaching the writer underneath, as
+// http.ResponseController does; asking the wrapper itself refused every tail outside dev mode.
+func TestTailStreamsThroughAWrapperThatUnwraps(t *testing.T) {
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: {\"message\":\"one\"}\n\n")
+	}))
+	defer worker.Close()
+
+	rec := httptest.NewRecorder()
+	tailFunctionLogs(newLogStream(worker.URL))(unwrappingWriter{rec}, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "one") {
+		t.Errorf("status %d body %q, want the stream relayed", rec.Code, rec.Body.String())
+	}
+}

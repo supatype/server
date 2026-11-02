@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/crewjam/saml"
 	"github.com/stretchr/testify/require"
@@ -56,4 +57,29 @@ func TestSAMLMetadataWithAPI(t *tst.T) {
 	require.Equal(t, len(metadata.SPSSODescriptors[0].NameIDFormats), 2)
 	require.Equal(t, metadata.SPSSODescriptors[0].NameIDFormats[0], saml.EmailAddressNameIDFormat)
 	require.Equal(t, metadata.SPSSODescriptors[0].NameIDFormats[1], saml.PersistentNameIDFormat)
+}
+
+// The SAML endpoints are under /auth/v1 exactly once, whichever convention the
+// external URL follows: the gateway root (Docker, where the gateway routes only
+// /auth/v1/* here) or the auth mount itself (native dev, Cloud). An explicit
+// SAML external URL is the operator's own choice and is used as written.
+func TestSAMLServiceProviderURLs(t *tst.T) {
+	for _, tc := range []struct {
+		api, saml, wantACS string
+	}{
+		{"http://localhost:8000", "", "http://localhost:8000/auth/v1/sso/saml/acs"},
+		{"http://localhost:8000/", "", "http://localhost:8000/auth/v1/sso/saml/acs"},
+		{"http://localhost:9999/auth/v1", "", "http://localhost:9999/auth/v1/sso/saml/acs"},
+		{"https://p.example.com/auth/v1/", "", "https://p.example.com/auth/v1/sso/saml/acs"},
+		{"http://localhost:8000", "https://sso.example.com/", "https://sso.example.com/sso/saml/acs"},
+	} {
+		config := &conf.GlobalConfiguration{}
+		config.API.ExternalURL = tc.api
+		config.SAML.ExternalURL = tc.saml
+		api := &API{config: config}
+
+		sp := api.getSAMLServiceProvider(nil, true)
+		require.Equal(t, tc.wantACS, sp.AcsURL.String(), tc.api)
+		require.Equal(t, strings.TrimSuffix(tc.wantACS, "/acs")+"/metadata", sp.MetadataURL.String(), tc.api)
+	}
 }

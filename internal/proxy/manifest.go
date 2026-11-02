@@ -11,6 +11,8 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
+
+	"github.com/supatype/server/internal/filestamp"
 )
 
 // RouteManifest describes the active upstream services for this project.
@@ -371,24 +373,7 @@ const manifestPollInterval = 2 * time.Second
 
 // FileStamp identifies a version of the manifest file without reading it. The
 // zero value stands for a file that did not exist.
-type FileStamp struct {
-	mod  time.Time
-	size int64
-}
-
-func (s FileStamp) same(other FileStamp) bool {
-	// ModTime is compared with Equal rather than ==, because == on time.Time
-	// also compares the monotonic reading and the location pointer.
-	return s.size == other.size && s.mod.Equal(other.mod)
-}
-
-func statStamp(path string) (FileStamp, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return FileStamp{}, err
-	}
-	return FileStamp{mod: info.ModTime(), size: info.Size()}, nil
-}
+type FileStamp = filestamp.Stamp
 
 // LoadStamped is Load plus the stamp of the version it read, for handing to
 // Watch so the watch starts from what is live rather than from the file as it
@@ -399,7 +384,7 @@ func statStamp(path string) (FileStamp, error) {
 // harmless. Taken after the read, the same write would be stamped as loaded
 // and never applied.
 func LoadStamped(path string) (*RouteManifest, FileStamp, error) {
-	stamp, _ := statStamp(path)
+	stamp, _ := filestamp.Of(path)
 	m, err := Load(path)
 	return m, stamp, err
 }
@@ -456,8 +441,8 @@ func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done
 		case <-ticker.C:
 		}
 
-		s, err := statStamp(path)
-		if err != nil || s.same(last) {
+		s, err := filestamp.Of(path)
+		if err != nil || s.Same(last) {
 			continue
 		}
 		m, err := Load(path)

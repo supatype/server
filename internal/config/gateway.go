@@ -3,7 +3,7 @@ package config
 import (
 	"strings"
 
-	"github.com/kelseyhightower/envconfig"
+	"github.com/supatype/server/internal/envparse"
 )
 
 // Defaults that callers need by name as well as by tag.
@@ -321,7 +321,7 @@ type Config struct {
 // Call LoadDotEnvForServe (or LoadDotEnv) before this to populate the environment from .env.
 func Load() (*Config, error) {
 	var cfg Config
-	if err := envconfig.Process("", &cfg); err != nil {
+	if err := envparse.Process("", &cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

@@ -38,6 +38,8 @@ type hit struct {
 	path     string
 	query    string
 	header   http.Header
+	// requestURI is the request line's target as the upstream received it, escapes and all.
+	requestURI string
 }
 
 // rig is the outer mux wired to fake upstreams, one per service.
@@ -82,11 +84,12 @@ func newRig(t *testing.T, mode string, opts ...rigOption) *rig {
 	fake := func(name string) *httptest.Server {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			r.record(hit{
-				upstream: name,
-				method:   req.Method,
-				path:     req.URL.Path,
-				query:    req.URL.RawQuery,
-				header:   req.Header.Clone(),
+				upstream:   name,
+				method:     req.Method,
+				path:       req.URL.Path,
+				query:      req.URL.RawQuery,
+				header:     req.Header.Clone(),
+				requestURI: req.RequestURI,
 			})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)

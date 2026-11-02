@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"strings"
 	"time"
 
@@ -34,28 +33,10 @@ const (
 // Returns an error either from index creation failure (partial or complete) or if the advisory lock
 // could not be acquired.
 func CreateIndexes(ctx context.Context, config *conf.GlobalConfiguration, le *logrus.Entry) error {
-	rawURL := config.DB.URL
-	if nu, err := storage.EnsurePostgresSearchPathInURL(rawURL, config.DB.Namespace); err == nil {
-		rawURL = nu
-	}
-	u, err := url.Parse(rawURL)
+	deets, err := storage.MigrationConnectionDetails(
+		config.DB.URL, config.DB.Driver, config.DB.Namespace, "auth_indexworker")
 	if err != nil {
 		le.WithError(err).Fatal("Error parsing db connection url")
-	}
-
-	if config.DB.Driver == "" && config.DB.URL != "" {
-		config.DB.Driver = u.Scheme
-	}
-
-	q := u.Query()
-	q.Set("application_name", "auth_indexworker")
-	u.RawQuery = q.Encode()
-	deets := &pop.ConnectionDetails{
-		Dialect: config.DB.Driver,
-		URL:     u.String(),
-	}
-	deets.Options = map[string]string{
-		"Namespace": config.DB.Namespace,
 	}
 
 	db, err := pop.NewConnection(deets)
@@ -67,47 +48,16 @@ func CreateIndexes(ctx context.Context, config *conf.GlobalConfiguration, le *lo
 	if err := db.Open(); err != nil {
 		log.Fatalf("Error checking database connection: %+v", err)
 	}
-	db = db.WithContext(ctx)
-
-	// Try to obtain advisory lock to ensure only one index worker is creating indexes at a time
-	lockName := "auth_index_worker"
-	var lockAcquired bool
-	lockQuery := fmt.Sprintf("SELECT pg_try_advisory_lock(hashtext('%s')::bigint)", lockName)
-
-	if err := db.RawQuery(lockQuery).First(&lockAcquired); err != nil {
-		le.WithFields(logrus.Fields{
-			"outcome": OutcomeFailure,
-			"code":    "advisory_lock_acquisition_failed",
-		}).WithError(err).Error("Failed to attempt advisory lock acquisition")
+	// Try to obtain advisory lock to ensure only one index worker is creating indexes at a time.
+	// Taken before WithContext, which hides the pool the lock needs a connection from.
+	lock, err := acquireIndexWorkerLock(ctx, db, le)
+	if err != nil {
 		return err
 	}
-
-	if !lockAcquired {
-		le.WithFields(logrus.Fields{
-			"outcome": OutcomeSkipped,
-			"code":    "advisory_lock_already_acquired",
-		}).Info("Another process is currently holding the advisory lock, skipping index creation")
-		return ErrAdvisoryLockAlreadyAcquired
-	}
-
-	le.Debug("Successfully acquired advisory lock for index creation")
-
 	// Ensure lock is released on function exit
-	defer func() {
-		unlockQuery := fmt.Sprintf("SELECT pg_advisory_unlock(hashtext('%s')::bigint)", lockName)
-		var unlocked bool
-		if err := db.RawQuery(unlockQuery).First(&unlocked); err != nil {
-			if ctx.Err() != nil {
-				le.Debug("Context cancelled, advisory lock will be released upon session termination")
-			} else {
-				le.WithError(err).Error("Failed to release advisory lock")
-			}
-		} else if unlocked {
-			le.Debug("Successfully released advisory lock")
-		} else {
-			le.Debug("Advisory lock was not held when attempting to release")
-		}
-	}()
+	defer releaseIndexWorkerLock(ctx, lock, le)
+
+	db = db.WithContext(ctx)
 
 	indexes := getUsersIndexes(config.DB.Namespace)
 	indexNames := make([]string, len(indexes))
@@ -348,5 +298,50 @@ func dropInvalidIndexes(db *pop.Connection, le *logrus.Entry, namespace string, 
 				}).WithError(err).Error("Failed to drop invalid index")
 			}
 		}
+	}
+}
+
+// indexWorkerLockName names the advisory lock that lets only one index worker run at a time.
+const indexWorkerLockName = "auth_index_worker"
+
+// acquireIndexWorkerLock takes the index worker's advisory lock on a connection of its own,
+// or returns ErrAdvisoryLockAlreadyAcquired when another process holds it.
+func acquireIndexWorkerLock(ctx context.Context, db *pop.Connection, le *logrus.Entry) (*advisoryLock, error) {
+	lock, acquired, err := tryIndexWorkerLock(ctx, db)
+	if err != nil {
+		le.WithFields(logrus.Fields{"outcome": OutcomeFailure, "code": "advisory_lock_acquisition_failed"}).
+			WithError(err).Error("Failed to attempt advisory lock acquisition")
+		return nil, err
+	}
+	if !acquired {
+		le.WithFields(logrus.Fields{"outcome": OutcomeSkipped, "code": "advisory_lock_already_acquired"}).
+			Info("Another process is currently holding the advisory lock, skipping index creation")
+		return nil, ErrAdvisoryLockAlreadyAcquired
+	}
+	le.Debug("Successfully acquired advisory lock for index creation")
+	return lock, nil
+}
+
+// tryIndexWorkerLock takes the lock on a connection of the pool under db.
+func tryIndexWorkerLock(ctx context.Context, db *pop.Connection) (*advisoryLock, bool, error) {
+	sqldb, ok := storage.StdDB(db)
+	if !ok {
+		return nil, false, errors.New("no database handle to take the advisory lock on")
+	}
+	return tryAdvisoryLock(ctx, sqldb, indexWorkerLockName)
+}
+
+// releaseIndexWorkerLock unlocks on the connection that took the lock.
+func releaseIndexWorkerLock(ctx context.Context, lock *advisoryLock, le *logrus.Entry) {
+	unlocked, err := lock.release(ctx)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		le.Debug("Context cancelled; the lock's connection was closed, which released it")
+	case err != nil:
+		le.WithError(err).Error("Failed to release advisory lock; its connection was closed, which released it")
+	case unlocked:
+		le.Debug("Successfully released advisory lock")
+	default:
+		le.Debug("Advisory lock was not held when attempting to release")
 	}
 }

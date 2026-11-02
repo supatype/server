@@ -9,10 +9,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type Client struct{}
+type Client struct {
+	logBody bool
+}
 
-func New() *Client {
-	return &Client{}
+// New returns a console client. logBody logs each email's body, which is how a
+// developer reads a magic link or OTP without a mail server. It is for dev mode
+// only: self-host also defaults to this client, and a live sign-in link in a
+// log is a credential.
+func New(logBody bool) *Client {
+	return &Client{logBody: logBody}
 }
 
 func (c *Client) Mail(
@@ -33,14 +39,20 @@ func (c *Client) Mail(
 	default:
 	}
 
-	logrus.WithFields(logrus.Fields{
+	fields := logrus.Fields{
 		"component":    "mailer_console",
 		"to":           to,
 		"subject":      subject,
 		"template_typ": typ,
 		"body_len":     len(body),
 		"header_keys":  headerKeys(headers),
-	}).Info("console mailer: would send email (body omitted; use smtp/resend/ses for delivery)")
+	}
+	if c.logBody {
+		fields["body"] = body
+		logrus.WithFields(fields).Info("console mailer: would send email (dev mode, body included)")
+		return nil
+	}
+	logrus.WithFields(fields).Info("console mailer: would send email (body omitted; use smtp/resend/ses for delivery)")
 	return nil
 }
 

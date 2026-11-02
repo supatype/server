@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.2.1](https://github.com/supatype/server/compare/v2.2.0...v2.2.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **auth:** put SAML endpoints under /auth/v1 when the external URL is the gateway root ([5db197d](https://github.com/supatype/server/commit/5db197da190a98c1365db1fcefb4a8d6ac572913))
+* **auth:** set the auth search_path on every connection, and tighten the namespace ([90e7199](https://github.com/supatype/server/commit/90e71998948a7d640dc20087f7e83a5445381437))
+* **auth:** third review round on the auth connection, namespace and logging ([91f44e2](https://github.com/supatype/server/commit/91f44e2745ed3a0970a99163d3ff05bc1dc5d65f))
+* **config:** read a blank typed setting as unset so its default applies ([3a16c7b](https://github.com/supatype/server/commit/3a16c7bf93f647833c197bbfa7e4cfcf61a0e174))
+* **config:** read blank typed settings as unset without touching the process environment ([6205255](https://github.com/supatype/server/commit/6205255af7935d42ab6c30630c8a8c23e7faa37a))
+* **gateway:** send function calls to the port Deno was started on ([00a5dfd](https://github.com/supatype/server/commit/00a5dfd6e32cad0d061b2563d2f07e1d0d1c6b1f))
+* keep legacy object lookups to their own name, and keep passwords out of URL errors ([397f0b0](https://github.com/supatype/server/commit/397f0b045d9bf51a2814dc717edc017c8bd486fa))
+* **logging:** keep logging configured after a bad level, and apply LOG_FIELDS ([8c5d6c5](https://github.com/supatype/server/commit/8c5d6c565a0f503b42fd3b545aa388a9d02ef4d2))
+* **mailer:** log the email body from the console mailer in dev mode ([24438e7](https://github.com/supatype/server/commit/24438e75a8704c85f68a3a48cbb461a82c494a65))
+* **migrate:** stop setting the project database's search_path to auth ([2000556](https://github.com/supatype/server/commit/2000556b52000f0ed73faae21d77d61bf0cbdf5e))
+* **objstore,auth:** bucket limits and access by mode, signed URL escaping, SAML paths, dev mail bodies ([0c0f8f6](https://github.com/supatype/server/commit/0c0f8f686d612eede1adb46b9cfb1a9b639f3b46))
+* **objstore:** a custom bucket is never public ([a1130f5](https://github.com/supatype/server/commit/a1130f52d6b9e53edac0a8f4bfde20d46494fe09))
+* **objstore:** correct a public custom bucket on its next update ([a6a10ab](https://github.com/supatype/server/commit/a6a10ab4b9954ca74528bec070856cc4aeb098c8))
+* **objstore:** decode encoded object names, keep bucket access modes, stop at the size limit ([e8f7240](https://github.com/supatype/server/commit/e8f724090a2319916f3a01e31fcbc4b7a03fa6c5))
+* **objstore:** enforce bucket size and type limits and keep the CLI's access mode ([18dbe01](https://github.com/supatype/server/commit/18dbe01b67a6ec8d7d92f384c0e7463e5fc293cf))
+* **objstore:** escape the bucket and object name in native signed URLs ([95935a1](https://github.com/supatype/server/commit/95935a1d503a42eba0a113bb685060e0c49928bd))
+* **objstore:** find old-layout names on every OS, but never across a dropped dot ([5438cb3](https://github.com/supatype/server/commit/5438cb3162c58d9a849849da56a7fcf55f212e3c))
+* **objstore:** ignore the sidecar directory however it is cased when deleting a bucket ([86f47ae](https://github.com/supatype/server/commit/86f47ae9c52f942936dc6fe48ee1964c04c0e0bf))
+* **objstore:** keep the sidecar tree out of reach of every object route ([984445b](https://github.com/supatype/server/commit/984445b0576d94e73dcd9b6d9996e576c08566ef))
+* **objstore:** list a stored name only as a name that leads back to it ([0ea35d5](https://github.com/supatype/server/commit/0ea35d5e9e641f663b1dad32b32945f6ca22ea79))
+* **objstore:** list prefixes refuse empty parts, access before the name, one refusal naming the name as sent ([0fe6bb4](https://github.com/supatype/server/commit/0fe6bb4f248565cf2a244714209eb168a7c4e9c7))
+* **objstore:** never reach another object or the sidecars through an old or aliased name ([ae92689](https://github.com/supatype/server/commit/ae92689d193b2c8b957f2eb69e0effe99ef2cc5a))
+* **objstore:** object routes serve registered buckets only, and no bucket can be the store's own directory ([44ad837](https://github.com/supatype/server/commit/44ad837802fe3a77c37842a0c484ac04a50ad362))
+* **objstore:** read access by the bucket's access mode, answer an oversized chunked upload cleanly ([a7ae9b8](https://github.com/supatype/server/commit/a7ae9b8065460cea05ef01ea6e62c2a6b6e1f3ba))
+* **objstore:** read every object name one way, check it where the route resolves; no test-only globals ([048bcf4](https://github.com/supatype/server/commit/048bcf4ec04b2659927711f368231dbef48b041c))
+* **objstore:** refuse a bucket id the file system takes for an existing bucket ([6024ca8](https://github.com/supatype/server/commit/6024ca8af2c05cdeff1ed7d1408ffd7c3fa0fb9c))
+* **objstore:** refuse an object name with a ".", ".." or empty part ([8453c2b](https://github.com/supatype/server/commit/8453c2b39cf57eb77f6637cd45ddef787e7b99d5))
+* **objstore:** still reach objects Windows stored under the old layout ([cd8a95c](https://github.com/supatype/server/commit/cd8a95c6d9e4b060dfbec7cec79f6623d72fcb78))
+* **objstore:** store every legal object name, whatever the OS allows in a file name ([b9f543a](https://github.com/supatype/server/commit/b9f543a85a7f6667284c541da8e7a024691f5884))
+* **objstore:** strip one leading slash only, check a remove before deleting, sign only servable names ([d746358](https://github.com/supatype/server/commit/d74635834db59f9b77aaffd23d85c817271b1373))
+* **objstore:** take naming rules from the storage file system and never reach an object by another name ([6e4e3da](https://github.com/supatype/server/commit/6e4e3dad707417beec70acd0960e94c7c08afe8a))
+* pre-push tidy of the advisory lock release, the log tail, and gosec findings ([68b6788](https://github.com/supatype/server/commit/68b6788434cca829b707a305ac94ca2eb73280ad))
+* **proxy:** bound the WebSocket upstream dial and stop it with the request ([81e365b](https://github.com/supatype/server/commit/81e365bd1eb5a66c60ac21e5da8e93e4d8185dbe))
+* **proxy:** end both sides of a spliced WebSocket when one side hangs up ([cbcbdf3](https://github.com/supatype/server/commit/cbcbdf36bcd42eedccbed3de008440b761354acd))
+* **proxy:** forward the bytes a client sends with its WebSocket upgrade ([5252a05](https://github.com/supatype/server/commit/5252a05bf1b62b144302bf8fb35076d8c339af69))
+* **proxy:** offer only HTTP/1.1 when dialing a TLS WebSocket upstream ([33bfff7](https://github.com/supatype/server/commit/33bfff7f3c59fba2c78147fe85a082f3fe4ed264))
+* **proxy:** reach an https or wss WebSocket target over TLS ([123c09d](https://github.com/supatype/server/commit/123c09da0c9381cf16cb5470c09208311ec8dccd))
+* **proxy:** take over a wrapped connection for WebSocket upgrades and streams ([ca7fdda](https://github.com/supatype/server/commit/ca7fdda73f94d92d5117c8e3afcafd2075e951cb))
+
 ## [2.2.0](https://github.com/supatype/server/compare/v2.1.1...v2.2.0) (2026-10-26)
 
 

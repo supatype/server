@@ -48,11 +48,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # The key plugin widget bundles must be signed with, embedded in the server. Fails when
+      # the secret is missing, so no image ships that would refuse every widget.
+      - name: Release public key
+        id: release-key
+        env:
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+        run: echo "key=$(bash hack/release-public-key.sh)" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            RELEASE_PUBLIC_KEY=${{ steps.release-key.outputs.key }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

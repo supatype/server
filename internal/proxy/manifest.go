@@ -431,7 +431,7 @@ func dedupe(fn func(*RouteManifest), window time.Duration) func(*RouteManifest) 
 //
 // A nil done runs for the life of the process, which is what Watch passes; the
 // channel exists so a test can stop it rather than leak a ticker per case.
-func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}, last FileStamp) {
+func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done <-chan struct{}, last filestamp.Stamp) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -467,7 +467,7 @@ func pollLoop(path string, interval time.Duration, fn func(*RouteManifest), done
 // loaded is the stamp LoadStamped returned for the manifest now live. The poll
 // measures change from it, so a write that lands between that load and this
 // call, before fsnotify is watching, is still applied.
-func Watch(path string, loaded FileStamp, fn func(*RouteManifest)) error {
+func Watch(path string, loaded filestamp.Stamp, fn func(*RouteManifest)) error {
 	guarded := dedupe(fn, 2*manifestPollInterval)
 	go pollLoop(path, manifestPollInterval, guarded, nil, loaded)
 

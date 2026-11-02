@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/supatype/server/internal/conf"
 	"github.com/supatype/server/internal/stff"
 )
@@ -147,4 +148,15 @@ func getRedirectTo(r *http.Request) (reqref string) {
 	}
 
 	return
+}
+
+// RoutePath is the path chi routes a request on below the mount that routed it, the remainder the
+// mount left in the route context. With no such remainder it is fallback, which the caller picks
+// for where it sits: the mount's own root for a handler under one mount, the request's whole path
+// for a check that judges a path anywhere on the router.
+func RoutePath(r *http.Request, fallback string) string {
+	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePath != "" {
+		return rctx.RoutePath
+	}
+	return fallback
 }

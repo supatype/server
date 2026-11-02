@@ -34,6 +34,11 @@ var dataPlaneRules = []proxyRule{
 	{http.MethodPost, "/storage/v1/object/media/a.png", true, true, true},
 	{http.MethodGet, "/realtime/v1/websocket", true, true, true},
 	{http.MethodPost, "/functions/v1/hello", true, true, true},
+	// By its path alone, the admin API's old address is a call to the function named admin. The
+	// proxy judges it as administration only when the gateway will hand it to the admin API
+	// (servesFunctionsAdmin), which depends on the credential it carries.
+	{http.MethodGet, "/functions/v1/admin/list", true, true, true},
+	{http.MethodPost, "/functions/v1/admin/env", true, true, true},
 }
 
 // The routes that already had a rule of their own.
@@ -103,9 +108,9 @@ var realtimeInspectorRules = []proxyRule{
 // role can do, for admins and developers, and a route added later must land here
 // rather than fall through to "may write content rows".
 var serviceRoleRules = []proxyRule{
-	{http.MethodGet, "/functions/v1/admin/list", true, true, false},
-	{http.MethodGet, "/functions/v1/admin/env", true, true, false},
-	{http.MethodPost, "/functions/v1/admin/env", true, true, false},
+	{http.MethodGet, "/admin/v1/functions/list", true, true, false},
+	{http.MethodGet, "/admin/v1/functions/env", true, true, false},
+	{http.MethodPost, "/admin/v1/functions/env", true, true, false},
 	{http.MethodGet, "/admin/v1/config/rest", true, true, false},
 	{http.MethodPatch, "/admin/v1/config/rest", true, true, false},
 	{http.MethodPost, "/admin/v1/database/credentials/first-view", true, true, false},
@@ -260,5 +265,68 @@ func TestProxyServedWithoutAMountJudgesTheEscapedPath(t *testing.T) {
 	}
 	if code := call("/%72est/v1/posts"); code != http.StatusForbidden || landed != "" {
 		t.Fatalf("an escaped prefix must be judged as routed, got %d at %q", code, landed)
+	}
+}
+
+// functionAdminRoutes are the functions admin API's own routes, below either of its addresses.
+var functionAdminRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/list"},
+	{http.MethodGet, "/hello/logs"},
+	{http.MethodGet, "/logs/tail"},
+	{http.MethodGet, "/env"},
+	{http.MethodPost, "/env"},
+	{http.MethodDelete, "/env/KEY"},
+	{http.MethodGet, "/hello/env"},
+	{http.MethodPost, "/hello/env"},
+	{http.MethodDelete, "/hello/env/KEY"},
+}
+
+// functionAdminAddresses are where the functions admin API is served: its address, and its old one.
+var functionAdminAddresses = []string{"/admin/v1/functions", "/functions/v1/admin"}
+
+// A project function named admin is called at /functions/v1/admin, so these are content, not
+// administration: the old admin address only answers the admin API's own routes.
+var functionNamedAdminPaths = []string{"/functions/v1/admin", "/functions/v1/admin/", "/functions/v1/admin/orders/42"}
+
+// Function administration is not content, at either of its addresses: Read and Write never reach
+// one of the admin API's routes, and only Administer does. At the old address that is a request
+// the gateway will hand to the admin API (servesFunctionsAdmin).
+func TestReadWriteDoesNotReachFunctionAdministration(t *testing.T) {
+	content := StudioPermissions{Read: true, Write: true}
+	administer := StudioPermissions{Read: true, Write: true, Administer: true}
+	for _, address := range functionAdminAddresses {
+		servedAsAdmin := address == legacyFunctionsAdminPrefix
+		for _, route := range functionAdminRoutes {
+			if allowsProxied(content, route.method, address+route.path, servedAsAdmin) {
+				t.Errorf("Read/Write reached %s %s, which only Administer may", route.method, address+route.path)
+			}
+			if !allowsProxied(administer, route.method, address+route.path, servedAsAdmin) {
+				t.Errorf("Administer was refused %s %s", route.method, address+route.path)
+			}
+		}
+	}
+	// Everything under the new address is administration, a route it does not have included.
+	if AllowsRequest(content, http.MethodPost, "/admin/v1/functions/orders/42") {
+		t.Error("Read/Write reached POST /admin/v1/functions/orders/42")
+	}
+}
+
+// A project function named admin follows the rules every function does: Read calls it with a
+// read, Write with anything else.
+func TestAFunctionNamedAdminIsContent(t *testing.T) {
+	read := StudioPermissions{Read: true}
+	write := StudioPermissions{Read: true, Write: true}
+	for _, path := range functionNamedAdminPaths {
+		if !AllowsRequest(read, http.MethodGet, path) {
+			t.Errorf("Read was refused GET %s", path)
+		}
+		if AllowsRequest(read, http.MethodPost, path) {
+			t.Errorf("Read reached POST %s, which needs Write", path)
+		}
+		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			if !AllowsRequest(write, method, path) {
+				t.Errorf("Write was refused %s %s", method, path)
+			}
+		}
 	}
 }

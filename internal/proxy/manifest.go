@@ -11,6 +11,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
+
 	"github.com/supatype/server/internal/filestamp"
 )
 
@@ -370,6 +371,10 @@ var newWatcher = fsnotify.NewWatcher
 // happen with nothing anywhere to explain it.
 const manifestPollInterval = 2 * time.Second
 
+// FileStamp identifies a version of the manifest file without reading it. The
+// zero value stands for a file that did not exist.
+type FileStamp = filestamp.Stamp
+
 // LoadStamped is Load plus the stamp of the version it read, for handing to
 // Watch so the watch starts from what is live rather than from the file as it
 // is by the time Watch runs.
@@ -378,7 +383,7 @@ const manifestPollInterval = 2 * time.Second
 // newer content behind an older stamp, which the poll then applies once more:
 // harmless. Taken after the read, the same write would be stamped as loaded
 // and never applied.
-func LoadStamped(path string) (*RouteManifest, filestamp.Stamp, error) {
+func LoadStamped(path string) (*RouteManifest, FileStamp, error) {
 	stamp, _ := filestamp.Of(path)
 	m, err := Load(path)
 	return m, stamp, err

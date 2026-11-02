@@ -181,7 +181,7 @@ func TestARefusedOverwriteKeepsTheObject(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", rec.Code)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "small", "a.txt"))
+	got, err := os.ReadFile(filepath.Join(root, "small", "a.txt")) // #nosec G304 -- this test's own temp dir
 	if err != nil || string(got) != "old" {
 		t.Errorf("object = %q, %v; want it untouched", got, err)
 	}
@@ -252,7 +252,7 @@ func TestABucketUpdateKeepsTheAccessModeTheCLIWrote(t *testing.T) {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
 	}
 
-	data, err := os.ReadFile(filepath.Join(root, ".supatype", "buckets.json"))
+	data, err := os.ReadFile(filepath.Join(root, ".supatype", "buckets.json")) // #nosec G304 -- this test's own temp dir
 	if err != nil {
 		t.Fatal(err)
 	}

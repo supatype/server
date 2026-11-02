@@ -136,7 +136,30 @@ type DBConfiguration struct {
 
 func (c *DBConfiguration) Validate() error {
 	c.ConnPercentage = min(max(c.ConnPercentage, 0), 100)
+	if reason := badNamespace(c.Namespace); reason != "" {
+		return fmt.Errorf("SUPATYPE_DB_NAMESPACE %q %s: the migrations name it unquoted "+
+			"(CREATE SCHEMA %s, %s.users), so it must be a name Postgres takes bare and reads "+
+			"the same way the connection's search_path does", c.Namespace, reason, c.Namespace, c.Namespace)
+	}
 	return nil
+}
+
+// dbNamespacePattern is a lower-case identifier within Postgres's 63-byte limit.
+var dbNamespacePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// badNamespace says why a namespace cannot be used, or returns "" when it can.
+func badNamespace(ns string) string {
+	if !dbNamespacePattern.MatchString(ns) {
+		return "is not a plain lower-case identifier (a letter or underscore, then letters, " +
+			"digits or underscores, at most 63)"
+	}
+	if _, reserved := reservedSQLKeywords[ns]; reserved {
+		return "is a reserved SQL keyword"
+	}
+	if strings.HasPrefix(ns, "pg_") {
+		return "starts with pg_, which Postgres keeps for system schemas"
+	}
+	return ""
 }
 
 // JWTConfiguration holds all the JWT related configuration.
@@ -1185,6 +1208,12 @@ func populateGlobal(config *GlobalConfiguration) error {
 
 // ApplyDefaults sets defaults for a GlobalConfiguration
 func (config *GlobalConfiguration) ApplyDefaults() error {
+	// The namespace is trimmed here, once, and an empty one takes the default the struct tag
+	// gives an unset variable. Validate then only refuses a name that cannot be used.
+	config.DB.Namespace = strings.TrimSpace(config.DB.Namespace)
+	if config.DB.Namespace == "" {
+		config.DB.Namespace = "auth"
+	}
 	if len(config.JWT.AdminRoles) == 0 {
 		config.JWT.AdminRoles = []string{"service_role", "supatype_admin"}
 	}

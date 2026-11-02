@@ -283,7 +283,7 @@ func TestGlobal(t *testing.T) {
 			{102, 100},
 		}
 		for _, test := range tests {
-			cfg := &DBConfiguration{ConnPercentage: test.from}
+			cfg := &DBConfiguration{ConnPercentage: test.from, Namespace: "auth"}
 			err := cfg.Validate()
 			require.NoError(t, err)
 			require.Equal(t, test.exp, cfg.ConnPercentage)

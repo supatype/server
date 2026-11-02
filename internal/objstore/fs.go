@@ -17,7 +17,12 @@ import (
 //
 // Everything below is the real thing unless a test says otherwise.
 var (
-	openRoot  = os.OpenRoot
+	openRoot = os.OpenRoot
+
+	// probeFoldsCase asks the storage file system whether it ignores case. A
+	// test states the answer of a file system other than the one it runs on.
+	probeFoldsCase = foldsCaseAt
+
 	mkdirAll  = os.MkdirAll
 	readDir   = os.ReadDir
 	removeAll = os.RemoveAll

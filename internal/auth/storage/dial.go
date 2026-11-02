@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/XSAM/otelsql"
@@ -51,7 +51,7 @@ func DialContext(
 		// pop's Open builds the pool and stops there; lib/pq connects lazily, so
 		// until something asks for a connection nothing has contacted the
 		// database at all. Without this the server starts against a database
-		// that is not there and fails on its first query instead — which is the
+		// that is not there and fails on its first query instead, which is the
 		// failure DialWithRetry exists to wait out, and it never saw one.
 		if err := sqldb.PingContext(ctx); err != nil {
 			_ = db.Close()
@@ -82,18 +82,17 @@ func (c *Connection) Copy() *Connection {
 func newConnectionDetails(
 	config *conf.GlobalConfiguration,
 ) (*pop.ConnectionDetails, error) {
-	dbURL := config.DB.URL
-	if u, err := EnsurePostgresSearchPathInURL(dbURL, config.DB.Namespace); err == nil {
-		dbURL = u
-	}
-	cd := &pop.ConnectionDetails{
+	cd, err := BuildConnectionDetails(ConnectionSettings{
+		URL:             config.DB.URL,
 		Dialect:         config.DB.Driver,
-		URL:             dbURL,
+		Namespace:       config.DB.Namespace,
 		Pool:            config.DB.MaxPoolSize,
 		IdlePool:        config.DB.MaxIdlePoolSize,
 		ConnMaxLifetime: config.DB.ConnMaxLifetime,
 		ConnMaxIdleTime: config.DB.ConnMaxIdleTime,
-		Options:         make(map[string]string),
+	})
+	if err != nil {
+		return nil, err
 	}
 	if err := applyDBDriver(config, cd); err != nil {
 		return nil, err
@@ -114,40 +113,41 @@ func applyDBDriver(
 	config *conf.GlobalConfiguration,
 	cd *pop.ConnectionDetails,
 ) error {
-	if config.DB.Driver == "" && config.DB.URL != "" {
-		u, err := url.Parse(config.DB.URL)
-		if err != nil {
-			return errors.Wrap(err, "parsing db connection url")
-		}
-		config.DB.Driver = u.Scheme
-	}
-
-	driver := ""
-	if config.DB.Driver != "postgres" {
+	if cd.Dialect != "postgres" {
 		logrus.Warn("DEPRECATION NOTICE: only PostgreSQL is supported, this option will be removed")
-	} else {
-		// pop v5 uses pgx as the default PostgreSQL driver
-		driver = "pgx"
 	}
-
-	if driver != "" && (config.Tracing.Enabled || config.Metrics.Enabled) {
-		instrumentedDriver, err := otelsql.Register(driver)
-		if err != nil {
-			logrus.WithError(err).Errorf("unable to instrument sql driver %q for use with OpenTelemetry", driver)
-		} else {
-			logrus.Debugf("using %s as an instrumented driver for OpenTelemetry", instrumentedDriver)
-
-			// sqlx needs to be informed that the new instrumented
-			// driver has the same semantics as the
-			// non-instrumented driver
-			sqlx.BindDriver(instrumentedDriver, sqlx.BindType(driver))
-
-			driver = instrumentedDriver
-		}
+	// cd.Driver is pgx setting the auth search_path on every connection (see searchPathDriverName).
+	if config.Tracing.Enabled || config.Metrics.Enabled {
+		cd.Driver = instrumentForOpenTelemetry(cd.Driver)
 	}
-
-	cd.Driver = driver
 	return nil
+}
+
+var (
+	instrumentedMu      sync.Mutex
+	instrumentedDrivers = map[string]string{}
+)
+
+// instrumentForOpenTelemetry wraps the driver for tracing and metrics, or keeps it as it is
+// when that fails. Each driver is wrapped once: DialWithRetry dials again until the database
+// answers, and registering on every dial would add a driver name per attempt.
+func instrumentForOpenTelemetry(driver string) string {
+	instrumentedMu.Lock()
+	defer instrumentedMu.Unlock()
+	if name, ok := instrumentedDrivers[driver]; ok {
+		return name
+	}
+	instrumentedDriver, err := otelsql.Register(driver)
+	if err != nil {
+		logrus.WithError(err).Errorf("unable to instrument sql driver %q for use with OpenTelemetry", driver)
+		return driver
+	}
+	logrus.Debugf("using %s as an instrumented driver for OpenTelemetry", instrumentedDriver)
+	// sqlx needs to be informed that the new instrumented driver has the same semantics as
+	// the non-instrumented driver
+	sqlx.BindDriver(instrumentedDriver, sqlx.BindType(driver))
+	instrumentedDrivers[driver] = instrumentedDriver
+	return instrumentedDriver
 }
 
 // NOTE: I couldn't find any way to obtain the store when wrapped with context
@@ -449,4 +449,10 @@ func getExcludedColumns(model interface{}, includeColumns ...string) ([]string, 
 		xcols = append(xcols, n)
 	}
 	return xcols, nil
+}
+
+// StdDB returns the *sql.DB under a pop connection, for work that has to hold one connection
+// of the pool, such as a session-level advisory lock.
+func StdDB(db *pop.Connection) (*sql.DB, bool) {
+	return popConnToStd(db)
 }

@@ -2,7 +2,7 @@
 //
 // Routes (all require the service-role Bearer token, in every mode):
 //
-//	GET    /list             list deployed functions (scanned from functionsDir)
+//	GET    /list             list deployed functions (scanned from functionsDir; none without one)
 //	GET    /{name}/logs      recent log lines for a function (?since=1h)
 //	GET    /logs/tail        live log tail, relayed from the functions worker
 //	GET    /env              list shared env var key names from .env.local
@@ -11,6 +11,9 @@
 //	GET    /{name}/env       list function-specific env var key names
 //	POST   /{name}/env       set a function-specific env var
 //	DELETE /{name}/env/{key} remove a function-specific env var
+//
+// The gateway mounts the API whether or not the server has a functions directory. Without one the
+// list is empty and the env routes, which read and write files in that directory, answer 409.
 package functions
 
 import (
@@ -63,12 +66,8 @@ func IsAdminRoute(method, path string) bool {
 	return routeTable.Match(chi.NewRouteContext(), method, path)
 }
 
-// Mounted reports whether the gateway serves the admin API, at both of its addresses: it does when
-// the server has a functions directory to administer.
-func Mounted(cfg *config.Config) bool { return cfg.DenoFunctionsDir != "" }
-
-// ServesAdminAPI reports whether the admin API's old address, /functions/v1/admin, where mounted
-// (Mounted), hands a request to the admin API rather than to the project's function named admin:
+// ServesAdminAPI reports whether the admin API's old address, /functions/v1/admin, hands a request
+// to the admin API rather than to the project's function named admin:
 // the request carries the service role's key and names one of the API's routes (path is below the
 // address). The gateway's dispatcher asks it of the request it holds, and the Studio proxy of the
 // request it is about to forward, so the two agree on which one a request is.
@@ -88,15 +87,51 @@ func newRouter(cfg *config.Config, functionsDir string, manager LogSource) chi.R
 	// server supervises Deno itself, which it does not in Compose or on cloud: the read API was
 	// there and nothing wrote to it.
 	r.Get("/logs/tail", tailFunctionLogs(newLogStream(cfg.FunctionsWorkerURL)))
-	shared, perFunction := sharedEnvFile(functionsDir), functionEnvFile(functionsDir)
-	r.Get("/env", listEnv(shared))
-	r.Post("/env", setEnv(shared))
-	r.Delete("/env/{key}", deleteEnv(shared))
-	r.Get("/{name}/env", listEnv(perFunction))
-	r.Post("/{name}/env", setEnv(perFunction))
-	r.Delete("/{name}/env/{key}", deleteEnv(perFunction))
+	addEnvRoutes(r, functionsDir)
 
 	return r
+}
+
+// envRoute is one env route: its method and pattern, whether it reads the shared file or a
+// function's, and what it does with that file.
+type envRoute struct {
+	method, pattern string
+	shared          bool
+	handler         func(envFile) http.HandlerFunc
+}
+
+// envRoutes are the env routes, stated once so the API serves the same ones with a functions
+// directory and without one, as IsAdminRoute judges by.
+var envRoutes = []envRoute{
+	{http.MethodGet, "/env", true, listEnv},
+	{http.MethodPost, "/env", true, setEnv},
+	{http.MethodDelete, "/env/{key}", true, deleteEnv},
+	{http.MethodGet, "/{name}/env", false, listEnv},
+	{http.MethodPost, "/{name}/env", false, setEnv},
+	{http.MethodDelete, "/{name}/env/{key}", false, deleteEnv},
+}
+
+// addEnvRoutes adds the env routes over functionsDir's files, or, with no directory, routes that
+// refuse: the files would otherwise be read and written relative to the server's working directory.
+func addEnvRoutes(r chi.Router, functionsDir string) {
+	for _, route := range envRoutes {
+		var handler http.Handler = http.HandlerFunc(noFunctionsDir)
+		if functionsDir != "" {
+			file := functionEnvFile(functionsDir)
+			if route.shared {
+				file = sharedEnvFile(functionsDir)
+			}
+			handler = route.handler(file)
+		}
+		r.Method(route.method, route.pattern, handler)
+	}
+}
+
+// noFunctionsDir answers a route that needs the functions directory on a server with none.
+func noFunctionsDir(w http.ResponseWriter, _ *http.Request) {
+	utilities.WriteJSON(w, http.StatusConflict, map[string]string{
+		"error": "no functions directory is configured on this server (SUPATYPE_DENO_FUNCTIONS_DIR)",
+	})
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
@@ -136,6 +171,13 @@ func requireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 
 // ─── List functions ───────────────────────────────────────────────────────────
 
+// writeNoFunctions answers an empty list, in the same shape as the success path. This answered a
+// bare array, so a caller reading `data` got one thing when the project had functions and another
+// when it had none, which is the case least likely to be exercised before release.
+func writeNoFunctions(w http.ResponseWriter) {
+	utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": []functionMeta{}})
+}
+
 type functionMeta struct {
 	Name        string `json:"name"`
 	DeployedAt  string `json:"deployedAt,omitempty"`
@@ -145,13 +187,16 @@ type functionMeta struct {
 
 func listFunctions(dir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// No directory configured lists none, as an empty or missing one does: Studio reads an
+		// empty list as "no functions", where a 404 read as a failure.
+		if dir == "" {
+			writeNoFunctions(w)
+			return
+		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				// The same shape as the success path. This answered a bare array, so a caller
-				// reading `data` got one thing when the project had functions and another when it
-				// had none, which is the case least likely to be exercised before release.
-				utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": []functionMeta{}})
+				writeNoFunctions(w)
 				return
 			}
 			utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

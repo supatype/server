@@ -7,7 +7,6 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data"
-	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/studioctx"
 	"github.com/supatype/server/internal/studiomembers"
 	"github.com/supatype/server/internal/utilities"
@@ -47,10 +46,6 @@ type Config struct {
 	// endpoints read the publishing block from the same file, so settings the
 	// engine writes reach this process by one route rather than two.
 	AdminConfigPath string
-	// FunctionsAdminMounted is whether the gateway serves the functions admin API
-	// (functions.Mounted). Without it, the API's old address /functions/v1/admin
-	// is only ever a call to a project function named admin.
-	FunctionsAdminMounted bool
 }
 
 // StudioRoleLookup returns the Studio role recorded for a user id. The second
@@ -60,12 +55,11 @@ type StudioRoleLookup func(userID string) (string, bool)
 // ConfigFromServer builds handler config from ServerConfig and admin-config path.
 func ConfigFromServer(cfg *config.Config) Config {
 	return Config{
-		JWTSecret:             cfg.JWTSecret,
-		ServiceRoleKey:        cfg.ServiceRoleKey,
-		AnonKey:               cfg.AnonKey,
-		AdminRoles:            AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
-		AdminConfigPath:       cfg.AdminConfigPath,
-		FunctionsAdminMounted: functions.Mounted(cfg),
+		JWTSecret:       cfg.JWTSecret,
+		ServiceRoleKey:  cfg.ServiceRoleKey,
+		AnonKey:         cfg.AnonKey,
+		AdminRoles:      AdminRolesFromConfigFile(cfg.AdminConfigPath, cfg.StudioAdminRoles),
+		AdminConfigPath: cfg.AdminConfigPath,
 	}
 }
 
@@ -338,7 +332,7 @@ func admitProxied(w http.ResponseWriter, req *http.Request, c Config, path strin
 
 	perms := permissionsOf(result)
 	method := permissionMethod(req, path)
-	functionsAdmin := servesFunctionsAdmin(req, c, perms, path)
+	functionsAdmin := servesFunctionsAdmin(req, perms, path)
 	if !allowsProxied(perms, method, path, functionsAdmin) && !allowsStoragePolicyRead(req, perms, path) {
 		WriteErrorBody(w, http.StatusForbidden, "Studio role \""+result.Role+"\" cannot perform this request")
 		return admission{}, false

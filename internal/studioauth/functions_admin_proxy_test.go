@@ -2,10 +2,7 @@ package studioauth
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"testing"
-
-	jwt "github.com/golang-jwt/jwt/v5"
 )
 
 // The credential a request reached its upstream with is the service role's.
@@ -66,27 +63,6 @@ func TestAnAdminActingAnonymouslyCallsTheFunction(t *testing.T) {
 	next, rec := proxyAs(t, RoleAdmin, ModeAnon, http.MethodGet, "/functions/v1/admin/list")
 	if !next.reached || next.auth != "Bearer anon-key" {
 		t.Fatalf("got %d with %q, want the function with the anon key", rec.Code, next.auth)
-	}
-}
-
-// Without a functions directory the gateway does not mount the admin API, and /functions/v1/admin
-// is only ever the function named admin: an admin acting as themselves calls it with their own
-// token, and an editor calls it as content.
-func TestWithoutTheAdminAPIMountedTheOldAddressIsTheFunction(t *testing.T) {
-	call := func(role, mode string) (*proxyUpstream, *httptest.ResponseRecorder) {
-		req := studioRequest(http.MethodGet, "/functions/v1/admin/env", bearer(t, jwt.MapClaims{"sub": "user-1"}))
-		req.Header.Set(ActingModeHeader, mode)
-		cfg := membershipConfig(role)
-		cfg.FunctionsAdminMounted = false
-		next, rec := &proxyUpstream{}, httptest.NewRecorder()
-		ProxyHandler(next, cfg).ServeHTTP(rec, req)
-		return next, rec
-	}
-	if next, rec := call(RoleAdmin, ModeSelf); !next.reached || next.auth == serviceRoleBearer || rec.Header().Get(ActingModeHeader) != ModeSelf {
-		t.Errorf("admin acting as themselves: got %d with %q, mode %q", rec.Code, next.auth, rec.Header().Get(ActingModeHeader))
-	}
-	if next, rec := call("editor", ModeStudio); !next.reached || next.auth == serviceRoleBearer {
-		t.Errorf("editor: got %d with %q", rec.Code, next.auth)
 	}
 }
 

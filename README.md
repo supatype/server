@@ -18,7 +18,8 @@ It can:
 - Proxy PostgREST (`/rest/v1`) and GraphQL (`/graphql/v1`).
 - Serve Storage via built-in local filesystem mode or proxy mode (`/storage/v1`).
 - Proxy Edge Functions to a functions worker or in-process Deno (`/functions/v1`).
-- Expose Functions admin endpoints (`/admin/v1/functions`) when a functions directory is set.
+- Expose Functions admin endpoints (`/admin/v1/functions`). With no functions directory set, the list is
+  empty and the env routes answer 409.
 - Serve Realtime WebSockets when enabled (`/realtime/v1`).
 - Expose admin and Studio support endpoints (`/admin/v1`, `/studio-config`, `/sql`).
 - Serve application content from `/` (none/static/proxy modes).

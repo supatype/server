@@ -13,9 +13,9 @@ const legacyFunctionsAdminPrefix = "/functions/v1/admin"
 // servesFunctionsAdmin reports whether the gateway will hand this proxied request to the functions
 // admin API at its old address rather than to the function named admin. It asks the gateway's own
 // question (functions.ServesAdminAPI) about the request the proxy will forward, with the key the
-// proxy will attach, once it knows the API is mounted at all.
-func servesFunctionsAdmin(req *http.Request, c Config, perms StudioPermissions, path string) bool {
-	if !c.FunctionsAdminMounted || !under(path, legacyFunctionsAdminPrefix) {
+// proxy will attach. The gateway mounts the API whether or not it has a functions directory.
+func servesFunctionsAdmin(req *http.Request, perms StudioPermissions, path string) bool {
+	if !under(path, legacyFunctionsAdminPrefix) {
 		return false
 	}
 	below := path[len(legacyFunctionsAdminPrefix):]

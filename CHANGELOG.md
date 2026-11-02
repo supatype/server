@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2](https://github.com/supatype/server/compare/v2.2.1...v2.2.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **gateway:** functions admin API at /admin/v1/functions (re-land [#95](https://github.com/supatype/server/issues/95)) ([9316be6](https://github.com/supatype/server/commit/9316be62d6ffded80199b1e0c260621ce90dfa48))
+
 ## [2.2.1](https://github.com/supatype/server/compare/v2.2.0...v2.2.1) (2026-11-02)
 
 

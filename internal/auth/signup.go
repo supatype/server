@@ -40,6 +40,9 @@ func (a *API) validateSignupParams(ctx context.Context, p *SignupParams) error {
 	if err := a.checkPasswordStrength(ctx, p.Password); err != nil {
 		return err
 	}
+	if p.Email == "" && p.Phone == "" {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Signup requires an email or phone number")
+	}
 	if p.Email != "" && p.Phone != "" {
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Only an email address or phone number should be provided on signup.")
 	}

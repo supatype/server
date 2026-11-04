@@ -476,16 +476,21 @@ func TestIsHashedAssetPath(t *testing.T) {
 }
 
 // The SPA fallback serves HTML, so it gets the HTML policy and not whatever the
-// requested path would have had.
+// requested path would have had. (A hashed-asset path never falls back, so the
+// path's own policy here comes from a configured prefix.)
 func TestTheSPAFallbackCarriesTheHTMLPolicy(t *testing.T) {
 	dir := tree(t, map[string]string{"index.html": "<html>"})
 
-	req := httptest.NewRequest(http.MethodGet, "/assets/not-a-real-bundle", nil)
+	req := httptest.NewRequest(http.MethodGet, "/app/route", nil)
 	rec := httptest.NewRecorder()
-	Handler(dir, true, CacheOpts{HTML: "no-store"}).ServeHTTP(rec, req)
+	opts := CacheOpts{HTML: "private, max-age=0", Prefixes: map[string]string{"/app/": "public, max-age=600"}}
+	Handler(dir, true, opts).ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("cache-control = %q, want the HTML policy rather than the hashed-asset one", got)
+	if rec.Body.String() != "<html>" {
+		t.Fatalf("body = %q, want index.html", rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "private, max-age=0" {
+		t.Errorf("cache-control = %q, want the HTML policy rather than the prefix one", got)
 	}
 }
 
@@ -501,7 +506,7 @@ func TestCacheControlForSPAHTML(t *testing.T) {
 	}
 }
 
-func TestAcceptEncodingToken(t *testing.T) {
+func TestHeaderHasToken(t *testing.T) {
 	for name, tc := range map[string]struct {
 		header, token string
 		want          bool
@@ -515,7 +520,7 @@ func TestAcceptEncodingToken(t *testing.T) {
 		"nothing offered":       {"", "gzip", false},
 		"a prefix, not a token": {"gzipper", "gzip", false},
 	} {
-		if got := acceptEncodingToken(tc.header, tc.token); got != tc.want {
+		if got := headerHasToken(tc.header, tc.token); got != tc.want {
 			t.Errorf("%s: got %v, want %v", name, got, tc.want)
 		}
 	}
@@ -567,5 +572,123 @@ func TestOnTheFlyGzipGivesUpWhenTheClientGoesAway(t *testing.T) {
 		if w.status != 0 {
 			t.Errorf("%s: a status was written after the body had started: %d", name, w.status)
 		}
+	}
+}
+
+// ─── Misses under the SPA fallback ────────────────────────────────────────────
+
+// The fallback is for client-side routes. A request for a file that is not
+// there (a stale hashed bundle, a favicon the build does not ship) has to be a
+// 404: index.html under a script's URL fails in the browser with a MIME error,
+// and under the hashed-asset policy the miss is cached for a year. A dotted
+// last segment is a client route only when a browser navigates to it, which is
+// what Accept: text/html says; with only */* the request is taken as a file
+// fetch and gets the 404.
+func TestSPAFallbackOnlyAnswersNavigations(t *testing.T) {
+	dir := tree(t, map[string]string{"index.html": "<html>app</html>"})
+
+	for name, tc := range map[string]struct {
+		path, accept string
+		wantStatus   int
+		wantIndex    bool
+	}{
+		"a client route":                 {"/dashboard", "", http.StatusOK, true},
+		"a client route under a dir":     {"/dashboard/settings", "*/*", http.StatusOK, true},
+		"a missing hashed bundle":        {"/assets/missing-abc.js", "*/*", http.StatusNotFound, false},
+		"a hashed path asking for HTML":  {"/assets/page", "text/html", http.StatusNotFound, false},
+		"a missing favicon":              {"/favicon.ico", "image/avif,image/webp,image/*,*/*;q=0.8", http.StatusNotFound, false},
+		"a dotted route a browser opens": {"/u/john.doe", "text/html,application/xhtml+xml,*/*;q=0.8", http.StatusOK, true},
+		"a dotted route fetched as */*":  {"/u/john.doe", "*/*", http.StatusNotFound, false},
+	} {
+		rec := get(t, dir, tc.path, true, map[string]string{"Accept": tc.accept})
+		if rec.Code != tc.wantStatus {
+			t.Errorf("%s: status = %d, want %d", name, rec.Code, tc.wantStatus)
+		}
+		if gotIndex := rec.Body.String() == "<html>app</html>"; gotIndex != tc.wantIndex {
+			t.Errorf("%s: served index.html = %v, want %v", name, gotIndex, tc.wantIndex)
+		}
+		if tc.wantStatus == http.StatusNotFound {
+			if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("%s: cache-control = %q, want no-store", name, cc)
+			}
+		}
+	}
+}
+
+// A build that ships 404.html gets it as the body of every miss, with the 404
+// status rather than the 200 a plain file serve would give.
+func TestSPAMissServesTheBuilds404Page(t *testing.T) {
+	dir := tree(t, map[string]string{
+		"index.html": "<html>app</html>",
+		"404.html":   "<html>gone</html>",
+	})
+
+	rec := get(t, dir, "/assets/missing-abc.js", true, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if rec.Body.String() != "<html>gone</html>" {
+		t.Errorf("body = %q, want the 404 page", rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+
+	head := httptest.NewRequest(http.MethodHead, "/favicon.ico", nil)
+	hrec := httptest.NewRecorder()
+	Handler(dir, true, CacheOpts{}).ServeHTTP(hrec, head)
+	if hrec.Code != http.StatusNotFound || hrec.Body.Len() != 0 {
+		t.Errorf("HEAD: status = %d, body length = %d, want 404 with no body", hrec.Code, hrec.Body.Len())
+	}
+}
+
+// Only GET and HEAD are navigations. A POST to a missing path is a form or an
+// API call that went to the wrong place, and answering it with the app's shell
+// and a 200 hides that.
+func TestSPAMissForOtherMethodsIs404(t *testing.T) {
+	dir := tree(t, map[string]string{"index.html": "<html>app</html>"})
+
+	for _, path := range []string{"/dashboard", "/assets/missing-abc.js"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		Handler(dir, true, CacheOpts{}).ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound || rec.Body.String() == "<html>app</html>" {
+			t.Errorf("POST %s: status = %d body = %q, want a 404 that is not index.html", path, rec.Code, rec.Body.String())
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("POST %s: cache-control = %q, want no-store", path, cc)
+		}
+	}
+}
+
+// Without the SPA fallback a miss is still a 404, but a build that ships
+// 404.html gets it as the body, under the same no-store policy.
+func TestWithoutSPAAMissServesTheBuilds404Page(t *testing.T) {
+	dir := tree(t, map[string]string{
+		"index.html": "<html>app</html>",
+		"404.html":   "<html>gone</html>",
+	})
+
+	for _, path := range []string{"/dashboard", "/assets/missing-abc.js"} {
+		rec := get(t, dir, path, false, nil)
+		if rec.Code != http.StatusNotFound || rec.Body.String() != "<html>gone</html>" {
+			t.Errorf("%s: status = %d body = %q, want 404 with the 404 page", path, rec.Code, rec.Body.String())
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("%s: cache-control = %q, want no-store", path, cc)
+		}
+	}
+}
+
+// A directory that cannot be opened has no 404.html to serve, so the miss is the plain 404, still
+// under no-store.
+func TestAMissInADirectoryThatCannotBeOpened(t *testing.T) {
+	rec := get(t, filepath.Join(t.TempDir(), "gone"), "/dashboard", false, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("cache-control = %q, want no-store", cc)
 	}
 }

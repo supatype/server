@@ -198,9 +198,9 @@ func keyText(v json.RawMessage) (string, bool) {
 	return string(v), true
 }
 
-// keyFilter selects the rows with the given keys. Every value is double-quoted, PostgREST's escape
+// writtenRowsFilter selects the rows with the given keys. Every value is double-quoted, PostgREST's escape
 // for values holding commas, dots or parentheses.
-func keyFilter(pk []string, keys []map[string]string) url.Values {
+func writtenRowsFilter(pk []string, keys []map[string]string) url.Values {
 	q := url.Values{}
 	if len(pk) == 1 {
 		quoted := make([]string, len(keys))
@@ -252,7 +252,7 @@ func (r *RowReader) ByKeys(ctx context.Context, req *http.Request, table string,
 	if base == "" {
 		return nil, fmt.Errorf("no PostgREST URL")
 	}
-	q := keyFilter(pk, keys)
+	q := writtenRowsFilter(pk, keys)
 	q.Set("limit", strconv.Itoa(len(keys)))
 	fetch, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/"+url.PathEscape(table)+"?"+q.Encode(), nil)
 	if err != nil {

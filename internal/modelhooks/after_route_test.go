@@ -275,11 +275,11 @@ func TestWrittenKeys(t *testing.T) {
 }
 
 func TestKeyFilterQuotesValues(t *testing.T) {
-	single := keyFilter([]string{"id"}, []map[string]string{{"id": "1"}, {"id": `a"b,c`}})
+	single := writtenRowsFilter([]string{"id"}, []map[string]string{{"id": "1"}, {"id": `a"b,c`}})
 	if got := single.Get("id"); got != `in.("1","a\"b,c")` {
 		t.Fatalf("single key filter = %s", got)
 	}
-	composite := keyFilter([]string{"a", "b"}, []map[string]string{{"a": "1", "b": "x"}})
+	composite := writtenRowsFilter([]string{"a", "b"}, []map[string]string{{"a": "1", "b": "x"}})
 	if got := composite.Get("or"); got != `(and(a.eq."1",b.eq."x"))` {
 		t.Fatalf("composite filter = %s", got)
 	}

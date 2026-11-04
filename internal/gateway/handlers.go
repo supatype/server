@@ -333,15 +333,17 @@ func buildApp(d *Deps) http.Handler {
 }
 
 // newHookCallback builds the previous() endpoint, which reads the rows a write
-// is about to change as the service role. See internal/modelhooks/previous.go
-// for why that is the right privilege and what the token pins.
+// is about to change: the caller's rule picks them, the service role reads
+// them. See internal/modelhooks/previous.go for why and what the token pins.
 func newHookCallback(d *Deps) *modelhooks.Callback {
-	return modelhooks.NewCallback(
-		func(req *http.Request) string { return PostgRESTUpstream(d.ManifestFor(req), d.Config) },
-		d.RestSchema,
-		d.Config.ServiceRoleKey,
-		nil,
-	)
+	return modelhooks.NewCallback(modelhooks.CallbackOptions{
+		RestBase:       func(req *http.Request) string { return PostgRESTUpstream(d.ManifestFor(req), d.Config) },
+		SchemaFor:      d.RestSchema,
+		ServiceRoleKey: d.Config.ServiceRoleKey,
+		PrimaryKey: func(req *http.Request, table string) []string {
+			return d.ManifestFor(req).PrimaryKey(table)
+		},
+	})
 }
 
 // newHookMiddleware runs a project's schema-declared hooks and validators.

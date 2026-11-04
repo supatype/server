@@ -2,7 +2,7 @@
 # Run the model-hook tests against a real Postgres and a real PostgREST.
 #
 # Every other test in internal/modelhooks uses a fake upstream, which cannot show the one join the
-# middleware exists for: that the request it hands on — body substituted, Content-Length rewritten — is
+# middleware exists for: that the request it hands on (body substituted, Content-Length rewritten) is
 # a request PostgREST actually accepts, and that previous() reads the rows really stored. A fake proxy
 # accepts anything, so both failures look like passes.
 #
@@ -28,36 +28,56 @@ trap cleanup EXIT
 docker rm -f "$PG" "$PRST" >/dev/null 2>&1 || true
 docker network create "$NET" >/dev/null 2>&1 || true
 
+# Supatype's own Postgres image, because previous() has to be proven against real field masking:
+# it ships supatype_mask preloaded. Its superuser is supatype_admin, reachable over local TCP.
 docker run -d --name "$PG" --network "$NET" \
-  -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=app -p "$PG_PORT:5432" postgres:17-alpine >/dev/null
+  -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=app -p "$PG_PORT:5432" supatype/postgres:17-latest >/dev/null
 
-for _ in $(seq 1 60); do
-  docker exec "$PG" pg_isready -U postgres >/dev/null 2>&1 && break
+admin_psql() {
+  docker exec -i "$PG" psql -h 127.0.0.1 -U supatype_admin -d app -v ON_ERROR_STOP=1 "$@"
+}
+
+for _ in $(seq 1 90); do
+  admin_psql -tAc 'select 1' >/dev/null 2>&1 && break
   sleep 1
 done
-docker exec "$PG" pg_isready -U postgres >/dev/null
+admin_psql -tAc 'select 1' >/dev/null
 
 # The fixture the tests expect: one table, and an anon role that can read and write it. Deliberately
-# permissive — what is under test is the hook path, not the access rules, and RLS here would only make
-# a failure ambiguous.
-docker exec -i "$PG" psql -U postgres -d app -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+# permissive for anon, since what is under test is the hook path, and RLS here would only make a
+# failure ambiguous.
+#
+# previous() needs two more things, shaped like what the schema engine generates: the
+# can_update_posts / can_delete_posts checks (owner = caller) it filters the caller's read by, and a
+# masked column. `secret` carries a supatype_mask READ label that no caller passes, so it can only
+# come back through the service role's read.
+admin_psql >/dev/null <<'SQL'
+create extension if not exists supatype_mask;
 create table if not exists posts (
   id serial primary key,
   title text not null,
-  body text not null default ''
+  body text not null default '',
+  owner text,
+  secret text
 );
-do $$ begin
-  if not exists (select 1 from pg_roles where rolname = 'anon') then
-    create role anon nologin;
-  end if;
-  if not exists (select 1 from pg_roles where rolname = 'authenticator') then
-    create role authenticator noinherit login password 'pw';
-  end if;
-end $$;
-grant anon to authenticator;
-grant usage on schema public to anon;
-grant all on posts to anon;
-grant usage, select on all sequences in schema public to anon;
+alter role authenticator with login password 'pw';
+grant anon, authenticated, service_role to authenticator;
+grant usage on schema public to anon, authenticated, service_role;
+grant all on posts to anon, authenticated, service_role;
+grant usage, select on all sequences in schema public to anon, authenticated, service_role;
+
+create or replace function can_update_posts(posts posts) returns boolean
+  language sql stable as $$
+    select posts.owner = (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+  $$;
+create or replace function can_delete_posts(posts posts) returns boolean
+  language sql stable as $$ select can_update_posts(posts) $$;
+create or replace function can_read_posts__secret(posts posts) returns boolean
+  language sql stable as $$ select false $$;
+grant execute on function can_update_posts(posts), can_delete_posts(posts), can_read_posts__secret(posts)
+  to anon, authenticated, service_role;
+security label for supatype on column public.posts.secret
+  is 'MASK READ public.can_read_posts__secret';
 SQL
 
 docker run -d --name "$PRST" --network "$NET" -p "$PRST_PORT:3000" \

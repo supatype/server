@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // Everything else in this package tests the middleware against a fake upstream. That leaves the one
@@ -66,12 +68,12 @@ func liveServer(t *testing.T, rest string, hooks map[string]TableHooksView, scri
 	// SetURL also points the Host header at PostgREST, which is what this needs.
 	proxy := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) { pr.SetURL(upstream) }}
 
-	callback := NewCallback(
-		func(*http.Request) string { return rest },
-		func(*http.Request) string { return "public" },
-		"", // anon: this fixture grants it directly, and the credential is not what is under test
-		nil,
-	)
+	callback := NewCallback(CallbackOptions{
+		RestBase:       func(*http.Request) string { return rest },
+		SchemaFor:      func(*http.Request) string { return "public" },
+		ServiceRoleKey: liveServiceKey(t),
+		PrimaryKey:     postsKeyedByID,
+	})
 
 	mw := Middleware(Options{
 		Dispatcher: NewDispatcher(nil, "test-secret"),
@@ -116,12 +118,15 @@ func resetFixture(t *testing.T, rest string) int {
 	_ = res.Body.Close()
 
 	seed, err := http.NewRequest(http.MethodPost, rest+"/posts",
-		strings.NewReader(`[{"title":"[locked] original","body":"b"}]`))
+		strings.NewReader(`[{"title":"[locked] original","body":"b","owner":"alice","secret":"alice-secret"}]`))
 	if err != nil {
 		t.Fatalf("building the seed: %v", err)
 	}
 	seed.Header.Set("Content-Type", "application/json")
 	seed.Header.Set("Prefer", "return=representation")
+	// As the service role: `secret` is masked, and supatype_mask refuses a write to it from anyone
+	// else.
+	seed.Header.Set("Authorization", "Bearer "+liveServiceKey(t))
 	created, err := http.DefaultClient.Do(seed)
 	if err != nil {
 		t.Fatalf("seeding posts: %v", err)
@@ -234,52 +239,14 @@ func TestLivePreviousReadsTheRowsAsStored(t *testing.T) {
 	_, rest := liveStack(t)
 	id := resetFixture(t, rest)
 
-	// Seeded by the fixture as "[locked] original", for a hook that guards on prior state.
-	var fetched struct {
-		Rows      []map[string]any `json:"rows"`
-		Truncated bool             `json:"truncated"`
-	}
-	// A hook's own failure reaches the caller as a bare 503 by design, so the reason has to be kept
-	// here or a broken fixture is indistinguishable from a broken feature.
+	// Seeded by the fixture as "[locked] original", owned by alice, for a hook that guards on prior state.
+	var fetched previousBody
 	var hookErr string
-	base := liveServer(t, rest, beforeChangeOn("guard"), func(w http.ResponseWriter, in payload) {
-		fail := func(reason string) {
-			hookErr = reason
-			http.Error(w, reason, http.StatusInternalServerError)
-		}
-		if in.PreviousPath == "" {
-			fail("no previous path was minted")
-			return
-		}
-		// POST, as the generated adapter does: the endpoint refuses anything else, so a GET here would
-		// report "no prior rows" for a reason that has nothing to do with the data.
-		res, err := http.Post(
-			strings.TrimSuffix(callerBase(w), "/")+in.PreviousPath, "application/json", nil)
-		if err != nil {
-			fail(fmt.Sprintf("calling previous(): %v", err))
-			return
-		}
-		defer func() { _ = res.Body.Close() }()
-		if res.StatusCode != http.StatusOK {
-			detail, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-			fail(fmt.Sprintf("previous() answered %s: %s", res.Status, detail))
-			return
-		}
-		if err := json.NewDecoder(res.Body).Decode(&fetched); err != nil {
-			fail(fmt.Sprintf("previous() body unreadable: %v", err))
-			return
-		}
-		for _, row := range fetched.Rows {
-			if title, _ := row["title"].(string); strings.HasPrefix(title, "[locked]") {
-				http.Error(w, "that post is locked", http.StatusConflict)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
+	base := liveServer(t, rest, beforeChangeOn("guard"), guardOnPrevious(&fetched, &hookErr))
 	t.Setenv("SUPATYPE_LIVE_CALLER_BASE", base)
 
-	status, _ := send(t, http.MethodPatch, fmt.Sprintf("%s/rest/v1/posts?id=eq.%d", base, id), `{"title":"changed"}`, nil)
+	status, _ := send(t, http.MethodPatch, fmt.Sprintf("%s/rest/v1/posts?id=eq.%d", base, id), `{"title":"changed"}`,
+		map[string]string{"Authorization": "Bearer " + liveUser(t, "alice")})
 	if status != http.StatusConflict {
 		t.Fatalf("caller saw %d, want the hook's 409 (hook reported: %s)", status, hookErr)
 	}
@@ -292,6 +259,108 @@ func TestLivePreviousReadsTheRowsAsStored(t *testing.T) {
 	if got := titles(t, rest, fmt.Sprintf("id=eq.%d", id)); len(got) != 1 || got[0] != "[locked] original" {
 		t.Fatalf("the guarded row changed: %v", got)
 	}
+}
+
+// Two users' rows match one filter. Through real PostgREST, alice's hook is handed only alice's
+// row, decided by the can_update_posts check as alice, and with `secret` as stored even though
+// supatype_mask hides that column from every caller.
+func TestLivePreviousIsTheCallersRowsUnmasked(t *testing.T) {
+	_, rest := liveStack(t)
+	resetFixture(t, rest)
+	seedRow(t, rest, `{"title":"[locked] bob's","owner":"bob","secret":"bob-secret"}`)
+
+	var fetched previousBody
+	var hookErr string
+	base := liveServer(t, rest, beforeChangeOn("guard"), guardOnPrevious(&fetched, &hookErr))
+	t.Setenv("SUPATYPE_LIVE_CALLER_BASE", base)
+
+	status, _ := send(t, http.MethodPatch, base+"/rest/v1/posts?title=like.*locked*", `{"title":"changed"}`,
+		map[string]string{"Authorization": "Bearer " + liveUser(t, "alice")})
+	if status != http.StatusConflict {
+		t.Fatalf("caller saw %d, want the hook's 409 (hook reported: %s)", status, hookErr)
+	}
+	if len(fetched.Rows) != 1 || fetched.Rows[0]["owner"] != "alice" {
+		t.Fatalf("previous() returned %v, want alice's row only", fetched.Rows)
+	}
+	if fetched.Rows[0]["secret"] != "alice-secret" {
+		t.Fatalf("the restricted column came back as %v, want it as stored", fetched.Rows[0]["secret"])
+	}
+}
+
+// liveJWTSecret is PGRST_JWT_SECRET in hack/live-hooks-stack.sh.
+const liveJWTSecret = "0123456789abcdef0123456789abcdef"
+
+func liveToken(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	claims["exp"] = time.Now().Add(time.Hour).Unix()
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(liveJWTSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}
+
+// liveServiceKey is a service-role token for the live stack.
+func liveServiceKey(t *testing.T) string {
+	return liveToken(t, jwt.MapClaims{"role": "service_role"})
+}
+
+func liveUser(t *testing.T, sub string) string {
+	return liveToken(t, jwt.MapClaims{"role": "authenticated", "sub": sub})
+}
+
+// seedRow inserts one row as the service role, for the same reason resetFixture does.
+func seedRow(t *testing.T, rest, row string) {
+	t.Helper()
+	status, body := send(t, http.MethodPost, rest+"/posts", row,
+		map[string]string{"Authorization": "Bearer " + liveServiceKey(t)})
+	if status != http.StatusCreated {
+		t.Fatalf("seeding posts answered %d: %s", status, body)
+	}
+}
+
+// guardOnPrevious is a hook that refuses with 409 when previous() hands it a "[locked]" row,
+// recording what it was handed. A hook's own failure reaches the caller as a bare 503 by design, so
+// the reason is kept in hookErr or a broken fixture is indistinguishable from a broken feature.
+func guardOnPrevious(fetched *previousBody, hookErr *string) hookScript {
+	return func(w http.ResponseWriter, in payload) {
+		got, err := callPrevious(callerBase(w), in.PreviousPath)
+		if err != nil {
+			*hookErr = err.Error()
+			http.Error(w, *hookErr, http.StatusInternalServerError)
+			return
+		}
+		*fetched = got
+		for _, row := range got.Rows {
+			if title, _ := row["title"].(string); strings.HasPrefix(title, "[locked]") {
+				http.Error(w, "that post is locked", http.StatusConflict)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// callPrevious POSTs, as the generated adapter does: the endpoint refuses anything else, so a GET
+// here would report "no prior rows" for a reason that has nothing to do with the data.
+func callPrevious(base, path string) (previousBody, error) {
+	var got previousBody
+	if path == "" {
+		return got, fmt.Errorf("no previous path was minted")
+	}
+	res, err := http.Post(strings.TrimSuffix(base, "/")+path, "application/json", nil)
+	if err != nil {
+		return got, fmt.Errorf("calling previous(): %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return got, fmt.Errorf("previous() answered %s: %s", res.Status, detail)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		return got, fmt.Errorf("previous() body unreadable: %v", err)
+	}
+	return got, nil
 }
 
 func TestLiveAfterChangeSeesWhatPostgresReturned(t *testing.T) {

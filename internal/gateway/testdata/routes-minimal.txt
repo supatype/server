@@ -6,6 +6,7 @@ CONNECT /admin/studio-members/*
 CONNECT /admin/studio-roles
 CONNECT /admin/v1/*
 CONNECT /auth/v1/*
+CONNECT /functions/v1/admin/*
 CONNECT /graphql/v1/*
 CONNECT /hooks/v1/previous/*
 CONNECT /platform/v1/*
@@ -19,7 +20,10 @@ DELETE  /admin/studio-members
 DELETE  /admin/studio-members/*
 DELETE  /admin/studio-roles
 DELETE  /admin/v1/*
+DELETE  /admin/v1/functions/env/{key}
+DELETE  /admin/v1/functions/{name}/env/{key}
 DELETE  /auth/v1/*
+DELETE  /functions/v1/admin/*
 DELETE  /graphql/v1/*
 DELETE  /hooks/v1/previous/*
 DELETE  /platform/v1/*
@@ -33,7 +37,13 @@ GET     /admin/studio-members
 GET     /admin/studio-members/*
 GET     /admin/studio-roles
 GET     /admin/v1/*
+GET     /admin/v1/functions/env
+GET     /admin/v1/functions/list
+GET     /admin/v1/functions/logs/tail
+GET     /admin/v1/functions/{name}/env
+GET     /admin/v1/functions/{name}/logs
 GET     /auth/v1/*
+GET     /functions/v1/admin/*
 GET     /graphql/v1/*
 GET     /health
 GET     /health/ready
@@ -53,6 +63,7 @@ HEAD    /admin/studio-members/*
 HEAD    /admin/studio-roles
 HEAD    /admin/v1/*
 HEAD    /auth/v1/*
+HEAD    /functions/v1/admin/*
 HEAD    /graphql/v1/*
 HEAD    /hooks/v1/previous/*
 HEAD    /platform/v1/*
@@ -67,6 +78,7 @@ OPTIONS /admin/studio-members/*
 OPTIONS /admin/studio-roles
 OPTIONS /admin/v1/*
 OPTIONS /auth/v1/*
+OPTIONS /functions/v1/admin/*
 OPTIONS /graphql/v1/*
 OPTIONS /hooks/v1/previous/*
 OPTIONS /platform/v1/*
@@ -81,6 +93,7 @@ PATCH   /admin/studio-members/*
 PATCH   /admin/studio-roles
 PATCH   /admin/v1/*
 PATCH   /auth/v1/*
+PATCH   /functions/v1/admin/*
 PATCH   /graphql/v1/*
 PATCH   /hooks/v1/previous/*
 PATCH   /platform/v1/*
@@ -94,7 +107,10 @@ POST    /admin/studio-members
 POST    /admin/studio-members/*
 POST    /admin/studio-roles
 POST    /admin/v1/*
+POST    /admin/v1/functions/env
+POST    /admin/v1/functions/{name}/env
 POST    /auth/v1/*
+POST    /functions/v1/admin/*
 POST    /graphql/v1/*
 POST    /hooks/v1/previous/*
 POST    /metadata
@@ -117,6 +133,7 @@ PUT     /admin/studio-members/*
 PUT     /admin/studio-roles
 PUT     /admin/v1/*
 PUT     /auth/v1/*
+PUT     /functions/v1/admin/*
 PUT     /graphql/v1/*
 PUT     /hooks/v1/previous/*
 PUT     /platform/v1/*
@@ -131,6 +148,7 @@ TRACE   /admin/studio-members/*
 TRACE   /admin/studio-roles
 TRACE   /admin/v1/*
 TRACE   /auth/v1/*
+TRACE   /functions/v1/admin/*
 TRACE   /graphql/v1/*
 TRACE   /hooks/v1/previous/*
 TRACE   /platform/v1/*

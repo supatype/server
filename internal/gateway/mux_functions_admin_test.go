@@ -123,16 +123,19 @@ func TestAnEscapedAdminRouteIsAFunctionCall(t *testing.T) {
 	expectWorker(t, functionsRig(t), http.MethodGet, "/functions/v1/admin/%6cist", asServiceRole)
 }
 
-// With a worker but no functions directory the admin API is not mounted, so /functions/v1/admin is
-// only the function named admin. The Studio proxy agrees: an admin acting as themselves calls it
-// with their own token, not the service role's key it would carry to the admin API.
-func TestWithoutAFunctionsDirStudioCallsTheFunctionAsTheCaller(t *testing.T) {
+// With a worker but no functions directory the admin API is still mounted, at both addresses, so
+// the Studio proxy and the gateway agree as they do with one: an admin's request for an admin route
+// reaches the admin API, which lists no functions, and never the function named admin.
+func TestWithoutAFunctionsDirStudioReachesTheAdminAPI(t *testing.T) {
 	r := newRig(t, "dev")
-	expectWorker(t, r, http.MethodGet, "/studio/proxy/functions/v1/admin/env", func(req *http.Request) {
+	rec := r.do(http.MethodGet, "/studio/proxy/functions/v1/admin/list", func(req *http.Request) {
 		asStudioAdmin(t)(req)
 		req.Header.Set("X-Supatype-Acting-Mode", "self")
 	})
-	if got, _ := r.lastHit(); got.header.Get("Authorization") == "Bearer service-role-key" {
-		t.Fatal("the function was called with the service role's key")
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"data":[]}` {
+		t.Fatalf("status = %d, body %s, want the admin API's empty list", rec.Code, rec.Body.String())
+	}
+	if got, reached := r.lastHit(); reached {
+		t.Fatalf("the request reached %s; the admin API answers it itself", got.upstream)
 	}
 }

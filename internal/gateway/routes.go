@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
-	"github.com/supatype/server/internal/functions"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/studioctx"
 )
@@ -198,14 +197,12 @@ func Routes() []Route {
 			// More specific than /admin/v1, so the router sends it here rather than to the admin API.
 			Pattern: "/admin/v1/functions",
 			Verb:    MountAll,
-			When:    functionsDirSet,
 			Build:   buildFunctionsAdmin,
 		},
 		{
 			// The admin API's old address, for a transition: see legacyFunctionsAdmin.
 			Pattern: "/functions/v1/admin",
 			Verb:    MountAll,
-			When:    functionsDirSet,
 			Build:   buildLegacyFunctionsAdmin,
 		},
 		functionsInvocationRoute(),
@@ -256,9 +253,6 @@ func Routes() []Route {
 	}
 }
 
-// functionsDirSet is whether the server has a functions directory, which mounts the admin API.
-func functionsDirSet(d *Deps) bool { return functions.Mounted(d.Config) }
-
 // functionsInvocationRoute is /functions/v1, the invocation proxy. A function of its own, since the
 // admin API's old address hands it every request that is not administration (legacyFunctionsAdmin).
 func functionsInvocationRoute() Route {
@@ -267,7 +261,7 @@ func functionsInvocationRoute() Route {
 		Verb:    MountAll,
 		Strip:   true,
 		When: func(d *Deps) bool {
-			return functionsDirSet(d) || strings.TrimSpace(d.Config.FunctionsWorkerURL) != ""
+			return d.Config.DenoFunctionsDir != "" || strings.TrimSpace(d.Config.FunctionsWorkerURL) != ""
 		},
 		Build:     buildFunctions,
 		DataPlane: true,

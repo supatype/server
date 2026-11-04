@@ -417,3 +417,130 @@ func TestPreviousTokensDoNotSurviveARestart(t *testing.T) {
 func encodeClaims(claims []byte) string {
 	return base64.RawURLEncoding.EncodeToString(claims)
 }
+
+// ─── The ways previous() refuses ──────────────────────────────────────────────
+
+// mintToken signs claims the way Path does, for the token states Path never produces.
+func mintToken(cb *Callback, claims previousClaims) string {
+	if claims.Expiry == 0 {
+		claims.Expiry = time.Now().Add(time.Minute).Unix()
+	}
+	encoded, _ := json.Marshal(claims)
+	payload := encodeClaims(encoded)
+	return "/" + payload + "." + cb.sign(payload)
+}
+
+// A signed token whose caller part does not open is refused before anything is read: the seal is
+// what stands between the path and the caller's credential, and a broken one is not "anonymous".
+func TestPreviousRefusesACallerTokenItCannotUse(t *testing.T) {
+	fake := &fakeRest{rows: ownedRows(1, "alice")}
+	cb := callbackFor(t, fake)
+	expiryAsText, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": "alice", "exp": "soon"}).
+		SignedString([]byte("test-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, caller := range map[string]string{
+		"not base64":                  "!!!",
+		"shorter than a nonce":        base64.RawURLEncoding.EncodeToString([]byte("short")),
+		"sealed under another key":    callbackFor(t, &fakeRest{}).sealCaller("a.b.c"),
+		"a sealed value not a JWT":    cb.sealCaller("not-a-jwt"),
+		"a JWT with a textual expiry": cb.sealCaller(expiryAsText),
+	} {
+		rr := post(t, cb.Handler(), mintToken(cb, previousClaims{Table: "posts", Op: OpUpdate, Caller: caller}))
+		if rr.Code != http.StatusBadGateway {
+			t.Errorf("%s: status = %d, want 502", name, rr.Code)
+		}
+	}
+	if len(fake.calls) != 0 {
+		t.Errorf("calls = %v, want no read for a caller that could not be used", fake.calls)
+	}
+}
+
+// A callback built without a primary key source has no key for any table, so it fails closed.
+func TestPreviousWithNoPrimaryKeySource(t *testing.T) {
+	fake := &fakeRest{rows: ownedRows(1, "alice")}
+	rest := httptest.NewServer(fake)
+	t.Cleanup(rest.Close)
+	cb := NewCallback(CallbackOptions{RestBase: func(*http.Request) string { return rest.URL }, Client: rest.Client()})
+
+	rr := post(t, cb.Handler(), cb.Path(writeAs(""), OpUpdate, "posts", "id=eq.1"))
+	if rr.Code != http.StatusBadGateway || len(fake.calls) != 0 {
+		t.Fatalf("status = %d, calls = %v, want 502 with no read", rr.Code, fake.calls)
+	}
+}
+
+// Only an update or a delete has prior rows to check against a rule. Path never mints anything
+// else, so a token for another operation is a forgery that happened to carry a valid signature.
+func TestPreviousForAnOperationWithNoRule(t *testing.T) {
+	fake := &fakeRest{rows: ownedRows(1, "alice")}
+	cb := callbackFor(t, fake)
+
+	rr := post(t, cb.Handler(), mintToken(cb, previousClaims{Table: "posts", Op: OpInsert}))
+	if rr.Code != http.StatusBadGateway || len(fake.calls) != 0 {
+		t.Fatalf("status = %d, calls = %v, want 502 with no read", rr.Code, fake.calls)
+	}
+}
+
+// The service role's read by key can go wrong in its own ways, after the caller's read succeeded.
+// Each is a 502: handing the hook the keys alone, or nothing, would look like rows that are not.
+func TestPreviousWhenTheReadByKeyFails(t *testing.T) {
+	for name, tc := range map[string]struct{ callerRows, serviceStatus, serviceBody string }{
+		"a caller row without its key": {`[{"title":"x"}]`, "200", `[]`},
+		"the service role refused":     {`[{"id":1}]`, "500", `{"code":"XX000","message":"boom"}`},
+		"an answer that is not rows":   {`[{"id":1}]`, "200", `{"message":"not a list"}`},
+	} {
+		rest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+testServiceKey {
+				_, _ = w.Write([]byte(tc.callerRows))
+				return
+			}
+			status, _ := strconv.Atoi(tc.serviceStatus)
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(tc.serviceBody))
+		}))
+		cb := NewCallback(CallbackOptions{
+			RestBase: func(*http.Request) string { return rest.URL }, ServiceRoleKey: testServiceKey,
+			PrimaryKey: postsKeyedByID, Client: rest.Client(),
+		})
+		if rr := post(t, cb.Handler(), cb.Path(writeAs(""), OpUpdate, "posts", "")); rr.Code != http.StatusBadGateway {
+			t.Errorf("%s: status = %d, want 502", name, rr.Code)
+		}
+		rest.Close()
+	}
+}
+
+// A JSON null from the read by key is no rows, and a hook iterating them still gets a list.
+func TestPreviousWhenTheReadByKeyAnswersNull(t *testing.T) {
+	rest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+testServiceKey {
+			_, _ = w.Write([]byte(`[{"id":1}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`null`))
+	}))
+	t.Cleanup(rest.Close)
+	cb := NewCallback(CallbackOptions{
+		RestBase: func(*http.Request) string { return rest.URL }, ServiceRoleKey: testServiceKey,
+		PrimaryKey: postsKeyedByID, Client: rest.Client(),
+	})
+
+	body := decodePrevious(t, post(t, cb.Handler(), cb.Path(writeAs(""), OpUpdate, "posts", "")))
+	if body.Rows == nil || len(body.Rows) != 0 {
+		t.Fatalf("rows = %v, want an empty list", body.Rows)
+	}
+}
+
+// A key value that is not a scalar, or a string that does not decode, cannot be put in a filter.
+func TestTheKeyFilterRefusesValuesItCannotQuote(t *testing.T) {
+	for name, value := range map[string]json.RawMessage{
+		"an object":       json.RawMessage(`{"a":1}`),
+		"an array":        json.RawMessage(`[1]`),
+		"a broken string": json.RawMessage(`"unterminated`),
+	} {
+		if _, err := keyFilter([]string{"id"}, []map[string]json.RawMessage{{"id": value}}); err == nil {
+			t.Errorf("%s was accepted as a key", name)
+		}
+	}
+}

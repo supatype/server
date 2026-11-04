@@ -680,3 +680,15 @@ func TestWithoutSPAAMissServesTheBuilds404Page(t *testing.T) {
 		}
 	}
 }
+
+// A directory that cannot be opened has no 404.html to serve, so the miss is the plain 404, still
+// under no-store.
+func TestAMissInADirectoryThatCannotBeOpened(t *testing.T) {
+	rec := get(t, filepath.Join(t.TempDir(), "gone"), "/dashboard", false, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("cache-control = %q, want no-store", cc)
+	}
+}

@@ -169,3 +169,80 @@ func (ts *SignupTestSuite) TestSignupRequestBodyTooLarge() {
 	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
 	require.Equal(ts.T(), "request_entity_too_large", data["error_code"])
 }
+
+// postSignup sends body to /signup through the full handler chain.
+func (ts *SignupTestSuite) postSignup(body map[string]interface{}) *httptest.ResponseRecorder {
+	var buffer bytes.Buffer
+	require.NoError(ts.T(), json.NewEncoder(&buffer).Encode(body))
+	req := httptest.NewRequest(http.MethodPost, "/signup", &buffer)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ts.API.handler.ServeHTTP(w, req)
+	return w
+}
+
+// A password with no email or phone is a broken signup form, not a request for
+// an anonymous account. Whether anonymous sign-ins are on must not change that:
+// with them on, the old routing created an anonymous user and dropped the
+// password without a word.
+func (ts *SignupTestSuite) TestSignupPasswordWithoutEmailOrPhone() {
+	defer func(was bool) { ts.Config.External.AnonymousUsers.Enabled = was }(ts.Config.External.AnonymousUsers.Enabled)
+
+	for _, anonymous := range []bool{false, true} {
+		ts.Run(fmt.Sprintf("anonymous=%v", anonymous), func() {
+			ts.Config.External.AnonymousUsers.Enabled = anonymous
+			before, err := ts.API.db.Count(&models.User{})
+			require.NoError(ts.T(), err)
+
+			w := ts.postSignup(map[string]interface{}{"email": "", "password": "test-password"})
+
+			after, err := ts.API.db.Count(&models.User{})
+			require.NoError(ts.T(), err)
+			assert.Equal(ts.T(), before, after, "no user may be created")
+
+			require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+			var data map[string]interface{}
+			require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+			assert.Equal(ts.T(), "validation_failed", data["error_code"])
+			assert.Equal(ts.T(), "Signup requires an email or phone number", data["msg"])
+		})
+	}
+}
+
+// An empty body is still an anonymous sign-in, so with anonymous sign-ins off it
+// keeps the anonymous error rather than the validation one.
+func (ts *SignupTestSuite) TestSignupEmptyBodyWithAnonymousDisabled() {
+	defer func(was bool) { ts.Config.External.AnonymousUsers.Enabled = was }(ts.Config.External.AnonymousUsers.Enabled)
+	ts.Config.External.AnonymousUsers.Enabled = false
+
+	w := ts.postSignup(map[string]interface{}{})
+
+	require.Equal(ts.T(), http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	var data map[string]interface{}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+	assert.Equal(ts.T(), "anonymous_provider_disabled", data["error_code"])
+}
+
+// A phone number and a password with no email is a phone signup, and the new
+// email-or-phone check must not catch it.
+func (ts *SignupTestSuite) TestSignupWithPhoneOnly() {
+	defer func(phone conf.PhoneProviderConfiguration, sms conf.SmsProviderConfiguration) {
+		ts.Config.External.Phone = phone
+		ts.Config.Sms = sms
+	}(ts.Config.External.Phone, ts.Config.Sms)
+	ts.Config.External.Phone.Enabled = true
+	ts.Config.Sms.TestOTP = map[string]string{"1234567890": "000000"}
+	ts.Config.Sms.Provider = "twilio"
+	ts.Config.Sms.Twilio.AccountSid = "fake-sid"
+	ts.Config.Sms.Twilio.AuthToken = "fake-token"
+	ts.Config.Sms.Twilio.MessageServiceSid = "fake-message-service-sid"
+
+	w := ts.postSignup(map[string]interface{}{"phone": "1234567890", "password": "test-password"})
+
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+	data := models.User{}
+	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+	assert.Equal(ts.T(), "1234567890", data.GetPhone())
+	assert.False(ts.T(), data.IsAnonymous)
+	assert.Equal(ts.T(), "phone", data.AppMetaData["provider"])
+}

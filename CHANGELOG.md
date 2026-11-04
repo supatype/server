@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.3.0](https://github.com/supatype/server/compare/v2.2.2...v2.3.0) (2026-11-04)
+
+
+### Features
+
+* **modelhooks:** deliver after hooks from the Postgres change log ([d0f843b](https://github.com/supatype/server/commit/d0f843bbd06723179600d17d61fea57d5c9a3cfd))
+* **modelhooks:** deliver after hooks from the Postgres change log ([b77128c](https://github.com/supatype/server/commit/b77128c3b4480958eec107c91f4346bee4090147))
+
+
+### Bug Fixes
+
+* **auth:** refuse a signup with a password but no email or phone ([6679fff](https://github.com/supatype/server/commit/6679fff1edc2ce74ff29995efa648ccdcc01b6fb))
+* blank-email signup, static 404s, and previous() scope ([7e29337](https://github.com/supatype/server/commit/7e2933760f02200a410a9a76f31961f3974b7f74))
+* **changelog:** pass gosec and cover the listener to its floor ([a2ad377](https://github.com/supatype/server/commit/a2ad3773ebe4a5534b64fe41818f7618af7af901))
+* **functions:** answer the admin list with no functions directory, rather than 404 ([8640b09](https://github.com/supatype/server/commit/8640b098a1827cf115ee0a9843330b5c63ef5f48))
+* **functions:** answer the admin list with no functions directory, rather than 404 ([4789a79](https://github.com/supatype/server/commit/4789a790e91ecc9b159e016155807a60f9959e1b))
+* **keyspace:** carry tables and validators in the managed tenant config ([ae8d118](https://github.com/supatype/server/commit/ae8d1185b4e78a41e3fe748e1a01c146fae3edf9))
+* **modelhooks:** previous() returns only the rows the caller can change ([c28bda3](https://github.com/supatype/server/commit/c28bda3eb00ab88f10fb2d8ef1c02f0995468e1e))
+* **static:** 404 a missing file instead of serving index.html ([ff57b46](https://github.com/supatype/server/commit/ff57b46795422c07a83c085fa93a3abf203d3231))
+
 ## [2.2.2](https://github.com/supatype/server/compare/v2.2.1...v2.2.2) (2026-11-02)
 
 

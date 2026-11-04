@@ -143,7 +143,7 @@ func (a *assembler) change(rec record) error {
 	if !a.wants(rec.Schema, rec.Table) {
 		return nil
 	}
-	c := Change{Schema: rec.Schema, Table: rec.Table, Op: opOf(rec.Action), Key: keyNames(rec.PK)}
+	c := Change{Schema: rec.Schema, Table: rec.Table, Op: operations[rec.Action], Key: keyNames(rec.PK)}
 	if rec.Action != "D" {
 		c.Row = rowOf(rec.Columns)
 	}

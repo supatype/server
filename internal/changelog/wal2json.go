@@ -119,14 +119,5 @@ func keyNames(pk []column) []string {
 	return names
 }
 
-func opOf(action string) string {
-	switch action {
-	case "I":
-		return "insert"
-	case "U":
-		return "update"
-	case "D":
-		return "delete"
-	}
-	return ""
-}
+// operations names the wal2json row actions a hook is told about.
+var operations = map[string]string{"I": "insert", "U": "update", "D": "delete"}

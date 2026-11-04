@@ -64,3 +64,25 @@ func TestAnOverlaysTablesReplaceTheBase(t *testing.T) {
 		t.Fatal("a table the push no longer lists kept its stale entry")
 	}
 }
+
+func TestTableLookupIsNilSafe(t *testing.T) {
+	var none *RouteManifest
+	if _, ok := none.Table("posts"); ok {
+		t.Fatal("a nil manifest records no tables")
+	}
+	if none.PrimaryKey("posts") != nil {
+		t.Fatal("a nil manifest has no keys")
+	}
+	m := &RouteManifest{Tables: map[string]TableMeta{"posts": {PrimaryKey: []string{"id"}}}}
+	if _, ok := m.Table("missing"); ok {
+		t.Fatal("an unlisted table is not recorded")
+	}
+	key := m.PrimaryKey("posts")
+	if len(key) != 1 || key[0] != "id" {
+		t.Fatalf("key = %v", key)
+	}
+	key[0] = "changed"
+	if m.PrimaryKey("posts")[0] != "id" {
+		t.Fatal("the key handed out is a copy, so a caller cannot change the manifest")
+	}
+}

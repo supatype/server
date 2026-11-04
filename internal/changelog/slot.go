@@ -89,7 +89,13 @@ func (s slot) ensure(ctx context.Context) error {
 	if exists {
 		return nil
 	}
-	_, err = s.conn.Exec(ctx, `SELECT pg_create_logical_replication_slot($1, 'wal2json')`, s.name)
+	return s.create(ctx)
+}
+
+// create makes the slot. Losing the race to another replica that created it first (42710) is not
+// an error.
+func (s slot) create(ctx context.Context) error {
+	_, err := s.conn.Exec(ctx, `SELECT pg_create_logical_replication_slot($1, 'wal2json')`, s.name)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "42710" {
 		return nil
@@ -127,32 +133,25 @@ func peekQuery() string {
 }
 
 // peek streams up to a batch of rows to fn and returns the LSN of the last one, or "" for none.
+//
+// The query's own error surfaces through ForEachRow, which reads rows.Err, so one check covers a
+// failed query, a failed scan and an error from fn.
 func (s slot) peek(ctx context.Context, fn func(data []byte) error) (string, error) {
-	rows, err := s.conn.Query(ctx, peekQuery(), s.name, batchChanges)
+	rows, _ := s.conn.Query(ctx, peekQuery(), s.name, batchChanges)
+	var lsn, last string
+	var data []byte
+	_, err := pgx.ForEachRow(rows, []any{&lsn, &data}, func() error {
+		last = lsn
+		return fn(data)
+	})
 	if err != nil {
 		return "", classify(err)
 	}
-	defer rows.Close()
-	var last string
-	for rows.Next() {
-		var lsn string
-		var data []byte
-		if err := rows.Scan(&lsn, &data); err != nil {
-			return "", err
-		}
-		if err := fn(data); err != nil {
-			return "", err
-		}
-		last = lsn
-	}
-	return last, classify(rows.Err())
+	return last, nil
 }
 
 // advance moves the slot to lsn, releasing the WAL behind it.
 func (s slot) advance(ctx context.Context, lsn string) error {
-	if lsn == "" {
-		return nil
-	}
 	if _, err := s.conn.Exec(ctx, `SELECT pg_replication_slot_advance($1, $2::pg_lsn)`, s.name, lsn); err != nil {
 		return fmt.Errorf("advancing %s to %s: %w", s.name, lsn, err)
 	}

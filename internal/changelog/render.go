@@ -3,7 +3,6 @@ package changelog
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -21,55 +20,27 @@ type pgRenderer struct {
 	conn *pgx.Conn
 }
 
+// renderQuery renders each input row and keeps only the columns that row carried.
+//
+// json_populate_record fills every column of the table, and a row from the change log may carry
+// fewer: an old row under REPLICA IDENTITY DEFAULT is just its key, and an update leaves out
+// unchanged TOASTed values. A hook should see what the change carried, not nulls standing in for
+// what it did not. One output row per input element, in input order, by WITH ORDINALITY.
 func renderQuery(schema, table string) string {
-	return `SELECT row_to_json(_supatype_row)::text
+	return `SELECT COALESCE((
+			SELECT json_object_agg(_supatype_col.key, _supatype_col.value)
+			FROM json_each(row_to_json(_supatype_row)) AS _supatype_col
+			WHERE _supatype_col.key IN (SELECT json_object_keys(_supatype_in.v))
+		), '{}'::json)
 		FROM json_array_elements($1::json) WITH ORDINALITY AS _supatype_in(v, n),
 		LATERAL json_populate_record(NULL::` + pgx.Identifier{schema, table}.Sanitize() + `, _supatype_in.v) AS _supatype_row
 		ORDER BY _supatype_in.n`
 }
 
+// render sends the rows as one JSON parameter and reads each rendered row back. pgx encodes the
+// parameter and decodes the json result, and CollectRows reports a failure of either, or of the
+// query, as one error. json.RawMessage keeps every value's bytes exactly as Postgres wrote them.
 func (p pgRenderer) render(ctx context.Context, schema, table string, rows []map[string]json.RawMessage) ([]map[string]json.RawMessage, error) {
-	input, err := json.Marshal(rows)
-	if err != nil {
-		return nil, err
-	}
-	result, err := p.conn.Query(ctx, renderQuery(schema, table), string(input))
-	if err != nil {
-		return nil, err
-	}
-	defer result.Close()
-	out := make([]map[string]json.RawMessage, 0, len(rows))
-	for result.Next() {
-		var text string
-		if err := result.Scan(&text); err != nil {
-			return nil, err
-		}
-		var row map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(text), &row); err != nil {
-			return nil, err
-		}
-		out = append(out, row)
-	}
-	if err := result.Err(); err != nil {
-		return nil, err
-	}
-	return keepColumns(rows, out)
-}
-
-// keepColumns drops the columns rendering added. json_populate_record fills every column of the
-// table, and a row from the change log may carry fewer: an old row under REPLICA IDENTITY DEFAULT
-// is just its key, and an update leaves out unchanged TOASTed values. A hook should see what the
-// change carried, not nulls standing in for what it did not.
-func keepColumns(in, rendered []map[string]json.RawMessage) ([]map[string]json.RawMessage, error) {
-	if len(in) != len(rendered) {
-		return nil, fmt.Errorf("rendered %d rows from %d", len(rendered), len(in))
-	}
-	for i, row := range rendered {
-		for name := range row {
-			if _, ok := in[i][name]; !ok {
-				delete(row, name)
-			}
-		}
-	}
-	return rendered, nil
+	result, _ := p.conn.Query(ctx, renderQuery(schema, table), rows)
+	return pgx.CollectRows(result, pgx.RowTo[map[string]json.RawMessage])
 }

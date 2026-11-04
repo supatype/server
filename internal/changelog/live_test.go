@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -70,12 +71,16 @@ func (w *stubWorker) waitFor(t *testing.T, n int) []received {
 	return w.snapshot()
 }
 
+// liveDSN is a superuser DSN for a Postgres with logical decoding and wal2json allowed. CI's
+// supatype/postgres service (SUPATYPE_SECSQL_DSN) is one, so the listener runs there too.
 func liveDSN(t *testing.T) string {
-	dsn := os.Getenv("SUPATYPE_TEST_LOGICAL_DSN")
-	if dsn == "" {
-		t.Skip("set SUPATYPE_TEST_LOGICAL_DSN to run against a Postgres with logical decoding")
+	for _, name := range []string{"SUPATYPE_TEST_LOGICAL_DSN", "SUPATYPE_SECSQL_DSN"} {
+		if dsn := strings.TrimSpace(os.Getenv(name)); dsn != "" {
+			return dsn
+		}
 	}
-	return dsn
+	t.Skip("set SUPATYPE_TEST_LOGICAL_DSN (or SUPATYPE_SECSQL_DSN) to a Postgres with logical decoding")
+	return ""
 }
 
 func exec(t *testing.T, dsn string, sql ...string) {
@@ -278,7 +283,7 @@ func TestLiveReportsTheRequestPathWithoutReplicationPrivilege(t *testing.T) {
 		`DROP ROLE IF EXISTS hooks_norepl`,
 		`CREATE ROLE hooks_norepl LOGIN PASSWORD 'pw' NOREPLICATION`,
 	)
-	cfg.DSN = strings.Replace(cfg.DSN, credentials(t, cfg.DSN), "hooks_norepl:pw", 1)
+	cfg.DSN = withUser(t, cfg.DSN, "hooks_norepl", "pw")
 
 	l := New(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -290,15 +295,15 @@ func TestLiveReportsTheRequestPathWithoutReplicationPrivilege(t *testing.T) {
 	}
 }
 
-// credentials is the user:password part of a postgres:// URL.
-func credentials(t *testing.T, dsn string) string {
+// withUser is dsn logging in as another role, for postgres:// and postgresql:// URLs alike.
+func withUser(t *testing.T, dsn, user, password string) string {
 	t.Helper()
-	rest := strings.TrimPrefix(dsn, "postgres://")
-	at := strings.Index(rest, "@")
-	if at < 0 {
-		t.Fatalf("DSN has no credentials: %s", dsn)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("DSN is not a URL: %v", err)
 	}
-	return rest[:at]
+	u.User = url.UserPassword(user, password)
+	return u.String()
 }
 
 // Through a real PostgREST whose db-pre-request is auth.emit_hook_actor (the migration
@@ -372,10 +377,33 @@ func signedToken(t *testing.T, secret string) string {
 	return signed
 }
 
+// actorMigration is the migration that installs the pre-request function.
+const actorMigration = "../../migrations/20261103180000_add_hook_actor_marker.up.sql"
+
+// installActorFunction applies the migration as the migration runner would, with the auth schema
+// as its namespace, so the test exercises the SQL that ships.
+func installActorFunction(t *testing.T, dsn string) {
+	t.Helper()
+	raw, err := os.ReadFile(actorMigration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ReplaceAll(string(raw), `{{ index .Options "Namespace" }}`, "auth")
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.PgConn().Exec(ctx, "CREATE SCHEMA IF NOT EXISTS auth;\n"+sql).ReadAll(); err != nil {
+		t.Fatalf("applying %s: %v", actorMigration, err)
+	}
+}
+
 // The pre-request function from migration 20261103180000, called the way PostgREST calls it.
-// Needs it installed as auth.emit_hook_actor.
 func TestLiveActorFunctionMarksWritesAndSkipsReads(t *testing.T) {
 	dsn := liveDSN(t)
+	installActorFunction(t, dsn)
 	slotName := "supatype_hooks_test_actor_fn"
 	exec(t, dsn, `SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = '`+slotName+`'`,
 		`SELECT pg_create_logical_replication_slot('`+slotName+`', 'wal2json')`)
@@ -500,7 +528,12 @@ const typesInsertSQL = `INSERT INTO public.live_types VALUES (9007199254740993,
 
 func postgrestRow(t *testing.T, url string) map[string]json.RawMessage {
 	t.Helper()
-	res, err := http.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	res, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -373,6 +373,7 @@ func newHookMiddleware(d *Deps) func(http.Handler) http.Handler {
 		Claims:    modelhooks.ClaimsFromBearer(d.Config.JWTSecret),
 		RequestID: func(req *http.Request) string { return utilities.GetRequestID(req.Context()) },
 		Callback:  d.HookCallback,
+		AfterRows: newAfterRows(d),
 	})
 }
 

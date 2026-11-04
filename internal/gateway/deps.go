@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/admin"
 	"github.com/supatype/server/internal/apiconfig"
+	"github.com/supatype/server/internal/changelog"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/corsorigins"
 	"github.com/supatype/server/internal/data"
@@ -72,6 +73,9 @@ type Deps struct {
 	Hooks func(http.Handler) http.Handler
 	// HookCallback serves previous(), or is nil when it could not be built.
 	HookCallback *modelhooks.Callback
+	// AfterHookListener delivers after hooks from the change log, or is nil where it cannot run.
+	// Set by WithAfterHookListener.
+	AfterHookListener *changelog.Listener
 	// Baseline is the manifest with no request in hand, used by the mounts whose
 	// existence is decided once at startup rather than per tenant.
 	Baseline *proxy.RouteManifest

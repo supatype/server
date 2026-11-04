@@ -218,6 +218,16 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 
 	denoBaseStr := denoBaseURL(srvCfg, workerURL, dm)
 
+	// After hooks from the change log, on a pool of its own. Stops with ctx; drain waits for it.
+	afterHooks := newAfterHookListener(srvCfg, func() *proxy.RouteManifest { return live.For(nil) }, dm != nil, perTenantManifest)
+	if afterHooks != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			afterHooks.Run(ctx)
+		}()
+	}
+
 	healthProbes := func() outerhealth.ProbeConfig {
 		pc := outerhealth.ProbeConfigFrom(srvCfg, live.File(), denoBaseStr)
 		pc.SelfBaseURL = outerhealth.SelfBaseURLForRealtimeProbe(
@@ -227,6 +237,9 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 			authCfg.API.Host,
 			authCfg.API.Port,
 		)
+		if afterHooks != nil {
+			pc.AfterHooks = afterHooks.Status
+		}
 		return pc
 	}
 
@@ -240,7 +253,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// same one.
 	corsPolicy := DefaultCORSPolicy(srvCfg, corsorigins.DBStore{DB: db}, authCfg.SiteURL)
 	outerMux := buildOuterMux(srvCfg, live.For, healthProbes, ah, dm, utilities.Version, resources, sendEmailHook,
-		WithCORSPolicy(corsPolicy))
+		WithCORSPolicy(corsPolicy), WithAfterHookListener(afterHooks))
 
 	// ── background workers (stop on ctx cancel; drained by the returned func) ──
 	wrkLog := logrus.WithField("component", "apiworker")

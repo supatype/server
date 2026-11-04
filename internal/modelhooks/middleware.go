@@ -349,7 +349,7 @@ func buildPayload(req *http.Request, target Target, body []byte, opts Options) p
 		p.Filter = req.URL.RawQuery
 	}
 	if opts.Callback != nil {
-		p.PreviousPath = opts.Callback.Path(target.Operation, target.Table, req.URL.RawQuery)
+		p.PreviousPath = opts.Callback.Path(req, target.Operation, target.Table, req.URL.RawQuery)
 	}
 	return p
 }

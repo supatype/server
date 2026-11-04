@@ -1,18 +1,19 @@
 package modelhooks
 
 import (
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/supatype/server/internal/utilities"
-	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // PreviousPathPrefix is where the callback is mounted. Sent to a hook as a **path**, not a URL: the
@@ -32,63 +33,95 @@ const DefaultPreviousLimit = 100
 
 // previousClaims is what a callback token carries. Self-contained, so the endpoint keeps no state and
 // a restart cannot strand an in-flight request.
+//
+// Caller is the request's bearer token, sealed: the path travels to the worker and may be logged on
+// the way, and a caller's credential must not be readable there.
 type previousClaims struct {
-	Table  string `json:"t"`
-	Filter string `json:"f"`
-	Expiry int64  `json:"x"`
+	Table  string    `json:"t"`
+	Op     Operation `json:"o"`
+	Filter string    `json:"f"`
+	Caller string    `json:"c,omitempty"`
+	Expiry int64     `json:"x"`
+}
+
+// PrimaryKeyFunc returns a table's primary key columns, in order, or nil when they are not known.
+type PrimaryKeyFunc func(req *http.Request, table string) []string
+
+// CallbackOptions configures NewCallback.
+type CallbackOptions struct {
+	// RestBase and SchemaFor resolve the PostgREST URL and schema for the callback request.
+	RestBase  func(*http.Request) string
+	SchemaFor func(*http.Request) string
+	// ServiceRoleKey reads the affected rows back unmasked.
+	ServiceRoleKey string
+	// PrimaryKey names the key the rows are read back by. Without one the read fails closed.
+	PrimaryKey PrimaryKeyFunc
+	// Client defaults to a 10s http.Client.
+	Client Doer
 }
 
 // Callback mints and serves the `previous()` endpoint.
 //
-// Reads run as the **service role**, so a hook sees the rows as stored — RLS bypassed, field masking
-// not applied. That is deliberate: a hook validating against a masked column would otherwise compare
-// with `NULL` and pass. It is also not a privilege the hook lacks, since the worker already holds the
-// service-role key; the endpoint is a convenience, not an escalation.
+// It answers with the rows the write will actually change, as stored, in two reads. The first runs
+// as the **caller**, with the request's filter plus the generated `can_update_<t>` or
+// `can_delete_<t>` check, and selects only the primary key: that is the caller's own rule deciding
+// which rows are in play. The second runs as the **service role** by those keys, so the hook sees
+// every column unmasked: a hook validating against a masked column would otherwise compare with
+// `NULL` and pass. Reading as the service role with the request's filter alone would hand a hook
+// rows the caller cannot change, which a validating hook can wrongly reject on and a rejection can
+// echo back to the caller.
 //
 // The token is what keeps it from being a general "read any rows matching any filter" surface: it
-// pins the table and the filter to one in-flight request and expires with it.
+// pins the table, the operation, the filter and the caller to one in-flight request and expires
+// with it.
 type Callback struct {
 	key            []byte
+	seal           cipher.AEAD
 	restBase       func(*http.Request) string
 	schemaFor      func(*http.Request) string
 	serviceRoleKey string
+	primaryKey     PrimaryKeyFunc
 	limit          int
 	client         Doer
 }
 
 // NewCallback builds the endpoint. The signing key is generated here and never leaves the process, so
 // tokens are useless to anything but this server, and useless at all after a restart.
-func NewCallback(
-	restBase func(*http.Request) string,
-	schemaFor func(*http.Request) string,
-	serviceRoleKey string,
-	client Doer,
-) *Callback {
+func NewCallback(opts CallbackOptions) *Callback {
 	// crypto/rand.Read does not fail; a short read would be a broken runtime
 	// rather than a condition to handle.
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
+	client := opts.Client
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Callback{
 		key:            key,
-		restBase:       restBase,
-		schemaFor:      schemaFor,
-		serviceRoleKey: serviceRoleKey,
+		seal:           sealerFor(key),
+		restBase:       opts.RestBase,
+		schemaFor:      opts.SchemaFor,
+		serviceRoleKey: opts.ServiceRoleKey,
+		primaryKey:     opts.PrimaryKey,
 		limit:          DefaultPreviousLimit,
 		client:         client,
 	}
 }
 
 // Path returns the callback path for one request's table and filter, or "" when there is nothing to
-// fetch — an insert has no prior rows, so the context type omits `previous` entirely.
-func (c *Callback) Path(op Operation, table, filter string) string {
+// fetch: an insert has no prior rows, so the context type omits `previous` entirely.
+func (c *Callback) Path(req *http.Request, op Operation, table, filter string) string {
 	if c == nil || op == OpInsert || table == "" {
 		return ""
 	}
-	// previousClaims is two strings and an integer, so it cannot fail to encode.
-	claims := previousClaims{Table: table, Filter: filter, Expiry: time.Now().Add(previousTTL).Unix()}
+	claims := previousClaims{
+		Table:  table,
+		Op:     op,
+		Filter: filter,
+		Caller: c.sealCaller(bearerToken(req)),
+		Expiry: time.Now().Add(previousTTL).Unix(),
+	}
+	// previousClaims is strings and an integer, so it cannot fail to encode.
 	encoded, _ := json.Marshal(claims)
 	payload := base64.RawURLEncoding.EncodeToString(encoded)
 	return PreviousPathPrefix + payload + "." + c.sign(payload)
@@ -146,81 +179,23 @@ func (c *Callback) Handler() http.Handler {
 
 		rows, truncated, err := c.fetch(req, claims)
 		if err != nil {
+			// The error never carries the caller's token: it is opened only to be sent to PostgREST.
+			logrus.WithError(err).WithField("table", claims.Table).Warn("previous(): could not read the affected rows")
 			utilities.WriteJSON(w, http.StatusBadGateway, map[string]string{"message": "Could not read the affected rows"})
 			return
 		}
-
-		// Encoded from a struct rather than assembled by hand. The rows are row *content* — values a
-		// caller wrote — so streaming them into the response with string concatenation puts
-		// attacker-influenced bytes past the encoder, which gosec flags as tainted output (G705) and
-		// which would also emit invalid JSON for a nil `rows`. `nosniff` because a JSON content type is
-		// only a promise until the browser is told not to guess.
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(previousResponse{Rows: rows, Truncated: truncated})
+		writeRows(w, rows, truncated)
 	})
 }
 
-// fetch reads the affected rows through PostgREST, reusing the request's own filter verbatim.
-//
-// Through PostgREST rather than SQL so the filter needs no parsing: the string the caller sent is the
-// string that selects the rows, which is also why a hook cannot widen it — the server never takes one
-// from the hook.
-func (c *Callback) fetch(req *http.Request, claims previousClaims) (json.RawMessage, bool, error) {
-	base := strings.TrimRight(c.restBase(req), "/")
-	if base == "" {
-		return nil, false, fmt.Errorf("no PostgREST URL")
-	}
-
-	target := base + "/" + claims.Table
-	query := claims.Filter
-	// One over the cap, so a full page is distinguishable from a truncated one.
-	limit := "limit=" + strconv.Itoa(c.limit+1)
-	if query == "" {
-		query = limit
-	} else {
-		query += "&" + limit
-	}
-	target += "?" + query
-
-	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, target, nil)
-	if err != nil {
-		return nil, false, err
-	}
-	fetch.Header.Set("Accept", "application/json")
-	if c.serviceRoleKey != "" {
-		fetch.Header.Set("apikey", c.serviceRoleKey)
-		fetch.Header.Set("Authorization", "Bearer "+c.serviceRoleKey)
-	}
-	if c.schemaFor != nil {
-		if schema := c.schemaFor(req); schema != "" {
-			fetch.Header.Set("Accept-Profile", schema)
-		}
-	}
-
-	res, err := c.client.Do(fetch)
-	if err != nil {
-		return nil, false, err
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, false, fmt.Errorf("PostgREST answered %d", res.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(res.Body, maxVerdictBytes))
-	if err != nil {
-		return nil, false, err
-	}
-
-	var rows []json.RawMessage
-	if err := json.Unmarshal(body, &rows); err != nil {
-		return nil, false, err
-	}
-	truncated := len(rows) > c.limit
-	if truncated {
-		rows = rows[:c.limit]
-	}
-	trimmed, _ := json.Marshal(rows)
-	return trimmed, truncated, nil
+// writeRows encodes the answer from a struct rather than assembling it by hand. The rows are row
+// *content*, values a caller wrote, so streaming them into the response with string concatenation
+// puts attacker-influenced bytes past the encoder, which gosec flags as tainted output (G705) and
+// which would also emit invalid JSON for a nil `rows`. `nosniff` because a JSON content type is only
+// a promise until the browser is told not to guess.
+func writeRows(w http.ResponseWriter, rows json.RawMessage, truncated bool) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(previousResponse{Rows: rows, Truncated: truncated})
 }

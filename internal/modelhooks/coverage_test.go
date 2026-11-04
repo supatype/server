@@ -329,7 +329,7 @@ func TestTheAfterHookIsToldTheFilter(t *testing.T) {
 // ─── When the hook cannot be reached at all ───────────────────────────────────
 
 // A function URL that cannot be resolved is a before hook that did not run, so
-// the unavailability policy decides — the write is not simply let through.
+// the unavailability policy decides, and the write is not simply let through.
 func TestABeforeHookWhoseURLWillNotResolve(t *testing.T) {
 	var upstreamCalled bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -597,12 +597,13 @@ func TestTheRequestIDFallsBackToTheHeader(t *testing.T) {
 
 func testCallback(t *testing.T, base string, client Doer) *Callback {
 	t.Helper()
-	return NewCallback(
-		func(*http.Request) string { return base },
-		func(*http.Request) string { return "public" },
-		"service-role-key",
-		client,
-	)
+	return NewCallback(CallbackOptions{
+		RestBase:       func(*http.Request) string { return base },
+		SchemaFor:      func(*http.Request) string { return "public" },
+		ServiceRoleKey: testServiceKey,
+		PrimaryKey:     postsKeyedByID,
+		Client:         client,
+	})
 }
 
 // An update carries a path the hook can call to read the rows as they stand. An
@@ -695,9 +696,7 @@ func TestThePreviousEndpointWithAnUnreachableUpstream(t *testing.T) {
 
 	// Mounted at PreviousPathPrefix on the outer mux, so the handler sees the
 	// token as the whole path.
-	token := strings.TrimPrefix(callback.Path(OpUpdate, "posts", "id=eq.1"), PreviousPathPrefix)
-	rec := httptest.NewRecorder()
-	callback.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/"+token, nil))
+	rec := post(t, callback.Handler(), callback.Path(writeAs(""), OpUpdate, "posts", "id=eq.1"))
 
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 (%s)", rec.Code, rec.Body.String())
@@ -708,14 +707,14 @@ func TestThePreviousEndpointWithAnUnreachableUpstream(t *testing.T) {
 func TestThePreviousPathForNothingToRead(t *testing.T) {
 	callback := testCallback(t, "http://postgrest", nil)
 
-	if got := callback.Path(OpInsert, "posts", ""); got != "" {
+	if got := callback.Path(writeAs(""), OpInsert, "posts", ""); got != "" {
 		t.Errorf("an insert offered %q", got)
 	}
-	if got := callback.Path(OpUpdate, "", "id=eq.1"); got != "" {
+	if got := callback.Path(writeAs(""), OpUpdate, "", "id=eq.1"); got != "" {
 		t.Errorf("no table offered %q", got)
 	}
 	var absent *Callback
-	if got := absent.Path(OpUpdate, "posts", ""); got != "" {
+	if got := absent.Path(writeAs(""), OpUpdate, "posts", ""); got != "" {
 		t.Errorf("no callback offered %q", got)
 	}
 }
@@ -769,18 +768,17 @@ func TestFetchingThePreviousRows(t *testing.T) {
 	rowsFrom := func(t *testing.T, base string) (json.RawMessage, int) {
 		t.Helper()
 		callback := testCallback(t, base, &http.Client{Timeout: 2 * time.Second})
-		token := strings.TrimPrefix(callback.Path(OpUpdate, "posts", "id=eq.1"), PreviousPathPrefix)
-		rec := httptest.NewRecorder()
-		callback.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/"+token, nil))
+		rec := post(t, callback.Handler(), callback.Path(writeAs(""), OpUpdate, "posts", "id=eq.1"))
 		return rec.Body.Bytes(), rec.Code
 	}
 
 	// The happy path: PostgREST answers with rows and they come back.
 	server := answering(t, func(w http.ResponseWriter, r *http.Request) {
-		// The callback reads with the service role, because a hook has to see
-		// the rows as stored rather than as the caller could see them.
-		if r.Header.Get("Authorization") == "" {
-			t.Error("the fetch carried no credential")
+		// The read by key is the service role's, because a hook has to see the
+		// rows as stored rather than as the caller could see them. (The read of
+		// the keys is the caller's, here anonymous, so it carries none.)
+		if r.URL.Query().Get("can_update_posts") == "" && r.Header.Get("Authorization") == "" {
+			t.Error("the read by key carried no credential")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"id":1,"title":"before"}]`))
@@ -883,10 +881,7 @@ func TestFetchingRowsFromAnAnswerThatStops(t *testing.T) {
 	defer server.Close()
 
 	callback := testCallback(t, server.URL, &http.Client{Timeout: 2 * time.Second})
-	token := strings.TrimPrefix(callback.Path(OpUpdate, "posts", "id=eq.1"), PreviousPathPrefix)
-
-	rec := httptest.NewRecorder()
-	callback.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/"+token, nil))
+	rec := post(t, callback.Handler(), callback.Path(writeAs(""), OpUpdate, "posts", "id=eq.1"))
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 (%s)", rec.Code, rec.Body.String())
 	}

@@ -1050,20 +1050,33 @@ func TestThePreviousCallbackReadsFromTheTenantsPostgREST(t *testing.T) {
 	defer rest.Close()
 
 	cfg := &config.Config{Mode: "standalone", ServiceRoleKey: "service-role"}
-	d := depsFor(t, cfg, &proxy.RouteManifest{Schema: "app", PostgRESTURL: rest.URL})
+	d := depsFor(t, cfg, &proxy.RouteManifest{
+		Schema:       "app",
+		PostgRESTURL: rest.URL,
+		Tables:       map[string]proxy.TableMeta{"posts": {PrimaryKey: []string{"id"}}},
+	})
 
 	callback := newHookCallback(d)
 	if callback == nil {
 		t.Fatal("no callback")
 	}
-	token := strings.TrimPrefix(
-		callback.Path(modelhooks.OpUpdate, "posts", "id=eq.1"), modelhooks.PreviousPathPrefix)
-
-	rec := httptest.NewRecorder()
-	callback.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/"+token, nil))
+	write := httptest.NewRequest(http.MethodPatch, "/posts", nil)
+	previous := func(table string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		token := strings.TrimPrefix(callback.Path(write, modelhooks.OpUpdate, table, "id=eq.1"), modelhooks.PreviousPathPrefix)
+		callback.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/"+token, nil))
+		return rec
+	}
+	rec := previous("posts")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// The key comes from the tenant's manifest too: a table it records no primaryKey for fails
+	// closed rather than falling back to reading the request's filter as the service role.
+	if rec := previous("comments"); rec.Code != http.StatusBadGateway {
+		t.Errorf("a table with no primaryKey: status = %d, want 502", rec.Code)
 	}
 	if seen != "app" {
 		t.Errorf("the fetch asked for schema %q, want the tenant's", seen)

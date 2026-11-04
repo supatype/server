@@ -6,7 +6,9 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -34,8 +36,10 @@ const (
 
 // Handler returns an http.Handler that serves static files from dir.
 //
-// When spa is true, requests for paths that don't match an existing file are
-// served with dir/index.html (SPA client-side routing fallback).
+// A path with no file behind it is a 404 with no-store, carrying dir/404.html
+// when the build ships one. When spa is true, the exception is a GET or HEAD
+// that looks like a navigation (see wantsSPAFallback): that is served
+// dir/index.html, the SPA client-side routing fallback.
 //
 // Cache headers use CacheOpts (defaults when empty): hashed bundle prefixes get a long immutable
 // cache; .html and "/" get no-cache; SPA fallback uses the HTML policy.
@@ -60,14 +64,76 @@ func Handler(dir string, spa bool, cache CacheOpts) http.Handler {
 			return
 		}
 
-		if spa && !anyRepresentableFile(dir, path) {
-			w.Header().Set("Cache-Control", cacheControlForSPAHTML(cache))
-			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		if !anyRepresentableFile(dir, path) {
+			serveMiss(w, r, dir, spa, cache)
 			return
 		}
 
 		fs.ServeHTTP(w, r)
 	})
+}
+
+// serveMiss answers a path with no file behind it.
+func serveMiss(w http.ResponseWriter, r *http.Request, dir string, spa bool, cache CacheOpts) {
+	if !spa || !wantsSPAFallback(r) {
+		serveNotFound(w, r, dir)
+		return
+	}
+	w.Header().Set("Cache-Control", cacheControlForSPAHTML(cache))
+	http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+}
+
+// wantsSPAFallback reports whether a missing path is a client-side route. Only
+// a GET or HEAD can be a navigation. A last segment with no extension is one.
+// A dotted one (/u/john.doe) is one only when the request is a browser
+// navigation, which asks for text/html: a fetch with just */* is taken as a
+// file request and gets the 404. Nothing under a hashed-asset prefix is a
+// route, whatever it asks for.
+func wantsSPAFallback(r *http.Request) bool {
+	urlPath := r.URL.Path
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if isHashedAssetPath(urlPath) {
+		return false
+	}
+	if path.Ext(path.Base(urlPath)) == "" {
+		return true
+	}
+	return headerHasToken(r.Header.Get("Accept"), "text/html")
+}
+
+// serveNotFound answers a miss with 404 and no-store, so neither the hashed-asset
+// policy nor a CDN holds on to a miss the next deploy may fill. The body is
+// dir/404.html when the build ships one.
+func serveNotFound(w http.ResponseWriter, r *http.Request, dir string) {
+	w.Header().Set("Cache-Control", "no-store")
+	page, ok := readNotFoundPage(dir)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(page)))
+	w.WriteHeader(http.StatusNotFound)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(page)
+	}
+}
+
+func readNotFoundPage(dir string) ([]byte, bool) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, false
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+	page, err := root.ReadFile("404.html")
+	if err != nil {
+		return nil, false
+	}
+	return page, true
 }
 
 func anyRepresentableFile(dir, urlPath string) bool {
@@ -116,8 +182,8 @@ func pickVariant(dir, urlPath string, r *http.Request) (diskPath, contentEncodin
 		return "", "", false
 	}
 
-	brOK := acceptEncodingToken(r.Header.Get("Accept-Encoding"), "br")
-	gzipOK := acceptEncodingToken(r.Header.Get("Accept-Encoding"), "gzip")
+	brOK := headerHasToken(r.Header.Get("Accept-Encoding"), "br")
+	gzipOK := headerHasToken(r.Header.Get("Accept-Encoding"), "gzip")
 
 	brRel := rel + ".br"
 	gzRel := rel + ".gz"
@@ -161,13 +227,15 @@ func staticRelPath(urlPath string) (string, bool) {
 	return rel, true
 }
 
-func acceptEncodingToken(ae, enc string) bool {
-	if ae == "" {
+// headerHasToken reports whether a comma-separated header such as Accept or
+// Accept-Encoding lists want, ignoring parameters like q-values and case.
+func headerHasToken(header, want string) bool {
+	if header == "" {
 		return false
 	}
-	for _, part := range strings.Split(ae, ",") {
+	for _, part := range strings.Split(header, ",") {
 		token := strings.TrimSpace(strings.Split(part, ";")[0])
-		if strings.EqualFold(token, enc) {
+		if strings.EqualFold(token, want) {
 			return true
 		}
 	}

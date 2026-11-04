@@ -96,6 +96,12 @@ type RouteManifest struct {
 	// annotations know only `access` and `searchFields`, so an unrecognised key is dropped in
 	// silence. Hooks above take this route for the same reason.
 	Cache map[string]TableCache `json:"cache,omitempty"`
+
+	// Tables maps table name → facts about the table itself, written by `supatype push`. See
+	// TableMeta. A top-level map rather than keys inside Hooks: a released server reads every key
+	// of a Hooks entry as an event, so extra keys there fail the whole load, while an unknown
+	// top-level key is ignored.
+	Tables map[string]TableMeta `json:"tables,omitempty"`
 }
 
 // TableCache is what one table's schema permits. See RouteManifest.Cache.
@@ -262,6 +268,7 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 			cm.StaticCachePrefixes[k] = v
 		}
 	}
+	cm.Tables = cloneTables(m.Tables)
 	return &cm
 }
 
@@ -350,6 +357,7 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	if overlay.Cache != nil {
 		base.Cache = overlay.Cache
 	}
+	mergeTables(base, overlay)
 }
 
 // newWatcher is the fsnotify constructor, indirected so the failure to create

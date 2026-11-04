@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/supatype/server/internal/changelog"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/utilities"
 )
@@ -31,6 +32,10 @@ type ProbeConfig struct {
 	// used to GET /realtime/v1/health when RealtimeEnabled. Normally set by serve via SelfBaseURLForRealtimeProbe;
 	// override with SUPATYPE_HEALTH_SELF_BASE_URL for exotic layouts.
 	SelfBaseURL string
+	// AfterHooks reports where after hooks get their rows (the change-log listener's status), or
+	// is nil when no listener is wired. Shown on /health for `supatype doctor`; never part of
+	// readiness, since the request-path fallback still serves every API write.
+	AfterHooks func() changelog.Status
 }
 
 // Attach mounts GET /health and GET /health/ready on r (supatype-server outer mux).
@@ -69,13 +74,17 @@ func Attach(r chi.Router, cfg *config.Config, version string, probes func() Prob
 }
 
 func collectComponents(probes ProbeConfig, timeout time.Duration) map[string]any {
-	return map[string]any{
+	components := map[string]any{
 		"postgrest": postgrestComponent(probes, timeout),
 		"graphql":   graphqlComponent(probes, timeout),
 		"storage":   storageComponent(probes, timeout),
 		"deno":      denoComponent(probes, timeout),
 		"realtime":  realtimeComponent(probes, timeout),
 	}
+	if probes.AfterHooks != nil {
+		components["after_hooks"] = probes.AfterHooks()
+	}
+	return components
 }
 
 // postgrestComponent is required when URL is set; an empty URL is not ready (misconfiguration).

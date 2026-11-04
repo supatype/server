@@ -99,6 +99,15 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.Cache != nil {
 		m.Cache = tc.Cache
 	}
+	// Wholesale too: restricted columns are only true as of the push that wrote them.
+	if tc.Tables != nil {
+		m.Tables = tc.Tables
+	}
+	// Wholesale, as the file manifest's overlay does: a validator removed from the schema has to
+	// stop running.
+	if tc.Validators != nil {
+		m.Validators = tc.Validators
+	}
 	if tc.FunctionsEnabled != nil {
 		m.FunctionsEnabled = *tc.FunctionsEnabled
 	}

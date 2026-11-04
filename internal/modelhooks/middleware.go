@@ -67,6 +67,9 @@ type Options struct {
 	// Callback mints the `previous()` path. Optional: without it the context simply has no
 	// `previous`, which the generated types already model as absent rather than as a broken call.
 	Callback *Callback
+	// AfterRows decides whether an after hook fires here or from the change log, and where its rows
+	// come from when it fires here. Optional: without it the after path behaves as released.
+	AfterRows *AfterRows
 }
 
 type payload struct {
@@ -101,73 +104,105 @@ func Middleware(opts Options) func(http.Handler) http.Handler {
 	}
 
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			target := classifyFor(req, opts.Hooks, opts.Validators)
-			if !target.HasWork() {
-				next.ServeHTTP(w, req)
-				return
-			}
-
-			depth := hookDepth(req)
-			if depth >= MaxHookDepth {
-				logrus.WithFields(logrus.Fields{
-					"component": "model_hook",
-					"table":     target.Table,
-					"operation": string(target.Operation),
-					"depth":     depth,
-				}).Error("hook chain too deep; refusing the write")
-				// Refused, not run without its hooks: a validation hook that stopped running must not
-				// let writes through. 508 is the honest status: the request is well formed and the
-				// server detected a loop while answering it.
-				utilities.WriteJSON(w, http.StatusLoopDetected, map[string]string{
-					"message": "This write is too many hooks deep, so it was not applied",
-				})
-				return
-			}
-
-			log := logrus.WithFields(logrus.Fields{
-				"component": "model_hook",
-				"table":     target.Table,
-				"operation": string(target.Operation),
-			})
-
-			body, ok := readBody(w, req, maxBody, log)
-			if !ok {
-				return
-			}
-
-			// Field validators run before the hook. A hook may rewrite the body, and a validator
-			// that ran afterwards would be judging values the author never sent, while one that
-			// runs first judges exactly what arrived.
-			if len(target.Validators) > 0 && !runValidators(w, req, target, body, opts, log, depth) {
-				return
-			}
-
-			if target.Before != nil {
-				outcome, proceed := runBefore(w, req, target, body, opts, log, depth)
-				if !proceed {
-					return
-				}
-				if outcome.Kind == OutcomeReplace {
-					body = outcome.Body
-				}
-			}
-
-			// Restore the body for the proxy, replaced or not.
-			req.Body = io.NopCloser(bytes.NewReader(body))
-			req.ContentLength = int64(len(body))
-			req.Header.Set("Content-Length", strconv.Itoa(len(body)))
-
-			if target.After == nil {
-				next.ServeHTTP(w, req)
-				return
-			}
-
-			rec := &recorder{ResponseWriter: w, captureBody: wantsRepresentation(req)}
-			next.ServeHTTP(rec, req)
-			runAfter(req, target, rec, opts, log, depth)
-		})
+		return &hookHandler{opts: opts, maxBody: maxBody, next: next}
 	}
+}
+
+// hookHandler is Middleware's handler around one next handler.
+type hookHandler struct {
+	opts    Options
+	maxBody int64
+	next    http.Handler
+}
+
+func (h *hookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// Only this middleware may say the request path fired an after hook.
+	req.Header.Del(RequestPathHeader)
+	target := classifyFor(req, h.opts.Hooks, h.opts.Validators)
+	if !target.HasWork() {
+		h.next.ServeHTTP(w, req)
+		return
+	}
+
+	depth := hookDepth(req)
+	if refuseTooDeep(w, target, depth) {
+		return
+	}
+
+	log := hookLog(target)
+	body, ok := readBody(w, req, h.maxBody, log)
+	if !ok {
+		return
+	}
+	if body, ok = h.beforeWrite(w, req, target, body, log, depth); !ok {
+		return
+	}
+	h.forward(w, req, target, body, log, depth)
+}
+
+// hookLog is the logger for one hooked write.
+func hookLog(target Target) *logrus.Entry {
+	return logrus.WithFields(logrus.Fields{
+		"component": "model_hook",
+		"table":     target.Table,
+		"operation": string(target.Operation),
+	})
+}
+
+// refuseTooDeep answers a write whose hook chain is too deep, reporting whether it did.
+func refuseTooDeep(w http.ResponseWriter, target Target, depth int) bool {
+	if depth < MaxHookDepth {
+		return false
+	}
+	hookLog(target).WithField("depth", depth).Error("hook chain too deep; refusing the write")
+	// Refused, not run without its hooks: a validation hook that stopped running must not let writes
+	// through. 508 is the honest status: the request is well formed and the server detected a loop
+	// while answering it.
+	utilities.WriteJSON(w, http.StatusLoopDetected, map[string]string{
+		"message": "This write is too many hooks deep, so it was not applied",
+	})
+	return true
+}
+
+// beforeWrite runs the validators and the before hook, and restores the body for the proxy,
+// replaced or not. It reports false when either answered the client instead.
+func (h *hookHandler) beforeWrite(w http.ResponseWriter, req *http.Request, target Target, body []byte, log *logrus.Entry, depth int) ([]byte, bool) {
+	// Field validators run before the hook. A hook may rewrite the body, and a validator that ran
+	// afterwards would be judging values the author never sent, while one that runs first judges
+	// exactly what arrived.
+	if len(target.Validators) > 0 && !runValidators(w, req, target, body, h.opts, log, depth) {
+		return nil, false
+	}
+	if target.Before != nil {
+		outcome, proceed := runBefore(w, req, target, body, h.opts, log, depth)
+		if !proceed {
+			return nil, false
+		}
+		if outcome.Kind == OutcomeReplace {
+			body = outcome.Body
+		}
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return body, true
+}
+
+// forward proxies the write, and fires the after hook here when the change-log listener does not.
+func (h *hookHandler) forward(w http.ResponseWriter, req *http.Request, target Target, body []byte, log *logrus.Entry, depth int) {
+	shape, shaped, fireHere := h.opts.AfterRows.route(req, target.Table)
+	// A shaped table is one the listener handles too, so a write whose hook fires here is marked for
+	// the listener to skip.
+	h.opts.AfterRows.mark(req, target.Table, target.After != nil && fireHere && shaped)
+	if target.After == nil || !fireHere {
+		// No after hook, or the change-log listener delivers it for every writer.
+		h.next.ServeHTTP(w, req)
+		return
+	}
+
+	rec := &recorder{ResponseWriter: w, captureBody: wantsRepresentation(req)}
+	h.next.ServeHTTP(rec, req)
+	runAfter(req, target, rec, h.opts, log, depth, afterInput{body: body, shape: shape, shaped: shaped})
 }
 
 // classifyFor adapts the caller-supplied hook map into what Classify needs.
@@ -211,15 +246,7 @@ func readBody(w http.ResponseWriter, req *http.Request, max int64, log *logrus.E
 }
 
 // runBefore calls the before hook and applies its answer. The bool reports whether to continue.
-func runBefore(
-	w http.ResponseWriter,
-	req *http.Request,
-	target Target,
-	body []byte,
-	opts Options,
-	log *logrus.Entry,
-	depth int,
-) (Outcome, bool) {
+func runBefore(w http.ResponseWriter, req *http.Request, target Target, body []byte, opts Options, log *logrus.Entry, depth int) (Outcome, bool) {
 	cfg := *target.Before
 	view := HookConfigView{TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable}
 	log = log.WithFields(logrus.Fields{"event": target.BeforeEvent, "function": cfg.Function})
@@ -237,13 +264,7 @@ func runBefore(
 	outcome := opts.Dispatcher.Call(req.Context(), url, target.BeforeEvent, view, encoded, depth+1)
 	switch outcome.Kind {
 	case OutcomeReject:
-		// The hook's own status and message. Nothing is added: a hook that chose 409 means 409.
-		log.WithField("status", outcome.Status).Info("hook rejected the write")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(outcome.Status)
-		if len(outcome.Body) > 0 {
-			_, _ = w.Write(outcome.Body)
-		}
+		writeRejection(w, log, outcome)
 		return outcome, false
 
 	case OutcomeUnavailable:
@@ -251,6 +272,17 @@ func runBefore(
 
 	default:
 		return outcome, true
+	}
+}
+
+// writeRejection answers with the hook's own status and message. Nothing is added: a hook that chose
+// 409 means 409.
+func writeRejection(w http.ResponseWriter, log *logrus.Entry, outcome Outcome) {
+	log.WithField("status", outcome.Status).Info("hook rejected the write")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(outcome.Status)
+	if len(outcome.Body) > 0 {
+		_, _ = w.Write(outcome.Body)
 	}
 }
 
@@ -275,21 +307,21 @@ func unavailable(
 	return Outcome{Kind: OutcomeProceed}, true
 }
 
+// afterInput is what the after phase needs from the before phase: the body as sent to PostgREST,
+// and the table's shape when the manifest has one.
+type afterInput struct {
+	body   []byte
+	shape  TableShape
+	shaped bool
+}
+
 // runAfter fires the after hook once the client already has its answer.
-func runAfter(
-	req *http.Request,
-	target Target,
-	rec *recorder,
-	opts Options,
-	log *logrus.Entry,
-	depth int,
-) {
+func runAfter(req *http.Request, target Target, rec *recorder, opts Options, log *logrus.Entry, depth int, in afterInput) {
 	if rec.status < 200 || rec.status >= 300 {
 		// The write did not happen, so there is nothing to react to.
 		return
 	}
 	cfg := *target.After
-	view := HookConfigView{TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable}
 	log = log.WithFields(logrus.Fields{"event": target.AfterEvent, "function": cfg.Function})
 
 	url, err := opts.ResolveURL(req, cfg.Function)
@@ -298,30 +330,22 @@ func runAfter(
 		return
 	}
 
-	body := map[string]any{
-		"table":     target.Table,
-		"operation": string(target.Operation),
-		"requestId": requestID(req, opts),
-		"user":      claimsFor(req, opts),
-	}
-	if rec.captureBody && rec.body.Len() > 0 {
-		body["rows"] = json.RawMessage(rec.body.Bytes())
-	}
-	if target.Operation == OpDelete || target.Operation == OpUpdate {
-		body["filter"] = req.URL.RawQuery
-	}
-	encoded, err := marshalPayload(body)
-	if err != nil {
-		log.WithError(err).Warn("after hook not called: could not encode the payload")
-		return
-	}
-
 	// Detached from the request context on purpose. The client has its response, and cancelling the
 	// hook because the connection closed would drop side effects the write already earned.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), afterHookTimeout)
 	defer cancel()
 
-	outcome := opts.Dispatcher.Call(ctx, url, target.AfterEvent, view, encoded, depth+1)
+	encoded, err := marshalPayload(afterPayload(ctx, req, target, rec, opts, in))
+	if err != nil {
+		log.WithError(err).Warn("after hook not called: could not encode the payload")
+		return
+	}
+	view := HookConfigView{TimeoutMs: cfg.TimeoutMs, OnUnavailable: cfg.OnUnavailable}
+	logAfterOutcome(log, opts.Dispatcher.Call(ctx, url, target.AfterEvent, view, encoded, depth+1))
+}
+
+// logAfterOutcome logs what an after hook answered, when that is worth a line.
+func logAfterOutcome(log *logrus.Entry, outcome Outcome) {
 	switch outcome.Kind {
 	case OutcomeReject:
 		// An after hook cannot undo a committed write, so a rejection is only a log line. It is worth
@@ -330,6 +354,41 @@ func runAfter(
 	case OutcomeUnavailable:
 		log.WithField("reason", outcome.Reason).Warn("after hook unavailable")
 	}
+}
+
+// afterPayload is the request-path after hook's context.
+//
+// A table with a shape gets its written rows read back by key as the service role where the write
+// pins them, and its restricted columns stripped either way. A table without one keeps the released
+// behaviour: rows only when the caller asked for return=representation.
+func afterPayload(ctx context.Context, req *http.Request, target Target, rec *recorder, opts Options, in afterInput) afterBody {
+	body := afterBody{
+		Table:     target.Table,
+		Operation: target.Operation,
+		RequestID: requestID(req, opts),
+		User:      claimsFor(req, opts),
+	}
+	if in.shaped {
+		body.Rows = opts.AfterRows.rows(ctx, req, target, in.body, rec, in.shape)
+	} else if rec.captureBody && rec.body.Len() > 0 {
+		body.Rows = json.RawMessage(rec.body.Bytes())
+	}
+	if target.Operation == OpDelete || target.Operation == OpUpdate {
+		filter := req.URL.RawQuery
+		body.Filter = &filter
+	}
+	return body
+}
+
+// afterBody is the request-path after hook's payload. Filter is a pointer because an update or
+// delete always carries it, even when it is empty, and an insert never does.
+type afterBody struct {
+	Table     string          `json:"table"`
+	Operation Operation       `json:"operation"`
+	RequestID string          `json:"requestId"`
+	User      *Claims         `json:"user"`
+	Rows      json.RawMessage `json:"rows,omitempty"`
+	Filter    *string         `json:"filter,omitempty"`
 }
 
 func buildPayload(req *http.Request, target Target, body []byte, opts Options) payload {

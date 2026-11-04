@@ -59,6 +59,18 @@ type TenantConfig struct {
 	// paid project's cache off and report the schema as the reason.
 	Cache map[string]proxy.TableCache `json:"cache,omitempty"`
 
+	// Tables is what `supatype push` records about each hooked table: per-event column opt-in,
+	// restricted columns and primary key. Same shape and key as the manifest's `tables`.
+	//
+	// Beside Hooks for the same reason: cloud has no manifest file, so without this a managed
+	// tenant's after hooks could not strip restricted columns and previous() would have no key.
+	Tables map[string]proxy.TableMeta `json:"tables,omitempty"`
+
+	// Validators is the per-field validator map, table then column, as `supatype push` computes
+	// it. Same shape and key as the manifest's `validators`. Without it a managed tenant's field
+	// validators never ran: the schema said the field was checked and every write went through.
+	Validators map[string]proxy.TableValidators `json:"validators,omitempty"`
+
 	// CorsAllowedOrigins is merged into the route manifest when present.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 

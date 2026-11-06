@@ -136,6 +136,23 @@ func TestPublicEnvWithoutAnAnonKeyIs503(t *testing.T) {
 	}
 }
 
+// Without an anon key the script still answers ahead of the dist's own file,
+// with 200 and the reason, so the page can name the fault on its first call.
+func TestPublicEnvScriptWithoutAnAnonKeyCarriesTheReason(t *testing.T) {
+	h := publicEnvMux(t, "static", func(cfg *config.Config) { cfg.AnonKey = "" })
+	rec := getPublicEnv(h, http.MethodGet, "/supatype-env.js")
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.HasPrefix(body, `window.__SUPATYPE_ENV__ = {"error":"`) || !strings.Contains(body, "SUPATYPE_ANON_KEY") {
+		t.Errorf("status %d body %q, want 200 setting an error naming SUPATYPE_ANON_KEY", rec.Code, body)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	if strings.Contains(body, publicEnvService) || strings.Contains(body, "__FROM_DIST__") {
+		t.Errorf("body carries a key or the dist's file: %q", body)
+	}
+}
+
 // SUPATYPE_URL wins over the auth service's external URL, the same precedence
 // the edge functions are given.
 func TestPublicEnvPrefersSupatypeURL(t *testing.T) {

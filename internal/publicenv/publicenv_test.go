@@ -136,17 +136,20 @@ func jwtWithRole(role string) string {
 	return enc([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc([]byte(`{"role":"`+role+`"}`)) + ".sig"
 }
 
-// A deployment that cannot serve correct values says which setting to fix,
-// with 503 and no-store, and never echoes the key it refused.
+// A deployment that cannot serve correct values names every setting to fix,
+// in the order key then URL, with 503 and no-store, and never echoes the key
+// it refused. Naming only the first problem sends the deployer back for each.
 func TestMisconfigurationIs503NamingTheSetting(t *testing.T) {
 	serviceKey := jwtWithRole("service_role")
 	for name, tc := range map[string]struct {
 		mutate func(*Values)
 		names  []string
 	}{
-		"no anon key":             {func(v *Values) { v.AnonKey = "  " }, []string{"SUPATYPE_ANON_KEY"}},
-		"no public URL":           {func(v *Values) { v.URL = "" }, []string{"SUPATYPE_URL", "API_EXTERNAL_URL"}},
-		"a service role anon key": {func(v *Values) { v.AnonKey = serviceKey }, []string{"SUPATYPE_ANON_KEY", "service role key"}},
+		"no anon key":                   {func(v *Values) { v.AnonKey = "  " }, []string{"SUPATYPE_ANON_KEY"}},
+		"no public URL":                 {func(v *Values) { v.URL = "" }, []string{"SUPATYPE_URL", "API_EXTERNAL_URL"}},
+		"a service role anon key":       {func(v *Values) { v.AnonKey = serviceKey }, []string{"SUPATYPE_ANON_KEY", "service role key"}},
+		"no anon key and no URL":        {func(v *Values) { v.AnonKey = ""; v.URL = "" }, []string{"SUPATYPE_ANON_KEY is not set", "SUPATYPE_URL", "SUPATYPE_API_EXTERNAL_URL"}},
+		"a service role key and no URL": {func(v *Values) { v.AnonKey = serviceKey; v.URL = "" }, []string{"service role key", "SUPATYPE_URL", "SUPATYPE_API_EXTERNAL_URL"}},
 	} {
 		v := on()
 		tc.mutate(&v)
@@ -161,10 +164,14 @@ func TestMisconfigurationIs503NamingTheSetting(t *testing.T) {
 				}
 			}
 			body := serve(t, v, http.MethodGet, path).Body.String()
+			rest := body
 			for _, want := range tc.names {
-				if !strings.Contains(body, want) {
-					t.Errorf("%s: %s body %q does not name %s", name, path, body, want)
+				i := strings.Index(rest, want)
+				if i < 0 {
+					t.Errorf("%s: %s body %q does not name %s, or not in order", name, path, body, want)
+					break
 				}
+				rest = rest[i+len(want):]
 			}
 			if strings.Contains(body, serviceKey) || strings.Contains(body, "__SUPATYPE_ENV__") {
 				t.Errorf("%s: %s body carries values: %q", name, path, body)

@@ -41,6 +41,9 @@ const (
 // that looks like a navigation (see wantsSPAFallback): that is served
 // dir/index.html, the SPA client-side routing fallback.
 //
+// A directory, the root included, is served its own index.html. One without
+// an index.html is the same 404, never a listing and never the SPA fallback.
+//
 // Cache headers use CacheOpts (defaults when empty): hashed bundle prefixes get a long immutable
 // cache; .html and "/" get no-cache; SPA fallback uses the HTML policy.
 //
@@ -64,13 +67,46 @@ func Handler(dir string, spa bool, cache CacheOpts) http.Handler {
 			return
 		}
 
-		if !anyRepresentableFile(dir, path) {
+		isDir, hasIndex := directoryIndex(dir, path)
+		switch {
+		case isDir && hasIndex:
+			fs.ServeHTTP(w, r)
+		case isDir:
+			// Without an index.html, http.FileServer would list the directory, and
+			// the SPA fallback would answer a bundle path with the app shell.
+			serveNotFound(w, r, dir)
+		case !anyRepresentableFile(dir, path):
 			serveMiss(w, r, dir, spa, cache)
-			return
+		default:
+			fs.ServeHTTP(w, r)
 		}
-
-		fs.ServeHTTP(w, r)
 	})
+}
+
+// directoryIndex reports whether urlPath names a directory, the site root
+// included, and whether that directory holds an index.html to serve.
+func directoryIndex(dir, urlPath string) (isDir, hasIndex bool) {
+	rel, ok := staticRelPath(urlPath)
+	if !ok {
+		return false, false
+	}
+	if rel == "" {
+		rel = "."
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return false, false
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	fi, err := root.Stat(rel)
+	if err != nil || !fi.IsDir() {
+		return false, false
+	}
+	index, err := root.Stat(filepath.Join(rel, "index.html"))
+	return true, err == nil && index.Mode().IsRegular()
 }
 
 // serveMiss answers a path with no file behind it.
@@ -149,10 +185,8 @@ func anyRepresentableFile(dir, urlPath string) bool {
 		_ = root.Close()
 	}()
 
-	if fi, err := root.Stat(rel); err == nil {
-		if fi.IsDir() || fi.Mode().IsRegular() {
-			return true
-		}
+	if fi, err := root.Stat(rel); err == nil && fi.Mode().IsRegular() {
+		return true
 	}
 	if _, err := root.Stat(rel + ".br"); err == nil {
 		return true

@@ -2,10 +2,16 @@ package auth
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -134,28 +140,40 @@ func (p *CreateSSOProviderParams) validate(forUpdate bool, dev samlDevPolicy) er
 }
 
 func (p *CreateSSOProviderParams) metadata(ctx context.Context) ([]byte, *saml.EntityDescriptor, error) {
-	var rawMetadata []byte
-	var err error
-
-	if p.MetadataXML != "" {
-		rawMetadata = []byte(p.MetadataXML)
-	} else if p.MetadataURL != "" {
-		rawMetadata, err = fetchSAMLMetadata(ctx, p.MetadataURL)
-		if err != nil {
+	rawMetadata := []byte(p.MetadataXML)
+	if p.MetadataURL != "" {
+		var err error
+		if rawMetadata, err = fetchSAMLMetadata(ctx, p.MetadataURL); err != nil {
 			return nil, nil, err
 		}
-	} else {
-		// impossible situation if you called validate() prior
-		return nil, nil, nil
 	}
 
 	metadata, err := parseSAMLMetadata(rawMetadata)
-	if err != nil {
+	var parseErr *samlMetadataParseError
+	if errors.As(err, &parseErr) {
+		return nil, nil, p.notMetadataError().WithInternalError(parseErr.err)
+	} else if err != nil {
 		return nil, nil, err
 	}
 
 	return rawMetadata, metadata, nil
 }
+
+// notMetadataError says the metadata document is not SAML metadata XML, naming
+// the URL it was fetched from when it was fetched.
+func (p *CreateSSOProviderParams) notMetadataError() *apierrors.HTTPError {
+	if p.MetadataURL != "" {
+		return samlMetadataFetchError(p.MetadataURL, "the response is not SAML metadata XML")
+	}
+	return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "metadata_xml is not SAML metadata XML")
+}
+
+// samlMetadataParseError is a metadata document that is not SAML metadata XML
+// at all. The caller turns it into a response that says where the document
+// came from.
+type samlMetadataParseError struct{ err error }
+
+func (e *samlMetadataParseError) Error() string { return e.err.Error() }
 
 func parseSAMLMetadata(rawMetadata []byte) (*saml.EntityDescriptor, error) {
 	if !utf8.Valid(rawMetadata) {
@@ -164,7 +182,7 @@ func parseSAMLMetadata(rawMetadata []byte) (*saml.EntityDescriptor, error) {
 
 	metadata, err := samlsp.ParseMetadata(rawMetadata)
 	if err != nil {
-		return nil, err
+		return nil, &samlMetadataParseError{err: err}
 	}
 
 	if metadata.EntityID == "" {
@@ -182,33 +200,72 @@ func parseSAMLMetadata(rawMetadata []byte) (*saml.EntityDescriptor, error) {
 	return metadata, nil
 }
 
-func fetchSAMLMetadata(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, apierrors.NewInternalServerError("Unable to create a request to metadata_url").WithInternalError(err)
-	}
+// samlMetadataFetchTimeout bounds one fetch of a metadata_url, so an address
+// that drops packets fails the request instead of holding it open.
+var samlMetadataFetchTimeout = 10 * time.Second
 
-	req = req.WithContext(ctx)
+// fetchSAMLMetadata fetches metadataURL from this server. Every failure is a
+// saml_metadata_fetch_failed error naming the host and a short reason; the
+// full error is kept as the internal error, which is logged.
+func fetchSAMLMetadata(ctx context.Context, metadataURL string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, samlMetadataFetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
+	if err != nil {
+		return nil, samlMetadataFetchError(metadataURL, "the URL could not be requested").WithInternalError(err)
+	}
 
 	req.Header.Set("Accept", "application/xml;charset=UTF-8")
 	req.Header.Set("Accept-Charset", "UTF-8")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, samlMetadataFetchError(metadataURL, samlMetadataFetchReason(err)).WithInternalError(err)
 	}
 
 	defer utilities.SafeClose(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLMetadataFetchFailed, "HTTP %v error fetching SAML Metadata from URL '%s'", resp.StatusCode, url)
+		return nil, samlMetadataFetchError(metadataURL, fmt.Sprintf("it answered with HTTP status %d", resp.StatusCode))
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, samlMetadataFetchError(metadataURL, samlMetadataFetchReason(err)).WithInternalError(err)
 	}
 
 	return data, nil
+}
+
+// samlMetadataFetchError says the server could not get SAML metadata from
+// metadataURL. It names only the host: the path and query can carry tokens.
+func samlMetadataFetchError(metadataURL, reason string) *apierrors.HTTPError {
+	host := "metadata_url"
+	if parsed, err := url.Parse(metadataURL); err == nil && parsed.Host != "" {
+		host = parsed.Host
+	}
+	return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLMetadataFetchFailed,
+		"The server could not fetch SAML metadata from %s: %s. The server fetches metadata_url itself, so the URL must be reachable from the server, not only from your machine", host, reason)
+}
+
+// samlMetadataFetchReason names why a request to a metadata URL failed,
+// without any detail from the response.
+func samlMetadataFetchReason(err error) string {
+	var dnsErr *net.DNSError
+	var certErr *tls.CertificateVerificationError
+	var netErr net.Error
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.As(err, &dnsErr):
+		return "the host name could not be resolved"
+	case errors.As(err, &certErr):
+		return "its TLS certificate is not trusted"
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
+		return fmt.Sprintf("timed out after %s", samlMetadataFetchTimeout)
+	default:
+		return "the request failed"
+	}
 }
 
 // adminSSOProvidersCreate creates a new SAML Identity Provider in the system.

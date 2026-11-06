@@ -31,6 +31,7 @@ import (
 //	Auth users administration                     yes      yes       no      no
 //	Project keys                                  yes      yes       no      no
 //	Studio members (granting Studio roles)        yes      no        no      no
+//	SSO providers and their domains, changes      yes      no        no      no
 //	Realtime Inspector (channels, stream, test)   yes      yes       no      no
 //	Administration (admin API, control plane)     yes      yes       no      no
 //
@@ -66,7 +67,9 @@ type StudioPermissions struct {
 	// ManageBuckets covers creating, changing and deleting storage buckets.
 	// Listing them is Read, since browsing files starts there.
 	ManageBuckets bool `json:"manageBuckets"`
-	// ManageMembers covers Studio membership: granting and revoking Studio roles.
+	// ManageMembers covers Studio membership: granting and revoking Studio roles,
+	// and changing SSO providers and verifying their domains, which decide who
+	// may sign in as whom.
 	ManageMembers bool `json:"manageMembers"`
 	// Administer covers service-role administration: the admin API, the
 	// self-host control plane, function administration, and any route no other
@@ -150,6 +153,12 @@ func allowsNamedRoute(perms StudioPermissions, method, path string) (allowed, na
 		return allowsMetadata(perms, method, path), true
 	case under(path, "/admin/studio-members"):
 		return perms.ManageMembers || (isReadOnly(method) && perms.SchemaView), true
+	// SSO providers decide which identity provider may sign people in, and as
+	// whom, so changing them or verifying their domains goes with granting
+	// Studio roles (owner decision 2026-11-06). Reading them is user
+	// administration, below.
+	case under(path, "/auth/v1/admin/sso") && !isReadOnly(method):
+		return perms.ManageMembers, true
 	// The project's own users are a separate capability from content rows.
 	case under(path, "/auth/v1"):
 		return perms.ManageUsers, true

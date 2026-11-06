@@ -85,13 +85,17 @@ type CreateSSOProviderParams struct {
 	MetadataXML      string                      `json:"metadata_xml"`
 	Domains          []string                    `json:"domains"`
 	AttributeMapping models.SAMLAttributeMapping `json:"attribute_mapping"`
-	NameIDFormat     string                      `json:"name_id_format"`
+	// NameIDFormat is nil when the request leaves it out, which on update
+	// keeps the stored format; an empty value clears it.
+	NameIDFormat *string `json:"name_id_format"`
 
 	ResourceID *string `json:"resource_id,omitempty"`
 	Disabled   *bool   `json:"disabled,omitempty"`
 }
 
-func (p *CreateSSOProviderParams) validate(forUpdate bool) error {
+// validate checks the parameters. The dev policy decides which metadata_url
+// schemes are accepted.
+func (p *CreateSSOProviderParams) validate(forUpdate bool, dev samlDevPolicy) error {
 	if !forUpdate && p.Type != "saml" {
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Only 'saml' supported for SSO provider type")
 	} else if p.MetadataURL != "" && p.MetadataXML != "" {
@@ -104,12 +108,12 @@ func (p *CreateSSOProviderParams) validate(forUpdate bool) error {
 			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "metadata_url is not a valid URL")
 		}
 
-		if metadataURL.Scheme != "https" {
+		if !dev.allowsMetadataScheme(metadataURL.Scheme) {
 			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "metadata_url is not a HTTPS URL")
 		}
 	}
 
-	switch p.NameIDFormat {
+	switch utilities.StringValue(p.NameIDFormat) {
 	case "",
 		string(saml.PersistentNameIDFormat),
 		string(saml.EmailAddressNameIDFormat),
@@ -217,7 +221,7 @@ func (a *API) adminSSOProvidersCreate(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 
-	if err := params.validate(false /* <- forUpdate */); err != nil {
+	if err := params.validate(false /* <- forUpdate */, a.samlDev); err != nil {
 		return err
 	}
 
@@ -252,9 +256,7 @@ func (a *API) adminSSOProvidersCreate(w http.ResponseWriter, r *http.Request) er
 	if params.MetadataURL != "" {
 		provider.SAMLProvider.MetadataURL = &params.MetadataURL
 	}
-	if params.NameIDFormat != "" {
-		provider.SAMLProvider.NameIDFormat = &params.NameIDFormat
-	}
+	provider.SAMLProvider.NameIDFormat = utilities.StringPtr(utilities.StringValue(params.NameIDFormat))
 
 	provider.SAMLProvider.AttributeMapping = params.AttributeMapping
 
@@ -302,7 +304,7 @@ func (a *API) adminSSOProvidersUpdate(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 
-	if err := params.validate(true /* <- forUpdate */); err != nil {
+	if err := params.validate(true /* <- forUpdate */, a.samlDev); err != nil {
 		return err
 	}
 
@@ -377,19 +379,10 @@ func (a *API) adminSSOProvidersUpdate(w http.ResponseWriter, r *http.Request) er
 		}
 	}
 
-	nameIDFormat := ""
-	if provider.SAMLProvider.NameIDFormat != nil {
-		nameIDFormat = *provider.SAMLProvider.NameIDFormat
-	}
-
-	if params.NameIDFormat != nameIDFormat {
+	if params.NameIDFormat != nil && updateNameIDFormat(&provider.SAMLProvider, *params.NameIDFormat) {
+		// The format is a column of the SAML provider, saved with it.
 		modified = true
-
-		if params.NameIDFormat == "" {
-			provider.SAMLProvider.NameIDFormat = nil
-		} else {
-			provider.SAMLProvider.NameIDFormat = &params.NameIDFormat
-		}
+		updateSAMLProvider = true
 	}
 
 	if params.ResourceID != nil {
@@ -443,6 +436,16 @@ func (a *API) adminSSOProvidersUpdate(w http.ResponseWriter, r *http.Request) er
 	}
 
 	return sendJSON(w, http.StatusOK, provider)
+}
+
+// updateNameIDFormat sets the provider's NameID format, clearing it when
+// format is empty, and reports whether that changed it.
+func updateNameIDFormat(provider *models.SAMLProvider, format string) bool {
+	if format == utilities.StringValue(provider.NameIDFormat) {
+		return false
+	}
+	provider.NameIDFormat = utilities.StringPtr(format)
+	return true
 }
 
 // adminSSOProvidersDelete deletes a SAML identity provider.

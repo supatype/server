@@ -743,3 +743,147 @@ func (ts *SSOTestSuite) TestSingleSignOn() {
 func TestSSOCreateParamsValidation(t *testing.T) {
 	// TODO
 }
+
+// serveSAMLMetadata serves IdP metadata for entityID over plain HTTP, as a
+// local test identity provider does.
+func (ts *SSOTestSuite) serveSAMLMetadata(entityID string) string {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(validSAMLIDPMetadata(entityID)))
+	}))
+	ts.T().Cleanup(server.Close)
+	return server.URL + "/metadata"
+}
+
+// inMode runs the rest of the test with SUPATYPE_MODE set to mode, and the
+// SAML dev policy an API started in that mode has.
+func (ts *SSOTestSuite) inMode(mode string) {
+	previousMode, previousPolicy := ts.Config.Mode, ts.API.samlDev
+	ts.Config.Mode = mode
+	ts.API.samlDev = newSAMLDevPolicy(ts.Config)
+	ts.T().Cleanup(func() {
+		ts.Config.Mode = previousMode
+		ts.API.samlDev = previousPolicy
+	})
+}
+
+func (ts *SSOTestSuite) adminSSORequest(method, path string, body map[string]interface{}) *httptest.ResponseRecorder {
+	encoded, err := json.Marshal(body)
+	require.NoError(ts.T(), err)
+	req := httptest.NewRequest(method, "http://localhost/admin/sso/providers"+path, bytes.NewBuffer(encoded))
+	req.Header.Set("Authorization", "Bearer "+ts.AdminJWT)
+	w := httptest.NewRecorder()
+	ts.API.handler.ServeHTTP(w, req)
+	return w
+}
+
+// A local identity provider is usually served over plain HTTP, so in dev mode
+// an http metadata_url is accepted. Every other mode requires HTTPS, and no
+// mode accepts another scheme.
+func (ts *SSOTestSuite) TestAdminCreateSSOProviderHTTPMetadataURL() {
+	ts.Run("NotDev", func() {
+		ts.inMode("standalone")
+		w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+			"type":         "saml",
+			"metadata_url": ts.serveSAMLMetadata("http://idp.local/create-not-dev"),
+		})
+		require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+		require.Contains(ts.T(), w.Body.String(), "metadata_url is not a HTTPS URL")
+	})
+
+	ts.Run("Dev", func() {
+		ts.inMode("dev")
+		w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+			"type":         "saml",
+			"metadata_url": ts.serveSAMLMetadata("http://idp.local/create-dev"),
+		})
+		require.Equal(ts.T(), http.StatusCreated, w.Code, w.Body.String())
+	})
+
+	ts.Run("DevOtherScheme", func() {
+		ts.inMode("dev")
+		w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+			"type":         "saml",
+			"metadata_url": "file:///etc/passwd",
+		})
+		require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+	})
+}
+
+func (ts *SSOTestSuite) TestAdminUpdateSSOProviderHTTPMetadataURL() {
+	const entityID = "http://idp.local/update"
+	w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+		"type":         "saml",
+		"metadata_xml": validSAMLIDPMetadata(entityID),
+	})
+	require.Equal(ts.T(), http.StatusCreated, w.Code, w.Body.String())
+	var provider struct {
+		ID string `json:"id"`
+	}
+	require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &provider))
+	metadataURL := ts.serveSAMLMetadata(entityID)
+
+	ts.Run("NotDev", func() {
+		ts.inMode("")
+		w := ts.adminSSORequest(http.MethodPut, "/"+provider.ID, map[string]interface{}{"metadata_url": metadataURL})
+		require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+		require.Contains(ts.T(), w.Body.String(), "metadata_url is not a HTTPS URL")
+	})
+
+	ts.Run("Dev", func() {
+		ts.inMode("dev")
+		w := ts.adminSSORequest(http.MethodPut, "/"+provider.ID, map[string]interface{}{"metadata_url": metadataURL})
+		require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+		require.Contains(ts.T(), w.Body.String(), metadataURL)
+	})
+}
+
+// An update changes only what it names: a PUT without name_id_format keeps the
+// stored one, and an explicit empty value clears it.
+func (ts *SSOTestSuite) TestAdminUpdateSSOProviderNameIDFormat() {
+	const (
+		emailFormat      = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+		persistentFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	)
+	w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+		"type":           "saml",
+		"metadata_xml":   validSAMLIDPMetadata("https://idp.example.com/name-id-format"),
+		"name_id_format": emailFormat,
+	})
+	require.Equal(ts.T(), http.StatusCreated, w.Code, w.Body.String())
+
+	type nameIDProvider struct {
+		ID   string `json:"id"`
+		SAML struct {
+			NameIDFormat *string `json:"name_id_format"`
+		} `json:"saml"`
+	}
+	var created nameIDProvider
+	require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &created))
+	require.NotNil(ts.T(), created.SAML.NameIDFormat)
+
+	update := func(body map[string]interface{}) *string {
+		w := ts.adminSSORequest(http.MethodPut, "/"+created.ID, body)
+		require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+		var updated nameIDProvider
+		require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &updated))
+		return updated.SAML.NameIDFormat
+	}
+
+	// The attribute mapping is saved with the SAML settings, so this is the
+	// update that used to write the cleared format.
+	for _, body := range []map[string]interface{}{
+		{"domains": []string{"name-id-format.example.com"}},
+		{"attribute_mapping": map[string]interface{}{"keys": map[string]interface{}{"email": map[string]interface{}{"name": "mail"}}}},
+	} {
+		kept := update(body)
+		require.NotNil(ts.T(), kept, "omitting name_id_format keeps it: %v", body)
+		require.Equal(ts.T(), emailFormat, *kept)
+	}
+
+	changed := update(map[string]interface{}{"name_id_format": persistentFormat})
+	require.NotNil(ts.T(), changed, "name_id_format on its own is saved")
+	require.Equal(ts.T(), persistentFormat, *changed)
+
+	require.Nil(ts.T(), update(map[string]interface{}{"name_id_format": ""}), "an empty name_id_format clears it")
+}

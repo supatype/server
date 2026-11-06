@@ -1172,11 +1172,12 @@ func populateGlobal(config *GlobalConfiguration) error {
 	}
 
 	if config.SAML.Enabled {
-		if err := config.SAML.PopulateFields(config.API.ExternalURL); err != nil {
+		if err := config.SAML.PopulateFields(); err != nil {
 			return err
 		}
 	} else {
 		config.SAML.PrivateKey = ""
+		config.SAML.NextPrivateKey = ""
 	}
 
 	if config.Sms.Provider != "" {
@@ -1381,6 +1382,11 @@ func (config *GlobalConfiguration) applyDefaultsJWTPrivateKey(privKey jwk.Key) e
 		PrivateKey: privKey,
 	}
 	return nil
+}
+
+// IsDevMode reports whether SUPATYPE_MODE is "dev". Unset is not dev.
+func (c *GlobalConfiguration) IsDevMode() bool {
+	return strings.TrimSpace(c.Mode) == "dev"
 }
 
 // Validate validates all of configuration.

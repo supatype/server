@@ -148,11 +148,11 @@ func TestE2EAdmin(t *testing.T) {
 					require.Equal(t, len(params.Domains), len(pr.SSODomains))
 				}
 
-				if params.NameIDFormat != "" {
+				if params.NameIDFormat != nil && *params.NameIDFormat != "" {
 					require.NotNil(t, pr.SAMLProvider.NameIDFormat)
 					require.Equal(t,
 						*pr.SAMLProvider.NameIDFormat,
-						params.NameIDFormat)
+						*params.NameIDFormat)
 				}
 
 				if len(params.Domains) > 0 {
@@ -376,7 +376,7 @@ func TestE2EAdmin(t *testing.T) {
 					AttributeMapping: models.SAMLAttributeMapping{
 						Keys: getTestAttributes(),
 					},
-					NameIDFormat: string(saml.EmailAddressNameIDFormat),
+					NameIDFormat: new(string(saml.EmailAddressNameIDFormat)),
 				}
 				createRes := createProvider(t, createReq)
 				equalProviderParams(t, createReq, createRes)
@@ -437,7 +437,7 @@ func TestE2EAdmin(t *testing.T) {
 							AttributeMapping: models.SAMLAttributeMapping{
 								Keys: getTestAttributes(),
 							},
-							NameIDFormat: string(saml.EmailAddressNameIDFormat),
+							NameIDFormat: new(string(saml.EmailAddressNameIDFormat)),
 						}
 
 						createRes := createProvider(t, createReq)

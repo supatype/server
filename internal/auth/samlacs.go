@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -203,16 +204,12 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	serviceProvider := a.getSAMLServiceProvider(idpMetadata, initiatedBy == "idp")
 	// Every caller of ParseResponse must set a ReplayCache, or replays pass.
 	serviceProvider.ReplayCache = samlReplayCache{db: db, ssoProviderID: ssoProvider.ID}
-	spAssertion, err := serviceProvider.ParseResponse(r, requestIds)
+	spAssertion, err := a.parseSAMLResponse(r, serviceProvider, requestIds)
 	if err != nil {
 		// The error is sent back to the browser in a redirect URL, so it names
 		// no part of the response: the whole signed response would land in
 		// browser history and access logs, and can exceed URL length limits.
 		// The reason the library refused it is logged as the internal error.
-		var ire *saml.InvalidResponseError
-		if errors.As(err, &ire) {
-			err = ire.PrivateErr
-		}
 		if errors.Is(err, saml.ErrAssertionReplayed) {
 			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used").WithInternalError(err)
 		}
@@ -381,6 +378,72 @@ type samlReplayCache struct {
 
 func (c samlReplayCache) Consume(assertionID string, expiresAt time.Time) error {
 	return models.ConsumeSAMLAssertion(c.db, c.ssoProviderID, assertionID, expiresAt)
+}
+
+// parseSAMLResponse validates the IdP's response and returns its assertion.
+// While a key rotation is in progress an IdP may already encrypt to the next
+// key, so a response carrying an encrypted assertion the current key cannot
+// open is parsed again with the next key. Requests stay signed with the
+// current key either way.
+//
+// An artifact is resolved by the library, and resolving it again for a second
+// attempt would ask the IdP for an artifact it has already handed out, so a
+// response sent by artifact is parsed with the current key only.
+//
+// The error is the reason the library refused the response, which is logged,
+// never sent to the browser.
+func (a *API) parseSAMLResponse(r *http.Request, serviceProvider *saml.ServiceProvider, requestIDs []string) (*saml.Assertion, error) {
+	assertion, err := serviceProvider.ParseResponse(r, requestIDs)
+	if err == nil {
+		return assertion, nil
+	}
+
+	nextKey := a.config.SAML.NextRSAPrivateKey
+	if nextKey == nil || r.FormValue("SAMLart") != "" || !samlResponseIsEncrypted(r.PostForm.Get("SAMLResponse")) {
+		return nil, samlPrivateError(err)
+	}
+
+	withNextKey := *serviceProvider
+	withNextKey.Key = nextKey
+	withNextKey.Certificate = a.config.SAML.NextCertificate
+	assertion, nextErr := withNextKey.ParseResponse(r, requestIDs)
+	if nextErr == nil {
+		return assertion, nil
+	}
+	return nil, errors.Join(
+		fmt.Errorf("with the current key: %w", samlPrivateError(err)),
+		fmt.Errorf("with the next key: %w", samlPrivateError(nextErr)),
+	)
+}
+
+// samlPrivateError is the reason inside the library's InvalidResponseError,
+// whose own message is deliberately uninformative.
+func samlPrivateError(err error) error {
+	var ire *saml.InvalidResponseError
+	if errors.As(err, &ire) && ire.PrivateErr != nil {
+		return ire.PrivateErr
+	}
+	return err
+}
+
+// samlResponseIsEncrypted reports whether the base64 SAMLResponse holds an
+// EncryptedAssertion. It only scans tokens; the library validates the
+// response.
+func samlResponseIsEncrypted(samlResponse string) bool {
+	responseXML, err := base64.StdEncoding.DecodeString(samlResponse)
+	if err != nil {
+		return false
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(responseXML)) // #nosec G709 -- token scan only; the response is validated by github.com/supatype/saml.
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		if start, ok := tok.(xml.StartElement); ok && start.Name.Local == "EncryptedAssertion" {
+			return true
+		}
+	}
 }
 
 func samlResponseIssuer(responseXML []byte) (string, error) {

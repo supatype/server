@@ -56,6 +56,41 @@ func (a *API) getSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
 	return &provider
 }
 
+// samlKeyDescriptors lists the certificates the SP metadata publishes: the
+// current key's, from the metadata the library already wrote for it, and,
+// while a rotation is in progress, the next key's. Each is listed for signing,
+// and for encryption only when encrypted assertions are allowed.
+func (a *API) samlKeyDescriptors(serviceProvider *saml.ServiceProvider, metadata *saml.EntityDescriptor) []saml.KeyDescriptor {
+	written := spKeyDescriptors(metadata)
+	if a.config.SAML.NextCertificate != nil {
+		// The library writes the descriptors of the certificate it holds.
+		// The next certificate belongs in the supatype/saml fork's
+		// Metadata(), with the extra keys carrying their certificates; this
+		// copy goes once the fork does that.
+		next := *serviceProvider
+		next.Certificate = a.config.SAML.NextCertificate
+		written = append(written, spKeyDescriptors(next.Metadata())...)
+	}
+
+	var keyDescriptors []saml.KeyDescriptor
+	for _, kd := range written {
+		if kd.Use == "signing" || (a.config.SAML.AllowEncryptedAssertions && kd.Use == "encryption") {
+			keyDescriptors = append(keyDescriptors, kd)
+		}
+	}
+	return keyDescriptors
+}
+
+// spKeyDescriptors collects the key descriptors of the metadata's SP
+// descriptors into a new slice.
+func spKeyDescriptors(metadata *saml.EntityDescriptor) []saml.KeyDescriptor {
+	var keyDescriptors []saml.KeyDescriptor
+	for _, spd := range metadata.SPSSODescriptors {
+		keyDescriptors = append(keyDescriptors, spd.KeyDescriptors...)
+	}
+	return keyDescriptors
+}
+
 // SAMLMetadata serves the SAML Service Provider metadata file.
 func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
 	serviceProvider := a.getSAMLServiceProvider(nil, true)
@@ -67,6 +102,7 @@ func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
 		metadata.ValidUntil = time.Now().UTC().AddDate(5, 0, 0)
 	}
 
+	keyDescriptors := a.samlKeyDescriptors(serviceProvider, metadata)
 	for i := range metadata.SPSSODescriptors {
 		// we set this to false since the IdP initiated flow can only
 		// sign the Assertion, and not the full Request
@@ -79,21 +115,8 @@ func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
 			saml.EmailAddressNameIDFormat,
 			saml.PersistentNameIDFormat,
 		}
-	}
 
-	for i := range metadata.SPSSODescriptors {
-		spd := &metadata.SPSSODescriptors[i]
-
-		var keyDescriptors []saml.KeyDescriptor
-
-		for _, kd := range spd.KeyDescriptors {
-			// only advertize key as usable for encryption if allowed
-			if kd.Use == "signing" || (a.config.SAML.AllowEncryptedAssertions && kd.Use == "encryption") {
-				keyDescriptors = append(keyDescriptors, kd)
-			}
-		}
-
-		spd.KeyDescriptors = keyDescriptors
+		metadata.SPSSODescriptors[i].KeyDescriptors = keyDescriptors
 	}
 
 	metadataXML, err := xml.Marshal(metadata)

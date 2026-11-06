@@ -4,7 +4,6 @@ import (
 	tst "testing"
 
 	"encoding/xml"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/supatype/saml"
@@ -345,21 +344,4 @@ func TestSAMLAssertionProcessing(t *tst.T) {
 			require.Equal(t, example.expected, result, "example %d had different processing", i)
 		})
 	}
-}
-
-func TestSAMLAssertionAcceptableUntil(t *tst.T) {
-	conditionsEnd := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
-	confirmationEnd := conditionsEnd.Add(2 * time.Minute)
-
-	a := SAMLAssertion{&saml.Assertion{
-		Conditions: &saml.Conditions{NotOnOrAfter: conditionsEnd},
-		Subject: &saml.Subject{SubjectConfirmations: []saml.SubjectConfirmation{
-			{SubjectConfirmationData: &saml.SubjectConfirmationData{NotOnOrAfter: confirmationEnd}},
-			{},
-		}},
-	}}
-	require.Equal(t, confirmationEnd.Add(saml.MaxClockSkew), a.AcceptableUntil())
-
-	a = SAMLAssertion{&saml.Assertion{Conditions: &saml.Conditions{NotOnOrAfter: conditionsEnd}}}
-	require.Equal(t, conditionsEnd.Add(saml.MaxClockSkew), a.AcceptableUntil())
 }

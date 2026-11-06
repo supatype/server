@@ -189,25 +189,3 @@ func (a *SAMLAssertion) NotAfter() time.Time {
 
 	return notOnOrAfter
 }
-
-// AcceptableUntil returns a time after which the SAML library refuses this
-// assertion: the latest NotOnOrAfter of its Conditions and subject
-// confirmations, plus the clock skew the library allows. A record of the
-// assertion kept until then outlives every chance to replay it.
-func (a *SAMLAssertion) AcceptableUntil() time.Time {
-	var latest time.Time
-
-	if a.Conditions != nil {
-		latest = a.Conditions.NotOnOrAfter
-	}
-	if a.Subject != nil {
-		for _, confirmation := range a.Subject.SubjectConfirmations {
-			data := confirmation.SubjectConfirmationData
-			if data != nil && data.NotOnOrAfter.After(latest) {
-				latest = data.NotOnOrAfter
-			}
-		}
-	}
-
-	return latest.Add(saml.MaxClockSkew).UTC()
-}

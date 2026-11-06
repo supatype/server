@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/supatype/saml"
 	"github.com/supatype/saml/samlsp"
 )
@@ -52,6 +53,9 @@ func (a *API) getSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
 	})
 
 	provider.AuthnNameIDFormat = saml.PersistentNameIDFormat
+	// The library signs with RSA-SHA1 by default, which identity providers
+	// increasingly refuse.
+	provider.SignatureMethod = dsig.RSASHA256SignatureMethod
 
 	return &provider
 }

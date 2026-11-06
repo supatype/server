@@ -64,14 +64,25 @@ func newSAMLTestIdP(t *testing.T, entityID string) *samlTestIdP {
 }
 
 func (idp *samlTestIdP) metadataXML() string {
+	return idp.metadataXMLWithArtifactResolver("")
+}
+
+// metadataXMLWithArtifactResolver is the IdP's metadata, listing an artifact
+// resolution endpoint at location when location is not empty.
+func (idp *samlTestIdP) metadataXMLWithArtifactResolver(location string) string {
+	resolver := ""
+	if location != "" {
+		resolver = fmt.Sprintf(`
+    <md:ArtifactResolutionService Binding="urn:oasis:names:tc:SAML:2.0:bindings:SOAP" Location="%s" index="0"/>`, location)
+	}
 	return fmt.Sprintf(`<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="%[1]s">
   <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
     <md:KeyDescriptor use="signing">
       <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>%[2]s</ds:X509Certificate></ds:X509Data></ds:KeyInfo>
     </md:KeyDescriptor>
-    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="%[1]s/sso"/>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="%[1]s/sso"/>%[3]s
   </md:IDPSSODescriptor>
-</md:EntityDescriptor>`, idp.entityID, idp.certB64)
+</md:EntityDescriptor>`, idp.entityID, idp.certB64, resolver)
 }
 
 // samlTestAssertion holds the parts of an assertion a test varies, as raw XML
@@ -95,6 +106,13 @@ func (idp *samlTestIdP) response(t *testing.T, acsURL string, a samlTestAssertio
 // certificate, as an IdP does when the SP publishes an encryption key.
 func (idp *samlTestIdP) encryptedResponse(t *testing.T, acsURL string, a samlTestAssertion, certificate *x509.Certificate) string {
 	t.Helper()
+	return idp.wrapResponse(t, acsURL, a.ID, idp.encryptedAssertion(t, a, certificate))
+}
+
+// encryptedAssertion is the signed assertion a describes, encrypted to
+// certificate.
+func (idp *samlTestIdP) encryptedAssertion(t *testing.T, a samlTestAssertion, certificate *x509.Certificate) *etree.Element {
+	t.Helper()
 	assertion := etree.NewDocument()
 	assertion.SetRoot(idp.signedAssertion(t, a))
 	plaintext, err := assertion.WriteToBytes()
@@ -106,7 +124,7 @@ func (idp *samlTestIdP) encryptedResponse(t *testing.T, acsURL string, a samlTes
 
 	encryptedAssertion := etree.NewElement("saml:EncryptedAssertion")
 	encryptedAssertion.AddChild(encryptedData)
-	return idp.wrapResponse(t, acsURL, a.ID, encryptedAssertion)
+	return encryptedAssertion
 }
 
 // signedAssertion is the assertion a describes, signed by the IdP.
@@ -117,8 +135,13 @@ func (idp *samlTestIdP) signedAssertion(t *testing.T, a samlTestAssertion) *etre
 	require.NoError(t, doc.ReadFromString(fmt.Sprintf(
 		`<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s" Version="2.0" IssueInstant="%s"><saml:Issuer>%s</saml:Issuer>%s%s%s</saml:Assertion>`,
 		a.ID, now, idp.entityID, a.Subject, a.Conditions, a.Statements)))
+	return idp.signEnveloped(t, doc.Root())
+}
 
-	signed, err := idp.signer.SignEnveloped(doc.Root())
+// signEnveloped signs el as the IdP.
+func (idp *samlTestIdP) signEnveloped(t *testing.T, el *etree.Element) *etree.Element {
+	t.Helper()
+	signed, err := idp.signer.SignEnveloped(el)
 	require.NoError(t, err)
 	// SignEnveloped appends the Signature; the schema places it after Issuer.
 	sig := signed.RemoveChildAt(len(signed.Child) - 1)
@@ -126,25 +149,36 @@ func (idp *samlTestIdP) signedAssertion(t *testing.T, a samlTestAssertion) *etre
 	return signed
 }
 
-// wrapResponse puts assertion in an unsigned Response addressed to acsURL,
-// base64 encoded as the HTTP-POST binding sends it.
+// protocolMessage is a SAML protocol message named name from the IdP, with
+// the header each one carries: namespaces, ID, version, issue time, Issuer and
+// a success Status.
+func (idp *samlTestIdP) protocolMessage(name, id string) *etree.Element {
+	msg := etree.NewElement(name)
+	msg.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
+	msg.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
+	msg.CreateAttr("ID", id)
+	msg.CreateAttr("Version", "2.0")
+	msg.CreateAttr("IssueInstant", time.Now().UTC().Format(time.RFC3339))
+	msg.CreateElement("saml:Issuer").SetText(idp.entityID)
+	msg.CreateElement("samlp:Status").CreateElement("samlp:StatusCode").
+		CreateAttr("Value", "urn:oasis:names:tc:SAML:2.0:status:Success")
+	return msg
+}
+
+// responseElement puts assertion in an unsigned Response addressed to acsURL.
+func (idp *samlTestIdP) responseElement(acsURL, id string, assertion *etree.Element) *etree.Element {
+	resp := idp.protocolMessage("samlp:Response", "response-"+id)
+	resp.CreateAttr("Destination", acsURL)
+	resp.AddChild(assertion)
+	return resp
+}
+
+// wrapResponse is responseElement base64 encoded as the HTTP-POST binding
+// sends it.
 func (idp *samlTestIdP) wrapResponse(t *testing.T, acsURL, id string, assertion *etree.Element) string {
 	t.Helper()
-	now := time.Now().UTC().Format(time.RFC3339)
-	resp := etree.NewElement("samlp:Response")
-	resp.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
-	resp.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
-	resp.CreateAttr("ID", "response-"+id)
-	resp.CreateAttr("Version", "2.0")
-	resp.CreateAttr("IssueInstant", now)
-	resp.CreateAttr("Destination", acsURL)
-	resp.CreateElement("saml:Issuer").SetText(idp.entityID)
-	resp.CreateElement("samlp:Status").CreateElement("samlp:StatusCode").
-		CreateAttr("Value", "urn:oasis:names:tc:SAML:2.0:status:Success")
-	resp.AddChild(assertion)
-
 	out := etree.NewDocument()
-	out.SetRoot(resp)
+	out.SetRoot(idp.responseElement(acsURL, id, assertion))
 	xml, err := out.WriteToBytes()
 	require.NoError(t, err)
 	return base64.StdEncoding.EncodeToString(xml)
@@ -199,8 +233,18 @@ func samlTime(offset time.Duration) string {
 // subject wraps nameID, which may be empty, with a bearer confirmation for
 // the ACS.
 func (ts *SAMLACSTestSuite) subject(nameID string) string {
-	return fmt.Sprintf(`<saml:Subject>%s<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData NotOnOrAfter="%s" Recipient="%s"/></saml:SubjectConfirmation></saml:Subject>`,
-		nameID, samlTime(5*time.Minute), ts.ACSURL)
+	return ts.subjectInResponseTo(nameID, "")
+}
+
+// subjectInResponseTo is subject confirming an answer to the AuthnRequest
+// requestID, or to none when requestID is empty.
+func (ts *SAMLACSTestSuite) subjectInResponseTo(nameID, requestID string) string {
+	inResponseTo := ""
+	if requestID != "" {
+		inResponseTo = fmt.Sprintf(` InResponseTo="%s"`, requestID)
+	}
+	return fmt.Sprintf(`<saml:Subject>%s<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData%s NotOnOrAfter="%s" Recipient="%s"/></saml:SubjectConfirmation></saml:Subject>`,
+		nameID, inResponseTo, samlTime(5*time.Minute), ts.ACSURL)
 }
 
 // conditions is a currently valid Conditions element holding inner.
@@ -227,9 +271,9 @@ func (ts *SAMLACSTestSuite) victimAssertion(id string) samlTestAssertion {
 	}
 }
 
-// acsRequest is the HTTP-POST binding's form carrying samlResponse to target.
-func acsRequest(target, samlResponse string) *http.Request {
-	form := url.Values{"SAMLResponse": {samlResponse}}
+// acsRequest posts form to target, as the HTTP-POST binding and the artifact
+// binding both do.
+func acsRequest(target string, form url.Values) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return req
@@ -237,8 +281,13 @@ func acsRequest(target, samlResponse string) *http.Request {
 
 // postACS posts an IdP-initiated response and returns the redirect Location.
 func (ts *SAMLACSTestSuite) postACS(samlResponse string) *url.URL {
+	return ts.postACSForm(url.Values{"SAMLResponse": {samlResponse}})
+}
+
+// postACSForm posts form to the ACS and returns the redirect Location.
+func (ts *SAMLACSTestSuite) postACSForm(form url.Values) *url.URL {
 	w := httptest.NewRecorder()
-	ts.API.handler.ServeHTTP(w, acsRequest("http://localhost/sso/saml/acs", samlResponse))
+	ts.API.handler.ServeHTTP(w, acsRequest("http://localhost/sso/saml/acs", form))
 
 	require.Contains(ts.T(), []int{http.StatusFound, http.StatusSeeOther}, w.Code,
 		"the ACS answers with a redirect, not a crash: %d %s", w.Code, w.Body.String())
@@ -283,7 +332,7 @@ func (ts *SAMLACSTestSuite) libraryError(samlResponse string) string {
 	require.NoError(ts.T(), err)
 	sp := ts.API.getSAMLServiceProvider(metadata, true)
 
-	req := acsRequest(ts.ACSURL, samlResponse)
+	req := acsRequest(ts.ACSURL, url.Values{"SAMLResponse": {samlResponse}})
 	// ParseResponse reads PostForm, which the ACS has already parsed by now.
 	require.NoError(ts.T(), req.ParseForm())
 	_, err = sp.ParseResponse(req, nil)

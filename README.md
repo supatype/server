@@ -143,9 +143,9 @@ SAML single sign-on (the service provider side of `/auth/v1/sso`):
   providers keep trusting it; only a new key does.
 - Key rotation: set `SUPATYPE_SAML_NEXT_PRIVATE_KEY` (same format) to the new key. While it is set,
   the metadata lists both certificates, AuthnRequests are still signed with the current key, and an
-  assertion encrypted to either key is accepted (for the HTTP-POST binding; an artifact response is
-  read with the current key only). Once every identity provider has the new certificate, move the
-  new key to `SUPATYPE_SAML_PRIVATE_KEY` and clear `SUPATYPE_SAML_NEXT_PRIVATE_KEY`.
+  assertion encrypted to either key is accepted, by the HTTP-POST and artifact bindings alike. Once
+  every identity provider has the new certificate, move the new key to `SUPATYPE_SAML_PRIVATE_KEY`
+  and clear `SUPATYPE_SAML_NEXT_PRIVATE_KEY`.
 - An identity provider registered by `metadata_url` must use HTTPS, except when `SUPATYPE_MODE=dev`,
   where `http` is accepted too, for a local test identity provider.
 

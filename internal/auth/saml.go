@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/rsa"
 	"encoding/xml"
 	"net/http"
 	"net/url"
@@ -53,6 +54,11 @@ func (a *API) getSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
 	})
 
 	provider.AuthnNameIDFormat = saml.PersistentNameIDFormat
+	// While a key rotation is in progress an IdP may already encrypt to the
+	// next key. Requests stay signed with the current key.
+	if a.config.SAML.NextRSAPrivateKey != nil {
+		provider.DecryptionKeys = []*rsa.PrivateKey{a.config.SAML.NextRSAPrivateKey}
+	}
 	// The library signs with RSA-SHA1 by default, which identity providers
 	// increasingly refuse.
 	provider.SignatureMethod = dsig.RSASHA256SignatureMethod

@@ -201,6 +201,8 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	serviceProvider := a.getSAMLServiceProvider(idpMetadata, initiatedBy == "idp")
+	// Every caller of ParseResponse must set a ReplayCache, or replays pass.
+	serviceProvider.ReplayCache = samlReplayCache{db: db, ssoProviderID: ssoProvider.ID}
 	spAssertion, err := serviceProvider.ParseResponse(r, requestIds)
 	if err != nil {
 		// The error is sent back to the browser in a redirect URL, so it names
@@ -211,16 +213,15 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		if errors.As(err, &ire) {
 			err = ire.PrivateErr
 		}
+		if errors.Is(err, saml.ErrAssertionReplayed) {
+			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used").WithInternalError(err)
+		}
 
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
 	}
 
 	assertion := SAMLAssertion{
 		spAssertion,
-	}
-
-	if err := refuseReplayedSAMLAssertion(db, ssoProvider.ID, &assertion); err != nil {
-		return err
 	}
 
 	userID := assertion.UserID()
@@ -371,16 +372,15 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// refuseReplayedSAMLAssertion records the assertion as accepted, and refuses it
-// if it was accepted before. Without this a captured IdP-initiated response,
-// which has no RelayState to bind it, could be posted again until it expired.
-func refuseReplayedSAMLAssertion(db *storage.Connection, ssoProviderID uuid.UUID, assertion *SAMLAssertion) error {
-	err := models.ConsumeSAMLAssertion(db, ssoProviderID, assertion.ID, assertion.AcceptableUntil())
-	var replayed models.SAMLAssertionReplayedError
-	if errors.As(err, &replayed) {
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used")
-	}
-	return err
+// samlReplayCache records a provider's accepted assertions in the database,
+// for the SAML library's replay check. Every server instance shares it.
+type samlReplayCache struct {
+	db            *storage.Connection
+	ssoProviderID uuid.UUID
+}
+
+func (c samlReplayCache) Consume(assertionID string, expiresAt time.Time) error {
+	return models.ConsumeSAMLAssertion(c.db, c.ssoProviderID, assertionID, expiresAt)
 }
 
 func samlResponseIssuer(responseXML []byte) (string, error) {

@@ -1,6 +1,10 @@
 package models
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/supatype/saml"
+)
 
 // sentinel error for all not found errors.
 var errNotFound = errors.New("not found")
@@ -130,6 +134,11 @@ type SAMLAssertionReplayedError struct{}
 
 func (e SAMLAssertionReplayedError) Error() string {
 	return "SAML assertion has already been used"
+}
+
+// Is lets the SAML library recognise the error as its own replay error.
+func (e SAMLAssertionReplayedError) Is(target error) bool {
+	return target == saml.ErrAssertionReplayed
 }
 
 // FlowStateNotFoundError represents an error when an FlowState can't be

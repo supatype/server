@@ -218,11 +218,7 @@ func TestSAMLAuthnRequestSignedWithCurrentKey(t *tst.T) {
 	require.NoError(t, err)
 
 	verify := func(certificate *x509.Certificate) error {
-		algorithm := x509.SHA1WithRSA
-		if sp.SignatureMethod != dsig.RSASHA1SignatureMethod {
-			algorithm = x509.SHA256WithRSA
-		}
-		return certificate.CheckSignature(algorithm, []byte(signedPart), signature)
+		return certificate.CheckSignature(x509.SHA256WithRSA, []byte(signedPart), signature)
 	}
 
 	require.NoError(t, verify(config.SAML.Certificate), "signed with the current key")
@@ -259,4 +255,27 @@ func TestSAMLMetadataStableAcrossReload(t *tst.T) {
 	time.Sleep(10 * time.Millisecond)
 	require.Equal(t, first, render())
 	require.Len(t, keyDescriptorUses(t, []byte(first)), 4, "both keys, for signing and encryption")
+}
+
+// AuthnRequests are signed with RSA-SHA256, not the library's SHA-1 default.
+func TestSAMLAuthnRequestSignedWithSHA256(t *tst.T) {
+	config := samlMetadataTestConfig(t, "", false)
+	api := &API{config: config}
+	idpMetadata, err := samlsp.ParseMetadata([]byte(newSAMLTestIdP(t, "https://idp.example.com/saml").metadataXML()))
+	require.NoError(t, err)
+	sp := api.getSAMLServiceProvider(idpMetadata, false)
+	require.Equal(t, dsig.RSASHA256SignatureMethod, sp.SignatureMethod)
+
+	request, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(saml.HTTPRedirectBinding), saml.HTTPRedirectBinding, saml.HTTPPostBinding)
+	require.NoError(t, err)
+	redirect, err := request.Redirect("relay-state", sp)
+	require.NoError(t, err)
+	signedPart, encodedSignature, found := strings.Cut(redirect.RawQuery, "&Signature=")
+	require.True(t, found)
+	require.Contains(t, signedPart, "SigAlg="+url.QueryEscape(dsig.RSASHA256SignatureMethod))
+	signatureB64, err := url.QueryUnescape(encodedSignature)
+	require.NoError(t, err)
+	signature, err := base64.StdEncoding.DecodeString(signatureB64)
+	require.NoError(t, err)
+	require.NoError(t, config.SAML.Certificate.CheckSignature(x509.SHA256WithRSA, []byte(signedPart), signature))
 }

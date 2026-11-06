@@ -2,12 +2,15 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -812,27 +815,19 @@ func (ts *SSOTestSuite) TestAdminCreateSSOProviderHTTPMetadataURL() {
 
 func (ts *SSOTestSuite) TestAdminUpdateSSOProviderHTTPMetadataURL() {
 	const entityID = "http://idp.local/update"
-	w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
-		"type":         "saml",
-		"metadata_xml": validSAMLIDPMetadata(entityID),
-	})
-	require.Equal(ts.T(), http.StatusCreated, w.Code, w.Body.String())
-	var provider struct {
-		ID string `json:"id"`
-	}
-	require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &provider))
+	id := ts.createProviderWithDomains(entityID)
 	metadataURL := ts.serveSAMLMetadata(entityID)
 
 	ts.Run("NotDev", func() {
 		ts.inMode("")
-		w := ts.adminSSORequest(http.MethodPut, "/"+provider.ID, map[string]interface{}{"metadata_url": metadataURL})
+		w := ts.adminSSORequest(http.MethodPut, "/"+id, map[string]interface{}{"metadata_url": metadataURL})
 		require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
 		require.Contains(ts.T(), w.Body.String(), "metadata_url is not a HTTPS URL")
 	})
 
 	ts.Run("Dev", func() {
 		ts.inMode("dev")
-		w := ts.adminSSORequest(http.MethodPut, "/"+provider.ID, map[string]interface{}{"metadata_url": metadataURL})
+		w := ts.adminSSORequest(http.MethodPut, "/"+id, map[string]interface{}{"metadata_url": metadataURL})
 		require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
 		require.Contains(ts.T(), w.Body.String(), metadataURL)
 	})
@@ -886,4 +881,181 @@ func (ts *SSOTestSuite) TestAdminUpdateSSOProviderNameIDFormat() {
 	require.Equal(ts.T(), persistentFormat, *changed)
 
 	require.Nil(ts.T(), update(map[string]interface{}{"name_id_format": ""}), "an empty name_id_format clears it")
+}
+
+// withTXTRecords answers DNS TXT lookups from records for the rest of the
+// test, and counts them.
+func (ts *SSOTestSuite) withTXTRecords(records map[string][]string) *int {
+	lookups := 0
+	previous := lookupTXT
+	lookupTXT = func(_ context.Context, name string) ([]string, error) {
+		lookups++
+		if values, ok := records[name]; ok {
+			return values, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+	}
+	ts.T().Cleanup(func() { lookupTXT = previous })
+	return &lookups
+}
+
+type testDomainVerification struct {
+	Domain     string     `json:"domain"`
+	Verified   bool       `json:"verified"`
+	VerifiedAt *time.Time `json:"verified_at"`
+	Challenge  struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	} `json:"challenge"`
+	Found []string `json:"found"`
+}
+
+type testDomainEntry struct {
+	Domain     string     `json:"domain"`
+	Verified   bool       `json:"verified"`
+	VerifiedAt *time.Time `json:"verified_at"`
+}
+
+// createProviderWithDomains registers a provider, with the last part of
+// entityID as its resource ID, and returns its ID.
+func (ts *SSOTestSuite) createProviderWithDomains(entityID string, domains ...string) string {
+	w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+		"type":         "saml",
+		"metadata_xml": validSAMLIDPMetadata(entityID),
+		"domains":      domains,
+		"resource_id":  entityID[strings.LastIndex(entityID, "/")+1:],
+	})
+	require.Equal(ts.T(), http.StatusCreated, w.Code, w.Body.String())
+	var provider struct {
+		ID      string            `json:"id"`
+		Domains []testDomainEntry `json:"domains"`
+	}
+	require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &provider))
+	for _, d := range provider.Domains {
+		require.False(ts.T(), d.Verified, "a new domain starts unverified: %s", d.Domain)
+		require.Nil(ts.T(), d.VerifiedAt)
+	}
+	if len(domains) > 0 {
+		require.Contains(ts.T(), w.Body.String(), `"verified_at":null`)
+	}
+	return provider.ID
+}
+
+func (ts *SSOTestSuite) verifyDomain(providerRef, domain string, wantStatus int) testDomainVerification {
+	w := ts.adminSSORequest(http.MethodPost, "/"+providerRef+"/domains/"+domain+"/verify", nil)
+	require.Equal(ts.T(), wantStatus, w.Code, w.Body.String())
+	var response testDomainVerification
+	if wantStatus == http.StatusOK {
+		require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &response))
+	}
+	return response
+}
+
+// domainEntries are the provider's domains as GET shows them.
+func (ts *SSOTestSuite) domainEntries(providerID string) []testDomainEntry {
+	w := ts.adminSSORequest(http.MethodGet, "/"+providerID, nil)
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+	var provider struct {
+		Domains []testDomainEntry `json:"domains"`
+	}
+	require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &provider))
+	return provider.Domains
+}
+
+// The first call issues the token, every call checks DNS, and the domain is
+// verified once its TXT record holds the token.
+func (ts *SSOTestSuite) TestDomainVerify() {
+	id := ts.createProviderWithDomains("https://idp.example.com/verify", "example.com")
+
+	ts.withTXTRecords(map[string][]string{"_supatype-challenge.example.com": {"something-else"}})
+	first := ts.verifyDomain(id, "Example.COM", http.StatusOK)
+	require.Equal(ts.T(), "example.com", first.Domain)
+	require.False(ts.T(), first.Verified)
+	require.Nil(ts.T(), first.VerifiedAt)
+	require.Equal(ts.T(), "_supatype-challenge.example.com", first.Challenge.Name)
+	require.GreaterOrEqual(ts.T(), len(first.Challenge.Value), 32)
+	require.Equal(ts.T(), []string{"something-else"}, first.Found)
+
+	ts.withTXTRecords(nil)
+	missing := ts.verifyDomain(id, "example.com", http.StatusOK)
+	require.Equal(ts.T(), first.Challenge.Value, missing.Challenge.Value, "the token stays the one already issued")
+	require.False(ts.T(), missing.Verified)
+	require.NotNil(ts.T(), missing.Found, "a lookup was made")
+	require.Empty(ts.T(), missing.Found)
+
+	ts.withTXTRecords(map[string][]string{"_supatype-challenge.example.com": {"v=spf1 -all", first.Challenge.Value}})
+	verified := ts.verifyDomain(id, "example.com", http.StatusOK)
+	require.True(ts.T(), verified.Verified)
+	require.NotNil(ts.T(), verified.VerifiedAt)
+
+	// Verified once and kept: the record may go away afterwards.
+	ts.withTXTRecords(nil)
+	kept := ts.verifyDomain(id, "example.com", http.StatusOK)
+	require.True(ts.T(), kept.Verified)
+	require.Equal(ts.T(), verified.VerifiedAt.Unix(), kept.VerifiedAt.Unix())
+
+	entries := ts.domainEntries(id)
+	require.Len(ts.T(), entries, 1)
+	require.True(ts.T(), entries[0].Verified)
+	require.NotNil(ts.T(), entries[0].VerifiedAt)
+	w := ts.adminSSORequest(http.MethodGet, "/"+id, nil)
+	require.NotContains(ts.T(), w.Body.String(), first.Challenge.Value, "the token is shown only by the verify endpoint")
+}
+
+// Keeping a domain in an update keeps its verification; the list shows it.
+func (ts *SSOTestSuite) TestDomainVerificationSurvivesUpdate() {
+	id := ts.createProviderWithDomains("https://idp.example.com/verify-update", "example.com")
+	ts.withTXTRecords(nil)
+	first := ts.verifyDomain(id, "example.com", http.StatusOK)
+	ts.withTXTRecords(map[string][]string{"_supatype-challenge.example.com": {first.Challenge.Value}})
+	require.True(ts.T(), ts.verifyDomain(id, "example.com", http.StatusOK).Verified)
+
+	w := ts.adminSSORequest(http.MethodPut, "/"+id, map[string]interface{}{"domains": []string{"example.com", "example.org"}})
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+	verified := map[string]bool{}
+	for _, d := range ts.domainEntries(id) {
+		verified[d.Domain] = d.Verified
+	}
+	require.Equal(ts.T(), map[string]bool{"example.com": true, "example.org": false}, verified)
+
+	w = ts.adminSSORequest(http.MethodGet, "", nil)
+	require.Contains(ts.T(), w.Body.String(), `"domain":"example.com","verified":true`)
+}
+
+func (ts *SSOTestSuite) TestDomainVerifyByResourceID() {
+	ts.createProviderWithDomains("https://idp.example.com/verify-resource", "example.com")
+	ts.withTXTRecords(nil)
+	response := ts.verifyDomain("resource_verify-resource", "example.com", http.StatusOK)
+	require.Equal(ts.T(), "_supatype-challenge.example.com", response.Challenge.Name)
+}
+
+func (ts *SSOTestSuite) TestDomainVerifyUnknownDomain() {
+	id := ts.createProviderWithDomains("https://idp.example.com/verify-unknown", "example.com")
+	ts.verifyDomain(id, "other.com", http.StatusNotFound)
+}
+
+// In dev mode a .supatype.test domain is verified with no DNS lookup, so a
+// local identity provider can be tried end to end. Other modes always look.
+func (ts *SSOTestSuite) TestDomainVerifyDevTestDomain() {
+	id := ts.createProviderWithDomains("https://idp.example.com/verify-dev", "acme.supatype.test")
+
+	ts.inMode("standalone")
+	lookups := ts.withTXTRecords(nil)
+	require.False(ts.T(), ts.verifyDomain(id, "acme.supatype.test", http.StatusOK).Verified)
+	require.Equal(ts.T(), 1, *lookups, "outside dev mode the record is looked up")
+
+	ts.inMode("dev")
+	verified := ts.verifyDomain(id, "acme.supatype.test", http.StatusOK)
+	require.True(ts.T(), verified.Verified)
+	require.Nil(ts.T(), verified.Found, "no lookup was made")
+	require.Equal(ts.T(), 1, *lookups, "no lookup in dev mode")
+}
+
+// Dev mode looks up every other domain.
+func (ts *SSOTestSuite) TestDomainVerifyDevOtherDomain() {
+	id := ts.createProviderWithDomains("https://idp.example.com/verify-dev-other", "example.com")
+	ts.inMode("dev")
+	lookups := ts.withTXTRecords(nil)
+	require.False(ts.T(), ts.verifyDomain(id, "example.com", http.StatusOK).Verified)
+	require.Equal(ts.T(), 1, *lookups)
 }

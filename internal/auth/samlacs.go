@@ -236,9 +236,15 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 	if email == "" {
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLAssertionNoEmail, "SAML Assertion does not contain an email address")
-	} else {
-		claims["email"] = email
 	}
+	// A provider with domains may only sign in addresses on them; without
+	// this it could sign in as any address, another organisation's included.
+	// The provider's domains are loaded with it.
+	emailDomain := ssoProvider.DomainOf(email)
+	if len(ssoProvider.SSODomains) > 0 && emailDomain == nil {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLEmailDomainNotAllowed, "SAML Assertion email is not on a domain of this identity provider")
+	}
+	claims["email"] = email
 
 	jsonClaims, err := json.Marshal(claims)
 	if err != nil {
@@ -271,6 +277,9 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		Verified: true,
 		Primary:  true,
 	})
+	// A first login may link to an existing account with the email only on
+	// a verified domain.
+	userProvidedData.SSODomainVerified = emailDomain != nil && emailDomain.IsVerified()
 
 	// userProvidedData.Provider.Type = "saml"
 	// userProvidedData.Provider.ID = ssoProvider.ID.String()

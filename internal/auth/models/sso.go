@@ -31,6 +31,37 @@ func (p SSOProvider) IsEnabled() bool {
 	return p.Disabled == nil || !*p.Disabled
 }
 
+// Domain is the provider's domain called name, compared case-insensitively,
+// or nil.
+func (p SSOProvider) Domain(name string) *SSODomain {
+	for i := range p.SSODomains {
+		if strings.EqualFold(p.SSODomains[i].Domain, name) {
+			return &p.SSODomains[i]
+		}
+	}
+	return nil
+}
+
+// DomainOf is the provider's domain the email address is on, or nil. Only
+// the exact domain matches: a subdomain must be listed itself.
+func (p SSOProvider) DomainOf(email string) *SSODomain {
+	domain, ok := emailDomain(email)
+	if !ok {
+		return nil
+	}
+	return p.Domain(domain)
+}
+
+// emailDomain is the part of the email address after its last "@", and
+// false when it has none.
+func emailDomain(email string) (string, bool) {
+	at := strings.LastIndex(email, "@")
+	if at < 0 {
+		return "", false
+	}
+	return email[at+1:], true
+}
+
 func (p SSOProvider) TableName() string {
 	return "sso_providers"
 }
@@ -141,20 +172,51 @@ func (p SAMLProvider) EntityDescriptor() (*saml.EntityDescriptor, error) {
 	return samlsp.ParseMetadata([]byte(p.MetadataXML))
 }
 
+// SSODomain is written to JSON by MarshalJSON, as its View, so its fields
+// carry no json tags.
 type SSODomain struct {
-	ID uuid.UUID `db:"id" json:"-"`
+	ID uuid.UUID `db:"id"`
 
-	SSOProvider   *SSOProvider `belongs_to:"sso_providers" json:"-"`
-	SSOProviderID uuid.UUID    `db:"sso_provider_id" json:"-"`
+	SSOProvider   *SSOProvider `belongs_to:"sso_providers"`
+	SSOProviderID uuid.UUID    `db:"sso_provider_id"`
 
-	Domain string `db:"domain" json:"domain"`
+	Domain string `db:"domain"`
 
-	CreatedAt time.Time `db:"created_at" json:"-"`
-	UpdatedAt time.Time `db:"updated_at" json:"-"`
+	// VerificationToken is the value of the DNS TXT record that proves the
+	// domain. It is shown only by the verification endpoints.
+	VerificationToken *string `db:"verification_token"`
+	// VerifiedAt is when the DNS record was first seen, nil until then.
+	VerifiedAt *time.Time `db:"verified_at"`
+
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
 }
 
 func (d SSODomain) TableName() string {
 	return "sso_domains"
+}
+
+// IsVerified reports whether the domain has been proven by its DNS record.
+func (d SSODomain) IsVerified() bool {
+	return d.VerifiedAt != nil
+}
+
+// SSODomainView is a domain as the admin API shows it: the name and whether
+// it is verified. The token is shown only by the verify endpoint.
+type SSODomainView struct {
+	Domain     string     `json:"domain"`
+	Verified   bool       `json:"verified"`
+	VerifiedAt *time.Time `json:"verified_at"`
+}
+
+// View is the domain as the admin API shows it.
+func (d SSODomain) View() SSODomainView {
+	return SSODomainView{Domain: d.Domain, Verified: d.IsVerified(), VerifiedAt: d.VerifiedAt}
+}
+
+// MarshalJSON writes the domain's View.
+func (d SSODomain) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.View())
 }
 
 type SAMLRelayState struct {
@@ -222,11 +284,14 @@ func FindSSOProviderByResourceID(tx *storage.Connection, id string) (*SSOProvide
 	return &ssoProvider, nil
 }
 
+// FindSSOProviderForEmailAddress finds the provider of the domain the email
+// address is on, as DomainOf reads it. An address with no "@" has none.
 func FindSSOProviderForEmailAddress(tx *storage.Connection, emailAddress string) (*SSOProvider, error) {
-	parts := strings.Split(emailAddress, "@")
-	emailDomain := strings.ToLower(parts[1])
-
-	return FindSSOProviderByDomain(tx, emailDomain)
+	domain, ok := emailDomain(emailAddress)
+	if !ok {
+		return nil, SSOProviderNotFoundError{}
+	}
+	return FindSSOProviderByDomain(tx, strings.ToLower(domain))
 }
 
 func FindSSOProviderByDomain(tx *storage.Connection, domain string) (*SSOProvider, error) {

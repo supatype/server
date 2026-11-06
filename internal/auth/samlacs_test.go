@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/gofrs/uuid"
 	jwt "github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/require"
@@ -27,6 +29,8 @@ import (
 	"github.com/supatype/saml/samlsp"
 	"github.com/supatype/saml/xmlenc"
 	"github.com/supatype/server/internal/auth/models"
+	authprovider "github.com/supatype/server/internal/auth/provider"
+	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
 )
 
@@ -429,4 +433,179 @@ func (ts *SAMLACSTestSuite) TestAssertionEncryptedWithoutNextKeyToOtherKeyIsRefu
 	other := newSAMLTestKeyConfig(ts.T())
 	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-other"), other.Certificate)
 	ts.refused(ts.postACS(response), refusedInvalid)
+}
+
+// setDomains gives the test IdP's provider the domains.
+func (ts *SAMLACSTestSuite) setDomains(domains ...string) {
+	provider, err := models.FindSAMLProviderByEntityID(ts.API.db, ts.IdP.entityID)
+	require.NoError(ts.T(), err)
+	body, err := json.Marshal(map[string]interface{}{"domains": domains})
+	require.NoError(ts.T(), err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/admin/sso/providers/"+provider.ID.String(), bytes.NewBuffer(body))
+	req.Header.Set("Authorization", "Bearer "+adminToken(ts.T(), ts.Config))
+	w := httptest.NewRecorder()
+	ts.API.handler.ServeHTTP(w, req)
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+}
+
+// assertionFor is a correct assertion for subject nameID with email.
+func (ts *SAMLACSTestSuite) assertionFor(id, nameID, email string) samlTestAssertion {
+	return samlTestAssertion{
+		ID:         id,
+		Subject:    ts.subject(`<saml:NameID Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">` + nameID + `</saml:NameID>`),
+		Conditions: conditions(ts.audienceRestriction()),
+		Statements: emailStatement(email),
+	}
+}
+
+// A provider with domains signs in only emails on those domains, or it could
+// sign in as any address it likes.
+func (ts *SAMLACSTestSuite) TestEmailOutsideProviderDomainsIsRefused() {
+	ts.setDomains("example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("outside-domain", "outsider", "ceo@other.org")))
+	ts.refused(location, "SAML Assertion email is not on a domain of this identity provider")
+	require.Equal(ts.T(), "saml_email_domain_not_allowed", location.Query().Get("error_code"))
+}
+
+func (ts *SAMLACSTestSuite) TestEmailOnProviderDomainSignsIn() {
+	ts.setDomains("example.com", "example.org")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("inside-domain", "insider", "Someone@Example.ORG")))
+	require.NotEmpty(ts.T(), ts.signedInAs(location), "refused: %s", location)
+}
+
+// A subdomain is a different domain: it must be listed itself.
+func (ts *SAMLACSTestSuite) TestEmailOnSubdomainIsRefused() {
+	ts.setDomains("example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("subdomain", "sub", "someone@eu.example.com")))
+	ts.refused(location, "SAML Assertion email is not on a domain of this identity provider")
+}
+
+// markVerified marks the provider's domain verified, as the verify endpoint
+// does once it sees the TXT record.
+func (ts *SAMLACSTestSuite) markVerified(domain string) {
+	provider, err := models.FindSAMLProviderByEntityID(ts.API.db, ts.IdP.entityID)
+	require.NoError(ts.T(), err)
+	d := provider.Domain(domain)
+	require.NotNil(ts.T(), d, "%s is a domain of the provider", domain)
+	now := time.Now().UTC()
+	d.VerifiedAt = &now
+	require.NoError(ts.T(), ts.API.db.UpdateOnly(d, "verified_at"))
+}
+
+// existingUser is a confirmed account for email that signs in with a
+// password, outside SSO. The email is stored as given: NewUser lowercases it,
+// but rows written by other means can differ from each other in case alone.
+func (ts *SAMLACSTestSuite) existingUser(email string) *models.User {
+	user, err := models.NewUser("", email, "password", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	user.Email = storage.NullString(email)
+	confirmedAt := time.Now().UTC()
+	user.EmailConfirmedAt = &confirmedAt
+	require.NoError(ts.T(), ts.API.db.Create(user))
+	_, err = ts.API.createNewIdentity(ts.API.db, user, "email", map[string]interface{}{"sub": user.ID.String(), "email": email})
+	require.NoError(ts.T(), err)
+	return user
+}
+
+const (
+	refusedUnverifiedDomain = "This email already has an account. Ask your administrator to verify the domain so they can be linked."
+	refusedMultipleAccounts = "More than one account has this email. Ask your administrator to merge them before signing in with SSO."
+)
+
+// Several accounts with the email in different case: the one stored exactly
+// as the identity provider sends it is linked.
+func (ts *SAMLACSTestSuite) TestLoginLinksTheExactCaseAccount() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	ts.existingUser("member@example.com")
+	exact := ts.existingUser("Member@Example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("exact-case", "member-id", "Member@Example.com")))
+	require.Equal(ts.T(), exact.ID.String(), ts.signedInAs(location), "signed in as the exact-case account: %s", location)
+}
+
+// Several accounts with the email and none stored exactly as sent: no account
+// is picked, and the refusal says why instead of a server error.
+func (ts *SAMLACSTestSuite) TestLoginWithSeveralAccountsAndNoExactCaseIsRefused() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	ts.existingUser("member@example.com")
+	ts.existingUser("Member@Example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("no-exact-case", "member-id", "MEMBER@example.com")))
+	ts.refused(location, refusedMultipleAccounts)
+	require.Equal(ts.T(), "sso_multiple_accounts", location.Query().Get("error_code"))
+
+	// The redirect carries no status, so the decision is checked directly.
+	provider, err := models.FindSAMLProviderByEntityID(ts.API.db, ts.IdP.entityID)
+	require.NoError(ts.T(), err)
+	userData := &authprovider.UserProvidedData{
+		Emails:            []authprovider.Email{{Email: "MEMBER@example.com", Verified: true, Primary: true}},
+		Metadata:          &authprovider.Claims{Subject: "member-id"},
+		SSODomainVerified: true,
+	}
+	_, _, err = ts.API.createAccountFromExternalIdentity(ts.API.db, httptest.NewRequest(http.MethodPost, ts.ACSURL, nil), userData, "sso:"+provider.ID.String(), false)
+	var httpErr *HTTPError
+	require.ErrorAs(ts.T(), err, &httpErr)
+	require.Equal(ts.T(), http.StatusUnprocessableEntity, httpErr.HTTPStatus)
+	require.Equal(ts.T(), refusedMultipleAccounts, httpErr.Message)
+}
+
+// On a verified domain a first SAML login links to the account that already
+// has the email, so the person keeps one account.
+func (ts *SAMLACSTestSuite) TestLoginOnVerifiedDomainLinksExistingAccount() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	existing := ts.existingUser("member@example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("link-1", "member-id", "Member@Example.com")))
+	require.Equal(ts.T(), existing.ID.String(), ts.signedInAs(location), "signed in as the existing account: %s", location)
+
+	user, err := models.FindUserByID(ts.API.db, existing.ID)
+	require.NoError(ts.T(), err)
+	require.False(ts.T(), user.IsSSOUser, "a linked account stays a regular account")
+	ok, _, err := user.Authenticate(context.Background(), ts.API.db, "password", nil, false, "")
+	require.NoError(ts.T(), err)
+	require.True(ts.T(), ok, "the password still signs in")
+	providers := []string{}
+	for _, identity := range user.Identities {
+		providers = append(providers, identity.Provider)
+	}
+	require.Contains(ts.T(), providers, "email")
+	require.Contains(ts.T(), strings.Join(providers, ","), "sso:")
+
+	// The next login finds the linked identity.
+	location = ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("link-2", "member-id", "member@example.com")))
+	require.Equal(ts.T(), existing.ID.String(), ts.signedInAs(location))
+}
+
+// Before the domain is verified a login whose email already has an account is
+// refused, rather than creating a second account for the same address.
+func (ts *SAMLACSTestSuite) TestLoginOnUnverifiedDomainWithExistingAccountIsRefused() {
+	ts.setDomains("example.com")
+	ts.existingUser("member@example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("unverified", "member-id", "member@example.com")))
+	ts.refused(location, refusedUnverifiedDomain)
+	require.Equal(ts.T(), "sso_domain_not_verified", location.Query().Get("error_code"))
+}
+
+// A provider with no domains has none verified, so it never links.
+func (ts *SAMLACSTestSuite) TestLoginWithoutDomainsWithExistingAccountIsRefused() {
+	ts.existingUser("member@example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("no-domains", "member-id", "member@example.com")))
+	ts.refused(location, refusedUnverifiedDomain)
+}
+
+// With no account for the email a login creates one, verified domain or not,
+// and the new account is an SSO account as before.
+func (ts *SAMLACSTestSuite) TestLoginWithoutExistingAccountCreatesSSOUser() {
+	ts.setDomains("example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("new-user", "new-id", "new@example.com")))
+	id := ts.signedInAs(location)
+	require.NotEmpty(ts.T(), id, "refused: %s", location)
+
+	user, err := models.FindUserByID(ts.API.db, uuid.FromStringOrNil(id))
+	require.NoError(ts.T(), err)
+	require.True(ts.T(), user.IsSSOUser)
 }

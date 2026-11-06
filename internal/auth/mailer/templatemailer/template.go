@@ -57,7 +57,7 @@ func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
 	switch globalConfig.Mailer.MailerProvider {
 	case "console":
 		logrus.Infof("templatemailer: using console (log-only) mailer for %v", globalConfig.SiteURL)
-		mc = consoleclient.New(strings.TrimSpace(globalConfig.Mode) == "dev")
+		mc = consoleclient.New(globalConfig.IsDevMode())
 
 	case "resend":
 		apiKey := globalConfig.Mailer.ResendAPIKey

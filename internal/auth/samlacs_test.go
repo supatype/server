@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/supatype/saml"
 	"github.com/supatype/saml/samlsp"
+	"github.com/supatype/saml/xmlenc"
 	"github.com/supatype/server/internal/auth/models"
 	"github.com/supatype/server/internal/conf"
 )
@@ -83,6 +84,30 @@ type samlTestAssertion struct {
 // sends it.
 func (idp *samlTestIdP) response(t *testing.T, acsURL string, a samlTestAssertion) string {
 	t.Helper()
+	return idp.wrapResponse(t, acsURL, a.ID, idp.signedAssertion(t, a))
+}
+
+// encryptedResponse is response with the signed assertion encrypted to
+// certificate, as an IdP does when the SP publishes an encryption key.
+func (idp *samlTestIdP) encryptedResponse(t *testing.T, acsURL string, a samlTestAssertion, certificate *x509.Certificate) string {
+	t.Helper()
+	assertion := etree.NewDocument()
+	assertion.SetRoot(idp.signedAssertion(t, a))
+	plaintext, err := assertion.WriteToBytes()
+	require.NoError(t, err)
+
+	encryptedData, err := xmlenc.OAEP().Encrypt(certificate, plaintext, nil)
+	require.NoError(t, err)
+	encryptedData.CreateAttr("Type", "http://www.w3.org/2001/04/xmlenc#Element")
+
+	encryptedAssertion := etree.NewElement("saml:EncryptedAssertion")
+	encryptedAssertion.AddChild(encryptedData)
+	return idp.wrapResponse(t, acsURL, a.ID, encryptedAssertion)
+}
+
+// signedAssertion is the assertion a describes, signed by the IdP.
+func (idp *samlTestIdP) signedAssertion(t *testing.T, a samlTestAssertion) *etree.Element {
+	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
 	doc := etree.NewDocument()
 	require.NoError(t, doc.ReadFromString(fmt.Sprintf(
@@ -94,18 +119,25 @@ func (idp *samlTestIdP) response(t *testing.T, acsURL string, a samlTestAssertio
 	// SignEnveloped appends the Signature; the schema places it after Issuer.
 	sig := signed.RemoveChildAt(len(signed.Child) - 1)
 	signed.InsertChildAt(1, sig)
+	return signed
+}
 
+// wrapResponse puts assertion in an unsigned Response addressed to acsURL,
+// base64 encoded as the HTTP-POST binding sends it.
+func (idp *samlTestIdP) wrapResponse(t *testing.T, acsURL, id string, assertion *etree.Element) string {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339)
 	resp := etree.NewElement("samlp:Response")
 	resp.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
 	resp.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
-	resp.CreateAttr("ID", "response-"+a.ID)
+	resp.CreateAttr("ID", "response-"+id)
 	resp.CreateAttr("Version", "2.0")
 	resp.CreateAttr("IssueInstant", now)
 	resp.CreateAttr("Destination", acsURL)
 	resp.CreateElement("saml:Issuer").SetText(idp.entityID)
 	resp.CreateElement("samlp:Status").CreateElement("samlp:StatusCode").
 		CreateAttr("Value", "urn:oasis:names:tc:SAML:2.0:status:Success")
-	resp.AddChild(signed)
+	resp.AddChild(assertion)
 
 	out := etree.NewDocument()
 	out.SetRoot(resp)
@@ -354,4 +386,47 @@ func (ts *SAMLACSTestSuite) TestConsumedAssertionIDIsFreedOnExpiry() {
 	require.NoError(ts.T(), models.ConsumeSAMLAssertion(ts.API.db, provider.ID, "reused-id", future))
 	require.ErrorAs(ts.T(), models.ConsumeSAMLAssertion(ts.API.db, provider.ID, "reused-id", future), &models.SAMLAssertionReplayedError{})
 	require.Error(ts.T(), models.ConsumeSAMLAssertion(ts.API.db, provider.ID, "", future))
+}
+
+// withNextKey starts a key rotation for the length of the test, returning the
+// next key's certificate.
+func (ts *SAMLACSTestSuite) withNextKey() *x509.Certificate {
+	next := newSAMLTestKeyConfig(ts.T())
+	ts.Config.SAML.NextRSAPrivateKey = next.RSAPrivateKey
+	ts.Config.SAML.NextCertificate = next.Certificate
+	ts.T().Cleanup(func() {
+		ts.Config.SAML.NextRSAPrivateKey = nil
+		ts.Config.SAML.NextCertificate = nil
+	})
+	return next.Certificate
+}
+
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedToCurrentKeySignsIn() {
+	ts.withNextKey()
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-current"), ts.Config.SAML.Certificate)
+	location := ts.postACS(response)
+	require.NotEmpty(ts.T(), ts.signedInAs(location), "refused: %s", location)
+}
+
+// During a rotation an IdP may already encrypt to the next key.
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedToNextKeySignsIn() {
+	next := ts.withNextKey()
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-next"), next)
+	location := ts.postACS(response)
+	require.NotEmpty(ts.T(), ts.signedInAs(location), "refused: %s", location)
+}
+
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedToUnknownKeyIsRefused() {
+	ts.withNextKey()
+	stranger := newSAMLTestKeyConfig(ts.T())
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-unknown"), stranger.Certificate)
+	ts.refused(ts.postACS(response), refusedInvalid)
+}
+
+// Without a rotation in progress an assertion encrypted to some other key is
+// refused, as before.
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedWithoutNextKeyToOtherKeyIsRefused() {
+	other := newSAMLTestKeyConfig(ts.T())
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-other"), other.Certificate)
+	ts.refused(ts.postACS(response), refusedInvalid)
 }

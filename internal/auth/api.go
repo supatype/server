@@ -52,6 +52,9 @@ type API struct {
 	overrideTime func() time.Time
 
 	limiterOpts *LimiterOptions
+
+	// samlDev is what dev mode relaxes in SAML.
+	samlDev samlDevPolicy
 }
 
 func (a *API) GetConfig() *conf.GlobalConfiguration { return a.config }
@@ -90,6 +93,7 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 		config:  globalConfig,
 		db:      db,
 		version: version,
+		samlDev: newSAMLDevPolicy(globalConfig),
 	}
 
 	api.oidcCache = provider.NewOIDCProviderCache(globalConfig.External.OIDCProviderCacheTTL)

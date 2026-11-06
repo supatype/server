@@ -88,18 +88,22 @@ func Handler(v Values) http.Handler {
 	})
 }
 
-// misconfiguration is what stops v being served, or "" when nothing does.
-// Each answer names the setting to fix and never echoes a value.
+// misconfiguration is everything that stops v being served, one problem per
+// line with the key before the URL, or "" when nothing does. Every problem is
+// named at once so a deployer fixes them in one pass rather than one per load.
+// No answer echoes a value.
 func misconfiguration(v Values) string {
+	var problems []string
 	switch {
 	case v.AnonKey == "":
-		return missingAnonKey
+		problems = append(problems, missingAnonKey)
 	case jwtRole(v.AnonKey) == "service_role":
-		return serviceRoleKey
-	case v.URL == "":
-		return missingURL
+		problems = append(problems, serviceRoleKey)
 	}
-	return ""
+	if v.URL == "" {
+		problems = append(problems, missingURL)
+	}
+	return strings.Join(problems, "\n")
 }
 
 // jwtRole is the role claim of a JWT, or "" for a key that is not one. The

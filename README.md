@@ -130,7 +130,7 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_DENO_PORT`
 - `SUPATYPE_TENANT_HMAC_SECRET`
 - `SUPATYPE_TLS_DOMAIN`
-- `SUPATYPE_PUBLIC_ENV` (default `true`). `GET /supatype-env.json` answers `{"url":...,"anonKey":...}` for `supatype build`, and `GET /supatype-env.js` sets `window.__SUPATYPE_ENV__` for a static app's script tag, whatever `SUPATYPE_APP_MODE` is and ahead of a file of the same name in the app. `url` is `SUPATYPE_URL`, else `SUPATYPE_API_EXTERNAL_URL` without a trailing `/auth/v1`; the key is `SUPATYPE_ANON_KEY`. The service role key is never served. A misconfigured deployment answers 503 with `no-store` and a body naming the setting to fix: no anon key, an anon key whose JWT role is `service_role` (refused, never echoed), or neither URL set. Set `false` for an API-only project: both paths then answer 404.
+- `SUPATYPE_PUBLIC_ENV` (default `true`). `GET /supatype-env.json` answers `{"url":...,"anonKey":...}` for `supatype build`, and `GET /supatype-env.js` sets `window.__SUPATYPE_ENV__` for a static app's script tag, whatever `SUPATYPE_APP_MODE` is and ahead of a file of the same name in the app. `url` is `SUPATYPE_URL`, else `SUPATYPE_API_EXTERNAL_URL` without a trailing `/auth/v1`; the key is `SUPATYPE_ANON_KEY`. The service role key is never served. A misconfigured deployment answers 503 with `no-store` and a body naming every setting to fix, one per line, key before URL: no anon key, an anon key whose JWT role is `service_role` (refused, never echoed), or neither URL set. Set `false` for an API-only project: both paths then answer 404.
 
 Local storage mode:
 

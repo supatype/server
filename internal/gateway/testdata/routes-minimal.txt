@@ -13,6 +13,8 @@ CONNECT /platform/v1/*
 CONNECT /rest/v1/*
 CONNECT /storage/v1/*
 CONNECT /studio/proxy/*
+CONNECT /supatype-env.js
+CONNECT /supatype-env.json
 DELETE  /admin/cors-origins
 DELETE  /admin/preview-links
 DELETE  /admin/preview-links/*
@@ -30,6 +32,8 @@ DELETE  /platform/v1/*
 DELETE  /rest/v1/*
 DELETE  /storage/v1/*
 DELETE  /studio/proxy/*
+DELETE  /supatype-env.js
+DELETE  /supatype-env.json
 GET     /admin/cors-origins
 GET     /admin/preview-links
 GET     /admin/preview-links/*
@@ -55,6 +59,8 @@ GET     /studio/auth/verify
 GET     /studio/proxy/*
 GET     /studio/schema
 GET     /studio/session
+GET     /supatype-env.js
+GET     /supatype-env.json
 HEAD    /admin/cors-origins
 HEAD    /admin/preview-links
 HEAD    /admin/preview-links/*
@@ -70,6 +76,8 @@ HEAD    /platform/v1/*
 HEAD    /rest/v1/*
 HEAD    /storage/v1/*
 HEAD    /studio/proxy/*
+HEAD    /supatype-env.js
+HEAD    /supatype-env.json
 OPTIONS /admin/cors-origins
 OPTIONS /admin/preview-links
 OPTIONS /admin/preview-links/*
@@ -85,6 +93,8 @@ OPTIONS /platform/v1/*
 OPTIONS /rest/v1/*
 OPTIONS /storage/v1/*
 OPTIONS /studio/proxy/*
+OPTIONS /supatype-env.js
+OPTIONS /supatype-env.json
 PATCH   /admin/cors-origins
 PATCH   /admin/preview-links
 PATCH   /admin/preview-links/*
@@ -100,6 +110,8 @@ PATCH   /platform/v1/*
 PATCH   /rest/v1/*
 PATCH   /storage/v1/*
 PATCH   /studio/proxy/*
+PATCH   /supatype-env.js
+PATCH   /supatype-env.json
 POST    /admin/cors-origins
 POST    /admin/preview-links
 POST    /admin/preview-links/*
@@ -125,6 +137,8 @@ POST    /studio-admin/policies
 POST    /studio-admin/rls
 POST    /studio-config
 POST    /studio/proxy/*
+POST    /supatype-env.js
+POST    /supatype-env.json
 PUT     /admin/cors-origins
 PUT     /admin/preview-links
 PUT     /admin/preview-links/*
@@ -140,6 +154,8 @@ PUT     /platform/v1/*
 PUT     /rest/v1/*
 PUT     /storage/v1/*
 PUT     /studio/proxy/*
+PUT     /supatype-env.js
+PUT     /supatype-env.json
 TRACE   /admin/cors-origins
 TRACE   /admin/preview-links
 TRACE   /admin/preview-links/*
@@ -155,3 +171,5 @@ TRACE   /platform/v1/*
 TRACE   /rest/v1/*
 TRACE   /storage/v1/*
 TRACE   /studio/proxy/*
+TRACE   /supatype-env.js
+TRACE   /supatype-env.json

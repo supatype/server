@@ -29,16 +29,18 @@ const (
 	missingAnonKey = "public env unavailable: SUPATYPE_ANON_KEY is not set on this server"
 	serviceRoleKey = "public env refused: the configured SUPATYPE_ANON_KEY is a service role key, not an anon key"
 	missingURL     = "public env unavailable: set SUPATYPE_URL or SUPATYPE_API_EXTERNAL_URL to this deployment's public API address"
+
+	scriptType = "application/javascript; charset=utf-8"
 )
 
 // Values is what the two paths serve, and whether they serve it at all.
 type Values struct {
 	// Enabled is SUPATYPE_PUBLIC_ENV. Off, both paths are 404.
 	Enabled bool `json:"-"`
-	// URL is the public API address. Empty is a 503 naming the settings, never
+	// URL is the public API address. Empty is a fault naming the settings, never
 	// a guess from the request: the client has no other source for it.
 	URL string `json:"url"`
-	// AnonKey is SUPATYPE_ANON_KEY. Empty, or a service role token, is a 503.
+	// AnonKey is SUPATYPE_ANON_KEY. Empty, or a service role token, is a fault.
 	AnonKey string `json:"anonKey"`
 }
 
@@ -59,17 +61,27 @@ func PublicURL(supatypeURL, apiExternalURL string) string {
 // on the configuration are settled once: the values come from configuration
 // and do not change while it runs.
 //
-// Switched off is 404: the deployment chose not to publish. Misconfigured is
-// 503 naming the setting to fix: the deployment means to publish and cannot.
+// Switched off is 404 on both: the deployment chose not to publish.
+// Misconfigured, the document is 503 naming the settings to fix, for the CLI
+// and monitors. The script is 200 setting only that reason, because a browser
+// runs no script whose answer is an error status and tells the page nothing
+// about why it failed: the reason in the script is the only way the client can
+// name the fault on its first call.
 func Handler(v Values) http.Handler {
 	v.URL = strings.TrimSpace(v.URL)
 	v.AnonKey = strings.TrimSpace(v.AnonKey)
 	problem := misconfiguration(v)
 	// json.Marshal escapes <, >, & and U+2028/U+2029, so the literal cannot
 	// close the script element or end the statement early. A struct of two
-	// strings cannot fail to marshal.
+	// strings, or of one, cannot fail to marshal.
 	doc, _ := json.Marshal(v)
-	script := []byte(scriptGlobal + " = " + string(doc) + ";\n")
+	script := scriptOf(doc)
+	if problem != "" {
+		reason, _ := json.Marshal(struct {
+			Error string `json:"error"`
+		}{problem})
+		script = scriptOf(reason)
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -78,14 +90,30 @@ func Handler(v Values) http.Handler {
 			refuse(w, http.StatusMethodNotAllowed, "method not allowed")
 		case !v.Enabled:
 			refuse(w, http.StatusNotFound, "404 page not found")
+		case r.URL.Path == ScriptPath:
+			write(w, r, scriptType, cacheFor(problem), script)
 		case problem != "":
 			refuse(w, http.StatusServiceUnavailable, problem)
-		case r.URL.Path == ScriptPath:
-			write(w, r, "application/javascript; charset=utf-8", script)
 		default:
-			write(w, r, "application/json; charset=utf-8", doc)
+			write(w, r, "application/json; charset=utf-8", "no-cache", doc)
 		}
 	})
+}
+
+// scriptOf is the statement that hands literal to the client.
+func scriptOf(literal []byte) []byte {
+	return []byte(scriptGlobal + " = " + string(literal) + ";\n")
+}
+
+// cacheFor is the script's Cache-Control. no-cache rather than a max-age for
+// values: they change when the deployment's configuration does, and a browser
+// must revalidate rather than keep an old key. no-store for a reason, so
+// neither a browser nor a CDN keeps a fault the next change may fix.
+func cacheFor(problem string) string {
+	if problem != "" {
+		return "no-store"
+	}
+	return "no-cache"
 }
 
 // misconfiguration is everything that stops v being served, one problem per
@@ -128,13 +156,11 @@ func jwtRole(key string) string {
 	return claims.Role
 }
 
-// write sends body with the headers both paths share. no-cache rather than a
-// max-age: the values change when the deployment's configuration does, and a
-// browser must revalidate rather than keep an old key.
-func write(w http.ResponseWriter, r *http.Request, contentType string, body []byte) {
+// write sends body with status 200 and the headers both paths share.
+func write(w http.ResponseWriter, r *http.Request, contentType, cacheControl string, body []byte) {
 	h := w.Header()
 	h.Set("Content-Type", contentType)
-	h.Set("Cache-Control", "no-cache")
+	h.Set("Cache-Control", cacheControl)
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)

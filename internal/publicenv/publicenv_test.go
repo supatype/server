@@ -136,12 +136,14 @@ func jwtWithRole(role string) string {
 	return enc([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc([]byte(`{"role":"`+role+`"}`)) + ".sig"
 }
 
-// A deployment that cannot serve correct values names every setting to fix,
-// in the order key then URL, with 503 and no-store, and never echoes the key
-// it refused. Naming only the first problem sends the deployer back for each.
-func TestMisconfigurationIs503NamingTheSetting(t *testing.T) {
+// misconfigurations is every configuration that cannot be served, with the
+// settings its answer must name, in order: key before URL.
+func misconfigurations() map[string]struct {
+	mutate func(*Values)
+	names  []string
+} {
 	serviceKey := jwtWithRole("service_role")
-	for name, tc := range map[string]struct {
+	return map[string]struct {
 		mutate func(*Values)
 		names  []string
 	}{
@@ -150,34 +152,107 @@ func TestMisconfigurationIs503NamingTheSetting(t *testing.T) {
 		"a service role anon key":       {func(v *Values) { v.AnonKey = serviceKey }, []string{"SUPATYPE_ANON_KEY", "service role key"}},
 		"no anon key and no URL":        {func(v *Values) { v.AnonKey = ""; v.URL = "" }, []string{"SUPATYPE_ANON_KEY is not set", "SUPATYPE_URL", "SUPATYPE_API_EXTERNAL_URL"}},
 		"a service role key and no URL": {func(v *Values) { v.AnonKey = serviceKey; v.URL = "" }, []string{"service role key", "SUPATYPE_URL", "SUPATYPE_API_EXTERNAL_URL"}},
-	} {
+	}
+}
+
+// namesInOrder reports the first of names that text does not carry after the
+// one before it, or "" when it carries them all in order.
+func namesInOrder(text string, names []string) string {
+	for _, want := range names {
+		i := strings.Index(text, want)
+		if i < 0 {
+			return want
+		}
+		text = text[i+len(want):]
+	}
+	return ""
+}
+
+// The document a deployment cannot serve correctly names every setting to fix,
+// in the order key then URL, with 503 and no-store, and never echoes the key it
+// refused. Naming only the first problem sends the deployer back for each.
+func TestMisconfiguredJSONIs503NamingTheSetting(t *testing.T) {
+	for name, tc := range misconfigurations() {
 		v := on()
 		tc.mutate(&v)
-		for _, path := range []string{JSONPath, ScriptPath} {
-			for _, method := range []string{http.MethodGet, http.MethodHead} {
-				rec := serve(t, v, method, path)
-				if rec.Code != http.StatusServiceUnavailable {
-					t.Errorf("%s: %s %s status %d, want 503", name, method, path, rec.Code)
-				}
-				if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-					t.Errorf("%s: %s %s Cache-Control = %q, want no-store", name, method, path, got)
-				}
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			rec := serve(t, v, method, JSONPath)
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Errorf("%s: %s status %d, want 503", name, method, rec.Code)
 			}
-			body := serve(t, v, http.MethodGet, path).Body.String()
-			rest := body
-			for _, want := range tc.names {
-				i := strings.Index(rest, want)
-				if i < 0 {
-					t.Errorf("%s: %s body %q does not name %s, or not in order", name, path, body, want)
-					break
-				}
-				rest = rest[i+len(want):]
-			}
-			if strings.Contains(body, serviceKey) || strings.Contains(body, "__SUPATYPE_ENV__") {
-				t.Errorf("%s: %s body carries values: %q", name, path, body)
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("%s: %s Cache-Control = %q, want no-store", name, method, got)
 			}
 		}
+		body := serve(t, v, http.MethodGet, JSONPath).Body.String()
+		if missing := namesInOrder(body, tc.names); missing != "" {
+			t.Errorf("%s: body %q does not name %s, or not in order", name, body, missing)
+		}
+		if strings.Contains(body, jwtWithRole("service_role")) || strings.Contains(body, "__SUPATYPE_ENV__") {
+			t.Errorf("%s: body carries values: %q", name, body)
+		}
 	}
+}
+
+// A browser neither runs a script whose answer is an error status nor shows
+// the page why it failed. So the script answers 200 with the reason in place
+// of the values, the same text the document's 503 carries, and no-store so the
+// fixed configuration is read on the next load. It never carries a key.
+func TestMisconfiguredScriptCarriesTheReason(t *testing.T) {
+	for name, tc := range misconfigurations() {
+		v := on()
+		tc.mutate(&v)
+		rec := serve(t, v, http.MethodGet, ScriptPath)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d, want 200", name, rec.Code)
+		}
+		checkErrorScriptHeaders(t, name, rec)
+		body := rec.Body.String()
+		got := decodeScript(t, name, body)
+		want := strings.TrimSuffix(serve(t, v, http.MethodGet, JSONPath).Body.String(), "\n")
+		if len(got) != 1 || got["error"] != want {
+			t.Errorf("%s: script sets %v, want only error %q", name, got, want)
+		}
+		if missing := namesInOrder(got["error"], tc.names); missing != "" {
+			t.Errorf("%s: error %q does not name %s, or not in order", name, got["error"], missing)
+		}
+		if strings.Contains(body, jwtWithRole("service_role")) {
+			t.Errorf("%s: script carries the refused key: %q", name, body)
+		}
+		head := serve(t, v, http.MethodHead, ScriptPath)
+		if head.Code != http.StatusOK || head.Body.Len() != 0 {
+			t.Errorf("%s: HEAD = %d with %d body bytes", name, head.Code, head.Body.Len())
+		}
+		checkErrorScriptHeaders(t, name+" HEAD", head)
+	}
+}
+
+func checkErrorScriptHeaders(t *testing.T, name string, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	for h, want := range map[string]string{
+		"Content-Type":           "application/javascript; charset=utf-8",
+		"Cache-Control":          "no-store",
+		"X-Content-Type-Options": "nosniff",
+	} {
+		if got := rec.Header().Get(h); got != want {
+			t.Errorf("%s: %s = %q, want %q", name, h, got, want)
+		}
+	}
+}
+
+// decodeScript is the object literal a script body assigns, which must be the
+// whole statement and valid JSON.
+func decodeScript(t *testing.T, name, body string) map[string]string {
+	t.Helper()
+	const prefix, suffix = "window.__SUPATYPE_ENV__ = ", ";\n"
+	if !strings.HasPrefix(body, prefix) || !strings.HasSuffix(body, suffix) {
+		t.Fatalf("%s: body is not one assignment: %q", name, body)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(body, prefix), suffix)), &got); err != nil {
+		t.Fatalf("%s: literal is not JSON: %v: %q", name, err, body)
+	}
+	return got
 }
 
 // Only a token that decodes and claims service_role is refused. An anon token

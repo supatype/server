@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/samlsp"
+	"github.com/supatype/saml"
+	"github.com/supatype/saml/samlsp"
 )
 
 // getSAMLServiceProvider generates a new service provider object with the
@@ -70,9 +70,8 @@ func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
 	for i := range metadata.SPSSODescriptors {
 		// we set this to false since the IdP initiated flow can only
 		// sign the Assertion, and not the full Request
-		// unfortunately this is hardcoded in the crewjam library if
-		// signatures (instead of encryption) are supported
-		// https://github.com/crewjam/saml/blob/v0.4.8/service_provider.go#L217
+		// unfortunately ServiceProvider.Metadata in github.com/supatype/saml
+		// hardcodes this if signatures (instead of encryption) are supported
 		metadata.SPSSODescriptors[i].AuthnRequestsSigned = nil
 
 		// advertize the requested NameID formats (either persistent or email address)

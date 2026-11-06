@@ -37,6 +37,7 @@ func NewCleanup(config *conf.GlobalConfiguration) *Cleanup {
 	tableRefreshTokens := RefreshToken{}.TableName()
 	tableSessions := Session{}.TableName()
 	tableRelayStates := SAMLRelayState{}.TableName()
+	tableConsumedAssertions := SAMLConsumedAssertion{}.TableName()
 	tableFlowStates := FlowState{}.TableName()
 	tableMFAChallenges := Challenge{}.TableName()
 	tableMFAFactors := Factor{}.TableName()
@@ -57,6 +58,7 @@ func NewCleanup(config *conf.GlobalConfiguration) *Cleanup {
 		// overwork the database
 		fmt.Sprintf("delete from %q where id in (select id from %q where not_after < now() - interval '72 hours' limit 10 for update skip locked);", tableSessions, tableSessions),
 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableRelayStates, tableRelayStates),
+		fmt.Sprintf("delete from %q where (sso_provider_id, assertion_id) in (select sso_provider_id, assertion_id from %q where expires_at < now() limit 100 for update skip locked);", tableConsumedAssertions, tableConsumedAssertions),
 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableFlowStates, tableFlowStates),
 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableOAuthClientStates, tableOAuthClientStates),
 		fmt.Sprintf("delete from %q where id in (select id from %q where created_at < now() - interval '24 hours' limit 100 for update skip locked);", tableMFAChallenges, tableMFAChallenges),

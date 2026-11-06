@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
+	"github.com/supatype/saml"
 	"github.com/supatype/server/internal/auth/models"
 )
 
@@ -66,26 +66,29 @@ func (a *SAMLAssertion) UserID() string {
 // be used to identify a user). The boolean returned identifies if the user ID
 // is persistent. If it's an email address, it's lowercased just in case.
 func (a *SAMLAssertion) SubjectID() (string, bool) {
-	if a.Subject == nil {
+	nameID := a.nameID()
+	if nameID == nil || nameID.Value == "" {
 		return "", false
 	}
 
-	if a.Subject.NameID == nil {
-		return "", false
-	}
-
-	if a.Subject.NameID.Value == "" {
-		return "", false
-	}
-
-	if a.Subject.NameID.Format == string(saml.EmailAddressNameIDFormat) {
-		return strings.ToLower(strings.TrimSpace(a.Subject.NameID.Value)), true
+	if nameID.Format == string(saml.EmailAddressNameIDFormat) {
+		return strings.ToLower(strings.TrimSpace(nameID.Value)), true
 	}
 
 	// all other NameID formats are regarded as persistent
-	isPersistent := a.Subject.NameID.Format != string(saml.TransientNameIDFormat)
+	isPersistent := nameID.Format != string(saml.TransientNameIDFormat)
 
-	return a.Subject.NameID.Value, isPersistent
+	return nameID.Value, isPersistent
+}
+
+// nameID returns the subject's NameID, or nil. Subject and NameID are both
+// optional: an assertion can identify the user with the subject-id attribute
+// alone.
+func (a *SAMLAssertion) nameID() *saml.NameID {
+	if a.Subject == nil {
+		return nil
+	}
+	return a.Subject.NameID
 }
 
 // Email returns the best guess for an email address.
@@ -107,8 +110,8 @@ func (a *SAMLAssertion) Email() string {
 		}
 	}
 
-	if a.Subject.NameID.Format == string(saml.EmailAddressNameIDFormat) {
-		return a.Subject.NameID.Value
+	if nameID := a.nameID(); nameID != nil && nameID.Format == string(saml.EmailAddressNameIDFormat) {
+		return nameID.Value
 	}
 
 	return ""
@@ -185,4 +188,26 @@ func (a *SAMLAssertion) NotAfter() time.Time {
 	}
 
 	return notOnOrAfter
+}
+
+// AcceptableUntil returns a time after which the SAML library refuses this
+// assertion: the latest NotOnOrAfter of its Conditions and subject
+// confirmations, plus the clock skew the library allows. A record of the
+// assertion kept until then outlives every chance to replay it.
+func (a *SAMLAssertion) AcceptableUntil() time.Time {
+	var latest time.Time
+
+	if a.Conditions != nil {
+		latest = a.Conditions.NotOnOrAfter
+	}
+	if a.Subject != nil {
+		for _, confirmation := range a.Subject.SubjectConfirmations {
+			data := confirmation.SubjectConfirmationData
+			if data != nil && data.NotOnOrAfter.After(latest) {
+				latest = data.NotOnOrAfter
+			}
+		}
+	}
+
+	return latest.Add(saml.MaxClockSkew).UTC()
 }

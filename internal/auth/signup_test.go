@@ -181,31 +181,50 @@ func (ts *SignupTestSuite) postSignup(body map[string]interface{}) *httptest.Res
 	return w
 }
 
-// A password with no email or phone is a broken signup form, not a request for
-// an anonymous account. Whether anonymous sign-ins are on must not change that:
-// with them on, the old routing created an anonymous user and dropped the
-// password without a word.
-func (ts *SignupTestSuite) TestSignupPasswordWithoutEmailOrPhone() {
+// A signup that names an email or phone field but leaves it blank is a broken
+// signup form, not a request for an anonymous account, whatever the password is
+// and whether anonymous sign-ins are on. A password with neither key at all is
+// refused the same way under the older, provider-neutral message.
+func (ts *SignupTestSuite) TestSignupWithoutEmailOrPhone() {
 	defer func(was bool) { ts.Config.External.AnonymousUsers.Enabled = was }(ts.Config.External.AnonymousUsers.Enabled)
 
+	cases := []struct {
+		name string
+		body map[string]interface{}
+		msg  string
+	}{
+		{"blank email, no password", map[string]interface{}{"email": ""}, "Email is required"},
+		{"blank email, blank password", map[string]interface{}{"email": "", "password": ""}, "Email is required"},
+		{"blank email, weak password", map[string]interface{}{"email": "", "password": "x"}, "Email is required"},
+		{"blank email, strong password", map[string]interface{}{"email": "", "password": "test-password"}, "Email is required"},
+		{"blank phone, no password", map[string]interface{}{"phone": ""}, "Phone is required"},
+		{"blank phone, blank password", map[string]interface{}{"phone": "", "password": ""}, "Phone is required"},
+		{"blank phone, weak password", map[string]interface{}{"phone": "", "password": "x"}, "Phone is required"},
+		{"blank phone, strong password", map[string]interface{}{"phone": "", "password": "test-password"}, "Phone is required"},
+		{"blank phone, data", map[string]interface{}{"phone": "", "data": map[string]interface{}{"a": 1}}, "Phone is required"},
+		{"blank email and phone", map[string]interface{}{"email": "", "phone": ""}, "Email is required"},
+		{"password only", map[string]interface{}{"password": "test-password"}, "Signup requires an email or phone number"},
+	}
 	for _, anonymous := range []bool{false, true} {
-		ts.Run(fmt.Sprintf("anonymous=%v", anonymous), func() {
-			ts.Config.External.AnonymousUsers.Enabled = anonymous
-			before, err := ts.API.db.Count(&models.User{})
-			require.NoError(ts.T(), err)
+		for _, c := range cases {
+			ts.Run(fmt.Sprintf("anonymous=%v/%s", anonymous, c.name), func() {
+				ts.Config.External.AnonymousUsers.Enabled = anonymous
+				before, err := ts.API.db.Count(&models.User{})
+				require.NoError(ts.T(), err)
 
-			w := ts.postSignup(map[string]interface{}{"email": "", "password": "test-password"})
+				w := ts.postSignup(c.body)
 
-			after, err := ts.API.db.Count(&models.User{})
-			require.NoError(ts.T(), err)
-			assert.Equal(ts.T(), before, after, "no user may be created")
+				after, err := ts.API.db.Count(&models.User{})
+				require.NoError(ts.T(), err)
+				assert.Equal(ts.T(), before, after, "no user may be created")
 
-			require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
-			var data map[string]interface{}
-			require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
-			assert.Equal(ts.T(), "validation_failed", data["error_code"])
-			assert.Equal(ts.T(), "Signup requires an email or phone number", data["msg"])
-		})
+				require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+				var data map[string]interface{}
+				require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+				assert.Equal(ts.T(), "validation_failed", data["error_code"])
+				assert.Equal(ts.T(), c.msg, data["msg"])
+			})
+		}
 	}
 }
 
@@ -223,26 +242,34 @@ func (ts *SignupTestSuite) TestSignupEmptyBodyWithAnonymousDisabled() {
 	assert.Equal(ts.T(), "anonymous_provider_disabled", data["error_code"])
 }
 
-// A phone number and a password with no email is a phone signup, and the new
-// email-or-phone check must not catch it.
+// A phone number and a password is a phone signup, and the email-or-phone
+// check must not catch it, with no email key or with the blank one the OTP
+// endpoint sends when it signs a new phone up.
 func (ts *SignupTestSuite) TestSignupWithPhoneOnly() {
 	defer func(phone conf.PhoneProviderConfiguration, sms conf.SmsProviderConfiguration) {
 		ts.Config.External.Phone = phone
 		ts.Config.Sms = sms
 	}(ts.Config.External.Phone, ts.Config.Sms)
 	ts.Config.External.Phone.Enabled = true
-	ts.Config.Sms.TestOTP = map[string]string{"1234567890": "000000"}
+	ts.Config.Sms.TestOTP = map[string]string{"1234567890": "000000", "1234567891": "000000"}
 	ts.Config.Sms.Provider = "twilio"
 	ts.Config.Sms.Twilio.AccountSid = "fake-sid"
 	ts.Config.Sms.Twilio.AuthToken = "fake-token"
 	ts.Config.Sms.Twilio.MessageServiceSid = "fake-message-service-sid"
 
-	w := ts.postSignup(map[string]interface{}{"phone": "1234567890", "password": "test-password"})
+	for _, body := range []map[string]interface{}{
+		{"phone": "1234567890", "password": "test-password"},
+		{"email": "", "phone": "1234567891", "password": "test-password"},
+	} {
+		ts.Run(fmt.Sprint(body), func() {
+			w := ts.postSignup(body)
 
-	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
-	data := models.User{}
-	require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
-	assert.Equal(ts.T(), "1234567890", data.GetPhone())
-	assert.False(ts.T(), data.IsAnonymous)
-	assert.Equal(ts.T(), "phone", data.AppMetaData["provider"])
+			require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+			data := models.User{}
+			require.NoError(ts.T(), json.NewDecoder(w.Body).Decode(&data))
+			assert.Equal(ts.T(), body["phone"], data.GetPhone())
+			assert.False(ts.T(), data.IsAnonymous)
+			assert.Equal(ts.T(), "phone", data.AppMetaData["provider"])
+		})
+	}
 }

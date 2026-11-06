@@ -197,6 +197,7 @@ func TestSPAFallbackWhenNoAssetOrPrecompressed(t *testing.T) {
 	}
 }
 
+// A directory with no index.html is neither the SPA shell nor a listing.
 func TestSPADoesNotMaskExistingDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -213,8 +214,8 @@ func TestSPADoesNotMaskExistingDirectory(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 	b, _ := io.ReadAll(rec.Body)
 	if bytes.Contains(b, []byte("<spa/>")) {

@@ -31,11 +31,17 @@ type Config struct {
 	Mode string `envconfig:"SUPATYPE_MODE" default:"dev"`
 
 	// SupatypeURL is the public base URL of this deployment (injected into the Deno edge subprocess as SUPATYPE_URL).
-	// When empty, serve passes API_EXTERNAL_URL from the auth configuration as a fallback for the Deno child only.
+	// When empty, serve falls back to API_EXTERNAL_URL from the auth configuration, for the Deno child
+	// and for the public env endpoints.
 	SupatypeURL string `envconfig:"SUPATYPE_URL"`
 
 	// AnonKey is the publishable anon JWT (SUPATYPE_ANON_KEY for edge functions).
 	AnonKey string `envconfig:"SUPATYPE_ANON_KEY"`
+
+	// PublicEnv serves the deployment's public address and anon key at /supatype-env.json and
+	// /supatype-env.js, for `supatype build` and for a static app's script tag. On by default;
+	// SUPATYPE_PUBLIC_ENV=false answers both with 404, for an API-only project.
+	PublicEnv DefaultOnSwitch `envconfig:"SUPATYPE_PUBLIC_ENV"`
 
 	// CorsAllowOrigins is a comma-separated list of browser Origins added to the default CORS
 	// allowlist, after the site URL (managed: then the manifest's cors_allowed_origins). A list

@@ -308,3 +308,21 @@ func TestProjectKeyspaceAddressFallsBackToTheKeyspaceAddress(t *testing.T) {
 		})
 	}
 }
+
+// SUPATYPE_PUBLIC_ENV is on unless a deployment turns it off, and a blank line
+// in a .env means unset, so on.
+func TestPublicEnvSwitch(t *testing.T) {
+	for value, want := range map[string]bool{"": true, "  ": true, "true": true, "false": false, "off": false} {
+		t.Setenv("SUPATYPE_PUBLIC_ENV", value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", value, err)
+		}
+		if cfg.PublicEnv.On() != want {
+			t.Errorf("SUPATYPE_PUBLIC_ENV=%q: On() = %v, want %v", value, cfg.PublicEnv.On(), want)
+		}
+	}
+	if !(&Config{}).PublicEnv.On() {
+		t.Error("a Config built without Load must serve the public env")
+	}
+}

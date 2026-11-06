@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/supatype/server/internal/auth/models"
@@ -47,13 +46,7 @@ func TestSSO(t *testing.T) {
 func (ts *SSOTestSuite) SetupTest() {
 	models.TruncateAll(ts.API.db)
 
-	claims := &AccessTokenClaims{
-		Role: "supatype_admin",
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(ts.Config.JWT.Secret))
-	require.NoError(ts.T(), err, "Error generating admin jwt")
-
-	ts.AdminJWT = token
+	ts.AdminJWT = adminToken(ts.T(), ts.Config)
 }
 
 func (ts *SSOTestSuite) TestNonAdminJWT() {

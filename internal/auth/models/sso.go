@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/samlsp"
 	"github.com/gofrs/uuid"
 	"github.com/pkg/errors"
+	"github.com/supatype/saml"
+	"github.com/supatype/saml/samlsp"
 	"github.com/supatype/server/internal/auth/storage"
 )
 

@@ -124,6 +124,14 @@ func (e SAMLRelayStateNotFoundError) Is(target error) bool {
 	return target == errNotFound
 }
 
+// SAMLAssertionReplayedError represents a SAML assertion that was already
+// accepted and has not yet expired.
+type SAMLAssertionReplayedError struct{}
+
+func (e SAMLAssertionReplayedError) Error() string {
+	return "SAML assertion has already been used"
+}
+
 // FlowStateNotFoundError represents an error when an FlowState can't be
 // found.
 type FlowStateNotFoundError struct{}

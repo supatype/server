@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/crewjam/saml"
 	"github.com/stretchr/testify/require"
+	"github.com/supatype/saml"
 	"github.com/supatype/server/internal/conf"
 )
 

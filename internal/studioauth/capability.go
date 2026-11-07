@@ -182,7 +182,13 @@ var ssoPagePaths = map[string]bool{
 // readsSSOPage reports whether a request is one of the reads Studio's SSO page
 // is built from.
 func readsSSOPage(method, path string) bool {
-	return isReadOnly(method) && (under(path, "/auth/v1/admin/sso") || ssoPagePaths[path])
+	return readsSSOProviders(method, path) || (isReadOnly(method) && ssoPagePaths[path])
+}
+
+// readsSSOProviders reports whether a request reads the SSO providers through
+// the auth admin API, which admits only the service role.
+func readsSSOProviders(method, path string) bool {
+	return isReadOnly(method) && under(path, "/auth/v1/admin/sso")
 }
 
 // allowsMetadata judges a request to the read-only catalogue. The gateway

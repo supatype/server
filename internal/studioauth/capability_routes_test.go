@@ -414,3 +414,23 @@ func TestViewerReadsSSOProvidersOnly(t *testing.T) {
 		t.Errorf("viewer SSO read through the proxy: landed on %q, want it passed on", landed)
 	}
 }
+
+// The auth admin API admits only the service role, so a viewer's read of the
+// SSO providers went upstream with a Studio token and was refused "User not
+// allowed" (issue 53, retest). The read goes as the service role, as the
+// metadata catalogue's does, while the viewer's write is still refused before
+// it leaves the proxy.
+func TestViewerSSOReadReachesTheAuthServerAsTheServiceRole(t *testing.T) {
+	for _, mode := range []string{"", ModeStudio} {
+		next, rec := proxyAs(t, "viewer", mode, http.MethodGet, "/auth/v1/admin/sso/providers")
+		if !next.reached || next.auth != "Bearer service-role-key" {
+			t.Errorf("mode %q: reached %v with authorization %q, want the service role (%d %s)", mode, next.reached, next.auth, rec.Code, rec.Body.String())
+		}
+	}
+	if next, rec := proxyAs(t, "viewer", "", http.MethodPost, "/auth/v1/admin/sso/providers"); next.reached || rec.Code != http.StatusForbidden {
+		t.Errorf("viewer SSO write: reached %v with %d, want 403 before the upstream", next.reached, rec.Code)
+	}
+	if next, _ := proxyAs(t, "viewer", "", http.MethodGet, "/auth/v1/settings"); next.auth == "Bearer service-role-key" {
+		t.Error("viewer settings read: sent as the service role, want only the SSO provider reads elevated")
+	}
+}

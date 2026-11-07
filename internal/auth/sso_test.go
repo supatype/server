@@ -1059,3 +1059,92 @@ func (ts *SSOTestSuite) TestDomainVerifyDevOtherDomain() {
 	require.False(ts.T(), ts.verifyDomain(id, "example.com", http.StatusOK).Verified)
 	require.Equal(ts.T(), 1, *lookups)
 }
+
+// serveBody answers every request with status and body.
+func (ts *SSOTestSuite) serveBody(status int, body string) string {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	ts.T().Cleanup(server.Close)
+	return server.URL + "/metadata"
+}
+
+// serveSlowly answers after longer than the fetch timeout the test sets.
+func (ts *SSOTestSuite) serveSlowly() string {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+		_, _ = w.Write([]byte("secret-body"))
+	}))
+	ts.T().Cleanup(server.Close)
+	return server.URL + "/metadata"
+}
+
+// closedURL is a metadata URL on a port nothing listens on.
+func (ts *SSOTestSuite) closedURL() string {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	return server.URL + "/metadata"
+}
+
+// The server fetches metadata_url itself, so a URL that works from the
+// admin's machine can still fail from the server. Create and update both
+// answer 400 saml_metadata_fetch_failed naming the host and the reason, and
+// never echo what the URL answered with.
+func (ts *SSOTestSuite) TestAdminSSOProviderMetadataURLFetchFailure() {
+	ts.inMode("dev")
+	id := ts.createProviderWithDomains("http://idp.local/fetch-failure")
+	previousTimeout := samlMetadataFetchTimeout
+	samlMetadataFetchTimeout = 200 * time.Millisecond
+	ts.T().Cleanup(func() { samlMetadataFetchTimeout = previousTimeout })
+
+	cases := []struct {
+		name, url, reason string
+	}{
+		{"ConnectionRefused", ts.closedURL(), "connection refused"},
+		{"ErrorStatus", ts.serveBody(http.StatusInternalServerError, "secret-body"), "HTTP status 500"},
+		{"NotXML", ts.serveBody(http.StatusOK, "secret-body"), "not SAML metadata XML"},
+		{"Timeout", ts.serveSlowly(), "timed out"},
+	}
+	for _, c := range cases {
+		parsed, err := url.Parse(c.url)
+		require.NoError(ts.T(), err)
+		requests := []struct {
+			method, path string
+			body         map[string]interface{}
+		}{
+			{http.MethodPost, "", map[string]interface{}{"type": "saml", "metadata_url": c.url}},
+			{http.MethodPut, "/" + id, map[string]interface{}{"metadata_url": c.url}},
+		}
+		for _, req := range requests {
+			ts.Run(c.name+req.method, func() {
+				w := ts.adminSSORequest(req.method, req.path, req.body)
+				require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+				var resp struct {
+					ErrorCode string `json:"error_code"`
+					Msg       string `json:"msg"`
+				}
+				require.NoError(ts.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Equal(ts.T(), "saml_metadata_fetch_failed", resp.ErrorCode)
+				require.Contains(ts.T(), resp.Msg, parsed.Host)
+				require.Contains(ts.T(), resp.Msg, c.reason)
+				require.Contains(ts.T(), resp.Msg, "reachable from the server")
+				require.NotContains(ts.T(), w.Body.String(), "secret-body")
+			})
+		}
+	}
+}
+
+// Pasted metadata_xml that is not XML is the admin's mistake, so it is a 400.
+func (ts *SSOTestSuite) TestAdminCreateSSOProviderMetadataXMLNotXML() {
+	w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+		"type":         "saml",
+		"metadata_xml": "not xml",
+	})
+	require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+	require.Contains(ts.T(), w.Body.String(), `"error_code":"validation_failed"`)
+	require.Contains(ts.T(), w.Body.String(), "metadata_xml is not SAML metadata XML")
+}

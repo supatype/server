@@ -156,9 +156,12 @@ func allowsNamedRoute(perms StudioPermissions, method, path string) (allowed, na
 	// SSO providers decide which identity provider may sign people in, and as
 	// whom, so changing them or verifying their domains goes with granting
 	// Studio roles (owner decision 2026-11-06). Reading them is user
-	// administration, below.
+	// administration, and schema view too: a viewer reads the SSO page as it
+	// reads the members list (owner decision 2026-11-07).
 	case under(path, "/auth/v1/admin/sso") && !isReadOnly(method):
 		return perms.ManageMembers, true
+	case readsSSOPage(method, path):
+		return perms.ManageUsers || perms.SchemaView, true
 	// The project's own users are a separate capability from content rows.
 	case under(path, "/auth/v1"):
 		return perms.ManageUsers, true
@@ -167,6 +170,25 @@ func allowsNamedRoute(perms StudioPermissions, method, path string) (allowed, na
 		return perms.ManageBuckets || (isReadOnly(method) && perms.Read), true
 	}
 	return false, false
+}
+
+// ssoPagePaths are the auth server's public reads the SSO page shows besides
+// the providers: whether SAML is on, and the service provider's metadata.
+var ssoPagePaths = map[string]bool{
+	"/auth/v1/settings":          true,
+	"/auth/v1/sso/saml/metadata": true,
+}
+
+// readsSSOPage reports whether a request is one of the reads Studio's SSO page
+// is built from.
+func readsSSOPage(method, path string) bool {
+	return readsSSOProviders(method, path) || (isReadOnly(method) && ssoPagePaths[path])
+}
+
+// readsSSOProviders reports whether a request reads the SSO providers through
+// the auth admin API, which admits only the service role.
+func readsSSOProviders(method, path string) bool {
+	return isReadOnly(method) && under(path, "/auth/v1/admin/sso")
 }
 
 // allowsMetadata judges a request to the read-only catalogue. The gateway

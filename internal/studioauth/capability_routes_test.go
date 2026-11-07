@@ -379,3 +379,58 @@ func TestProxyRefusesDeveloperSSOWrites(t *testing.T) {
 		t.Errorf("admin SSO create: landed on %q, want it passed on", landed)
 	}
 }
+
+// A viewer reads the SSO page as it reads the Studio members list: the
+// providers can be listed and opened, never changed, and the rest of the auth
+// API stays closed to them (owner decision 2026-11-07, issue 53).
+func TestViewerReadsSSOProvidersOnly(t *testing.T) {
+	viewer, _ := PermissionsForRole("viewer")
+	for _, rule := range []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodGet, "/auth/v1/admin/sso/providers", true},
+		{http.MethodGet, "/auth/v1/admin/sso/providers/abc", true},
+		// The page also shows whether SAML is on, and the SP metadata.
+		{http.MethodGet, "/auth/v1/settings", true},
+		{http.MethodGet, "/auth/v1/sso/saml/metadata", true},
+		{http.MethodPost, "/auth/v1/sso/saml/acs", false},
+		{http.MethodPut, "/auth/v1/settings", false},
+		{http.MethodPost, "/auth/v1/admin/sso/providers", false},
+		{http.MethodDelete, "/auth/v1/admin/sso/providers/abc", false},
+		{http.MethodPost, "/auth/v1/admin/sso/providers/abc/domains/acme.com/verify", false},
+		{http.MethodGet, "/auth/v1/admin/users", false},
+		{http.MethodGet, "/auth/v1/admin/ssox", false},
+	} {
+		if got := AllowsRequest(viewer, rule.method, rule.path); got != rule.want {
+			t.Errorf("viewer %s %s: got %v, want %v", rule.method, rule.path, got, rule.want)
+		}
+	}
+	editor, _ := PermissionsForRole("editor")
+	if AllowsRequest(editor, http.MethodGet, "/auth/v1/admin/sso/providers") {
+		t.Error("editor SSO read: allowed, want refused (no schemaView, no manageUsers)")
+	}
+	if _, landed := proxyThroughRouter(t, "viewer")(http.MethodGet, "/studio/proxy/auth/v1/admin/sso/providers"); landed != "app" {
+		t.Errorf("viewer SSO read through the proxy: landed on %q, want it passed on", landed)
+	}
+}
+
+// The auth admin API admits only the service role, so a viewer's read of the
+// SSO providers went upstream with a Studio token and was refused "User not
+// allowed" (issue 53, retest). The read goes as the service role, as the
+// metadata catalogue's does, while the viewer's write is still refused before
+// it leaves the proxy.
+func TestViewerSSOReadReachesTheAuthServerAsTheServiceRole(t *testing.T) {
+	for _, mode := range []string{"", ModeStudio} {
+		next, rec := proxyAs(t, "viewer", mode, http.MethodGet, "/auth/v1/admin/sso/providers")
+		if !next.reached || next.auth != "Bearer service-role-key" {
+			t.Errorf("mode %q: reached %v with authorization %q, want the service role (%d %s)", mode, next.reached, next.auth, rec.Code, rec.Body.String())
+		}
+	}
+	if next, rec := proxyAs(t, "viewer", "", http.MethodPost, "/auth/v1/admin/sso/providers"); next.reached || rec.Code != http.StatusForbidden {
+		t.Errorf("viewer SSO write: reached %v with %d, want 403 before the upstream", next.reached, rec.Code)
+	}
+	if next, _ := proxyAs(t, "viewer", "", http.MethodGet, "/auth/v1/settings"); next.auth == "Bearer service-role-key" {
+		t.Error("viewer settings read: sent as the service role, want only the SSO provider reads elevated")
+	}
+}

@@ -383,6 +383,12 @@ func admitActingMode(w http.ResponseWriter, req *http.Request, result Result, pe
 	if perms.ElevatedSQL && (functionsAdmin || isServiceRoleOnly(req.Method, path)) {
 		return adm, true
 	}
+	// Reading the SSO providers goes as the service role for every role
+	// AllowsRequest admitted to it, a viewer included: the auth admin API admits
+	// nothing else, and only reads get this far (issue 53).
+	if readsSSOProviders(req.Method, path) {
+		return adm, true
+	}
 	adm.mode = mode
 	if mode == ModeStudio {
 		return admitAsStudio(w, req, adm, path)

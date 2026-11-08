@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 647 names
+# total: 567 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -925,6 +925,8 @@ SUPATYPE_PROFILER_PORT
     struct internal/conf.GlobalConfiguration
 SUPATYPE_PROJECT_KEYSPACE_ADDR
     struct internal/config.Config
+SUPATYPE_PUBLIC_ENV
+    struct internal/config.Config
 SUPATYPE_RATE_LIMIT_ANONYMOUS_USERS
     struct internal/conf.GlobalConfiguration
 SUPATYPE_RATE_LIMIT_EMAIL_SENT
@@ -965,179 +967,17 @@ SUPATYPE_RESEND_FROM
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SAML_ALLOW_ENCRYPTED_ASSERTIONS
     struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_AUTHORITYKEYID
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_BASICCONSTRAINTSVALID
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_CRLDISTRIBUTIONPOINTS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_DNSNAMES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EMAILADDRESSES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EXCLUDEDDNSDOMAINS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EXCLUDEDEMAILADDRESSES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EXCLUDEDIPRANGES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EXCLUDEDURIDOMAINS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EXTENSIONS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EXTKEYUSAGE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_EXTRAEXTENSIONS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_INHIBITANYPOLICY
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_INHIBITANYPOLICYZERO
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_INHIBITPOLICYMAPPING
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_INHIBITPOLICYMAPPINGZERO
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_IPADDRESSES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISCA
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_COMMONNAME
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_COUNTRY
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_EXTRANAMES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_LOCALITY
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_NAMES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_ORGANIZATION
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_ORGANIZATIONALUNIT
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_POSTALCODE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_PROVINCE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_SERIALNUMBER
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUER_STREETADDRESS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_ISSUINGCERTIFICATEURL
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_KEYUSAGE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_MAXPATHLEN
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_MAXPATHLENZERO
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_NOTAFTER
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_NOTBEFORE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_OCSPSERVER
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_PERMITTEDDNSDOMAINS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_PERMITTEDDNSDOMAINSCRITICAL
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_PERMITTEDEMAILADDRESSES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_PERMITTEDIPRANGES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_PERMITTEDURIDOMAINS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_POLICIES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_POLICYIDENTIFIERS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_POLICYMAPPINGS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_PUBLICKEY
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_PUBLICKEYALGORITHM
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_RAW
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_RAWISSUER
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_RAWSUBJECT
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_RAWSUBJECTPUBLICKEYINFO
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_RAWTBSCERTIFICATE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_REQUIREEXPLICITPOLICY
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_REQUIREEXPLICITPOLICYZERO
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SERIALNUMBER
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SIGNATURE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SIGNATUREALGORITHM
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECTKEYID
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_COMMONNAME
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_COUNTRY
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_EXTRANAMES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_LOCALITY
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_NAMES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_ORGANIZATION
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_ORGANIZATIONALUNIT
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_POSTALCODE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_PROVINCE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_SERIALNUMBER
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_SUBJECT_STREETADDRESS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_UNHANDLEDCRITICALEXTENSIONS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_UNKNOWNEXTKEYUSAGE
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_URIS
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_CERTIFICATE_VERSION
-    struct internal/conf.GlobalConfiguration
 SUPATYPE_SAML_ENABLED
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SAML_EXTERNAL_URL
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SAML_NEXT_PRIVATE_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SAML_PRIVATE_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SAML_RATE_LIMIT_ASSERTION
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SAML_RELAY_STATE_VALIDITY_PERIOD
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_D
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_E
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_N
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_CRTVALUES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_DP
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_DQ
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_PRECOMPUTED_QINV
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPRIVATEKEY_PRIMES
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPUBLICKEY_E
-    struct internal/conf.GlobalConfiguration
-SUPATYPE_SAML_RSAPUBLICKEY_N
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_CAPTCHA_ENABLED
     struct internal/conf.GlobalConfiguration

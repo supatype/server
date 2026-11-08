@@ -78,7 +78,7 @@ func (a *API) triggerBeforeUserCreatedExternal(
 	err = db.Transaction(func(tx *storage.Connection) error {
 		decision, err = models.DetermineAccountLinking(
 			tx, config, userData.Emails, aud,
-			providerType, userData.Metadata.Subject)
+			providerType, userData.Metadata.Subject, userData.SSODomainVerified)
 		if err != nil {
 			return err
 		}

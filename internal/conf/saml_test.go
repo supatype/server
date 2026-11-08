@@ -1,11 +1,12 @@
 package conf
 
 import (
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	"math/big"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -42,48 +43,20 @@ func TestSAMLConfiguration(t *testing.T) {
 			Enabled:    true,
 			PrivateKey: validPrivateKey,
 		}
-		err := c.PopulateFields("https://projectref.supatype.com")
-		require.NoError(t, err)
+		require.NoError(t, c.PopulateFields())
 
-		isSet := (c.Certificate.KeyUsage & x509.KeyUsageDataEncipherment) != 0
-		require.False(t, isSet)
 		require.NotNil(t, c.RSAPrivateKey)
-		require.NotNil(t, c.RSAPublicKey)
 		require.NotNil(t, c.Certificate)
+		require.True(t, c.RSAPrivateKey.PublicKey.Equal(c.Certificate.PublicKey), "the certificate carries the key's public half")
+		require.Equal(t, 2*time.Minute, c.RelayStateValidityPeriod)
 	})
 
-	t.Run("PopulateFieldsEncryptedAssertions", func(t *testing.T) {
-		c := &SAMLConfiguration{
-			Enabled:                  true,
-			PrivateKey:               validPrivateKey,
-			AllowEncryptedAssertions: true,
-		}
-		err := c.PopulateFields("https://projectref.supatype.com")
-		require.NoError(t, err)
-
-		isSet := (c.Certificate.KeyUsage & x509.KeyUsageDataEncipherment) != 0
-		require.True(t, isSet)
-		require.NotNil(t, c.RSAPrivateKey)
-		require.NotNil(t, c.RSAPublicKey)
-		require.NotNil(t, c.Certificate)
-	})
-
-	t.Run("PopulateFieldsInvalidExternalURL", func(t *testing.T) {
+	t.Run("PopulateFieldsInvalidBase64", func(t *testing.T) {
 		c := &SAMLConfiguration{
 			Enabled:    true,
 			PrivateKey: "invalidprivatekey",
 		}
-		err := c.PopulateFields("\n")
-		require.Error(t, err)
-	})
-
-	t.Run("PopulateFieldsInvalidx509", func(t *testing.T) {
-		c := &SAMLConfiguration{
-			Enabled:    true,
-			PrivateKey: validPrivateKey,
-		}
-		err := c.PopulateFields("http://invalid\nhost/foo")
-		require.Error(t, err)
+		require.Error(t, c.PopulateFields())
 	})
 
 	t.Run("PopulateFieldsInvalidPKCS1", func(t *testing.T) {
@@ -91,32 +64,19 @@ func TestSAMLConfiguration(t *testing.T) {
 			Enabled:    true,
 			PrivateKey: base64.StdEncoding.EncodeToString([]byte("INVALID")),
 		}
-		err := c.PopulateFields("https://projectref.supatype.com")
-		require.Error(t, err)
+		require.Error(t, c.PopulateFields())
 	})
 
 	t.Run("PopulateFieldInvalidCreateCertificate", func(t *testing.T) {
-		c := &SAMLConfiguration{
-			Enabled:    true,
-			PrivateKey: validPrivateKey,
-		}
-		certTemplate, err := c.populateFields("https://projectref.supatype.com")
+		privateKey, err := parseSAMLPrivateKey(validPrivateKey)
+		require.NoError(t, err)
+		otherKey, err := parseSAMLPrivateKey(otherValidPrivateKey)
 		require.NoError(t, err)
 
-		certTemplate.SerialNumber = big.NewInt(-1)
-		err = c.createCertificate(certTemplate)
-		require.Error(t, err)
-	})
-
-	t.Run("PopulateFieldInvalidCertificateDer", func(t *testing.T) {
-		c := &SAMLConfiguration{
-			Enabled:    true,
-			PrivateKey: validPrivateKey,
-		}
-		err := c.PopulateFields("https://projectref.supatype.com")
-		require.NoError(t, err)
-
-		err = c.parseCertificateDer([]byte{0x0, 0x0})
+		// A key whose public half belongs to another key cannot sign a
+		// certificate that verifies, and the failure is returned.
+		mismatched := &rsa.PrivateKey{PublicKey: otherKey.PublicKey, D: privateKey.D, Primes: privateKey.Primes}
+		_, err = samlCertificate(mismatched)
 		require.Error(t, err)
 	})
 }
@@ -152,7 +112,7 @@ func TestSAMLConfigurationValidate(t *testing.T) {
 		{
 			// RSA 1024 key
 			Enabled:    true,
-			PrivateKey: "MIICXQIBAAKBgQDFa3SgzWZpcoONv3Iq3FxNieks2u2TmykxxxeggI9aNpHpuCzwGQO8wqXGVvFNlkE3GSPcz7rklzfyj577Z47lfWdBP1OAefralA3tS2mafqpZ32JwDynX4as+xauLVdP4iOR96b3L2eOb6rDpr4wBJuNqO533xsjcbNPINEDkSwIDAQABAoGASggBtEtSHDjVHFKufWQlOO5+glOWw8Nrrz75nTaYizvre7mVIHRA8ogLolT4KCAwVHkY+bTsYMxULqGs/JnY+40suHECYQ2u76PTQlvJnhJANGtCxuV4lSK6B8QBJhjGExsnAOwMMKz0p5kVftx2GA+/Rz2De7DR9keNECjcAAECQQDtr5cdkEdnIffvi782843EvX/g8615AKZeUYVUl0gVXujjpIVZXDtytPHINvIW1Z2mOm2rlJukwiKYYJ8IjsxlAkEA1KGbJ9EI6AOUcnpy7FYdGkbINTDngCqVOoaddlHS+1SaofpYXZPueXXIqIG3viksxmq/Q0IY6+JRkGo/RpGq7wJARD+BAqok9oYYbR4RX7P7ZxyKlYsiqnX3T2nVAP8XYZuI/6SD7a7AGyW9ryGnzcq0o8BvMS9QqbRcvqgvwgNOyQJBAL2ZVMaOSIjKGGZz9WHz74Nstj1n3CWW0vYa7vGASMc/S5s/pefbbvvzIPfQo0z3XiuXJ/ELUTmU1vIVK1L7tRUCQQCsuE7xckZ8H/523jdWWy9zZVP1z4c5dVLDR5RY+YQNForgb6kkSv4Gzn/FRUOxqn2MEWJLla31D4EuS+XKuwZR",
+			PrivateKey: rsa1024PrivateKey,
 		},
 		{
 			// RSA 2048 with 0x11 as public exponent
@@ -196,7 +156,7 @@ func TestSAMLConfigurationValidate(t *testing.T) {
 func TestSAMLConfigurationDeterministicCertificate(t *testing.T) {
 	a := &SAMLConfiguration{
 		Enabled:    true,
-		PrivateKey: "MIIEowIBAAKCAQEAt7dS8iM5MsQ+1mVkNpoaUnL8BCdxSrSx8jsSnvqN/GIJ4ipqbdrTgLpFVklVTqfaa5CykGVEV577l6AWkpkm2p7SvSkCQglmyAMMjY9glmztytAnfBpm+cQ6ZVTHC4XKlUG1aJigEuXPcZUU3FiBHWEuV2huYy2bLOtIY1v9N0i2v61QCdG+SM/Yb5t86KzApRl7VyHqquge6vvRuchfF0msv/2LW32hwxg3Gt4zkAF0SJqCCcfAPZ9pQwmbdUhoX16dRFU98nyIvuR8LH/wONZe/YyywFFHDEwkFa4XEzjCEm+AD+xvK7eEu55w21xB8JKMLEBy8uRuI3bIEG4pawIDAQABAoIBADw4IT4xgYw8e4R3U7P6K2qfOjB6ZU5hkHqgFmh6JJR35ll2IdDEi9OEOzofa5EOwC/GDGH8b7xw5nM7DGsdPHko2lca3BydTE1/glvchYKJTiDOvkKVvO9d/O4+Lch/IHpwQXB5pu7K2YaXoXDgqeHhevk3yAdGabj9norDGmtGIeU/x1hialKbw6L080CdbxpjeAsM/w+G/VtwvyOKYFBYxBflRW+sS8UeclVqKRAvaXKd1JGleWzH3hFZyFI54x5LyyjPI1JyVXRjNbf8xcS6eRaN849grL1+wBxEs/lQFn4JLhAcNi912iJ3lhxvkNleXZw7B7JAM8x4wUbK7zECgYEA6SYmu3YH8XuLUfT8MMCp+ETjPkNMOJGQmTXOkW6zuXP3J8iCPIxtuz09cGIro+yJU23yPUzOVCDZMmnMWBmkoTKAFoFL9TX0Eyqn/t1MD77i3NdkMp16yI5fwOO6yX1bZgLiG00W2E5/IGgNfTtEafU/mre95JBnTgxS3sAvz8UCgYEAybjfBVt+1X0vSVAGKYHI9wtzoSx3dIGE8G5LIchPTdNDZ0ke0QCRffhyCGKy6bPos0P2z5nLgWSePBPZQowpwZiQVXdWE05ID641E2zGULdYL1yVHDt6tVTpSzTAy89BiS1G8HvgpQyaBTmvmF11Fyd/YbrDxEIHN+qQdDkM928CgYEA4lJ4ksz21QF6sqpADQtZc3lbplspqFgVp8RFq4Nsz3+00lefpSskcff2phuGBXBdtjEqTzs5pwzkCj4NcRAjcZ9WG4KTu4sOTXTA83TamwZPrtUfnMqmH/2lEdd+wI0BpjryRlJE9ODuIwUe4wwfU0QQ5B2tJizPO0JXR4gEYYkCgYBzqidm4QGm1DLq7JG79wkObmiMv/x2t1VMr1ExO7QNQdfiP1EGMjc6bdyk5kMEMf5527yHaP4BYXpBpHfs6oV+1kXcW6LlSvuS0iboznQgECDmd0WgfJJtqxRh5QuvUVWYnHeSqNU0jjc6S8tdqCjdb+5gUUCzJdERxNOzcIr4zQKBgAqcBQwlWy0PdlZ06JhJUYlwX1pOU8mWPz9LIF0wrSm9LEtAl37zZJaD3uscvk/fCixAGHOktkDGVO7aUYIAlX9iD49huGkeRTn9tz7Wanw6am04Xj0y7H1oPPV7k5nJ4s9AOWq/gkZEhrRIis2anAczsx1YHSjq/M05+AbuRzvs",
+		PrivateKey: otherValidPrivateKey,
 	}
 
 	b := &SAMLConfiguration{
@@ -204,15 +164,123 @@ func TestSAMLConfigurationDeterministicCertificate(t *testing.T) {
 		PrivateKey: a.PrivateKey,
 	}
 
-	err := a.PopulateFields("https://projectref.supatype.com")
+	err := a.PopulateFields()
 	require.NoError(t, err)
 
-	err = b.PopulateFields("https://projectref.supatype.com")
+	err = b.PopulateFields()
 	require.NoError(t, err)
 
 	require.Equal(t, a.Certificate.Raw, b.Certificate.Raw, "Certificate generation should be deterministic")
 }
 
 const (
-	validPrivateKey = "MIIEowIBAAKCAQEAsBuxTUWFrfy0qYXaqNSeVWcJOd6TQ4+4b/3N4p/58r1d/kMU+K+BGR+tF0GKHGYngTF6puvNDff2wgW3dp3LUSMjxOhC3sK0uL90vd+IR6v1EDDGLyQNo6EjP/x5Gp/PcL2s6hZb8iLBEq4FksPnEhWqf9Nsmgf1YPJV4AvaaWe3oBFo9zJobSs3etTVitc3qEH2DpgYFtrCKhMWv5qoZtZTyZRE3LU3rvInDgYw6HDGF1G4y4Fvah6VpRmTdyMR81r1tCLmGvk61QJp7i4HteazQ6Raqh2EZ1sH/UfEp8mrwYRaRdgLDQ/Q6/YlO8NTQwzp6YwwAybhMBnOrABLCQIDAQABAoIBADqobq0DPByQsIhKmmNjtn1RvYP1++0kANXknuAeUv2kT5tyMpkGtCRvJZM6dEszR3NDzMuufPVrI1jK2Kn8sw0KfE6I4kUaa2Gh+7uGqfjdcNn8tPZctuJKuNgGOzxAALNXqjGqUuPa6Z5UMm0JLX0blFfRTzoa7oNlFG9040H6CRjJQQGfYyPS8xeo+RUR009sK/222E5jz6ThIiCrOU/ZGm5Ws9y3AAIASqJd9QPy7qxKoFZ1qKZ/cDaf1txCKq9VBXH6ypZoU1dQibhyLCIJ3tYapBtV4p8V12oHhITXb6Vbo1P9bQSVz+2rQ0nJkjdXX/N4aHE01ecbu8MpMxUCgYEA5P4ZCAdpkTaOSJi7GyL4AcZ5MN26eifFnRO/tbmw07f6vi//vdqzC9T7kxmZ8e1OvhX5OMGNb3nsXm78WgS2EVLTkaTInG6XhlOeYj9BHAQZDBr7rcAxrVQxVgaGDiZpYun++kXw+39iq3gxuYuC9mM0AQze3SjTRIM9WWXJSqMCgYEAxODfXcWMk2P/WfjE3u+8fhjc3cvqyWSyThEZC9YzpN59dL73SE7BRkMDyZO19fFvVO9mKsRfsTio0ceC5XQOO6hUxAm4gAEvMpeapQgXTxIxF5FAQ0vGmBMxT+xg7lX8HTTJX/UCttKo3BdIJQeTf8bKVzJCoLFh8Rcv5qI6umMCgYAEuj44DTcfuVmcpBKQz9sA5mEQIjO8W9/Xi1XU4Z2F8XFqxcDo4X/6yY3cDpZACV8ry3ZWtqA94e2AUZhCH4DGwMf/ZMCDgkD8k/NcIeQtOORvfIsfni0oX+mY1g+kcSSR1zTdY95CwvF9isC0DO5KOegT8XkUZchezLrSgqhyMwKBgQCvS0mWRH6V/UMu6MDhfrNl0t1U3mt+RZo8yBx03ZO+CBvMBvxF9VlBJgoJQOuSwBVQmpdtHMvXD4vAvNNfWaYSmB5hLgaIcoWDlliq+DlIvfnX8gw13xJD9VLCxsTHcOe5WXazaYOxJIAU9uXVkplR+73NRYLtcQKzluGfiHKh4QKBgFpPtOqcAbkMsV+1qPYvvvX7E4+l52Odb4tbxGBYV8tzCqMRETqMPVxFWwsj+EQ8lyAu15rCRH7DKHVK5zL6JvIZEjt0tptKqSL2o3ovS6y3DmD6t+YpvjKME7a+vunOoJWe9pWl3wZmodfyZMpAdDLvDGhPR7Jlhun41tbMMaQF"
+	validPrivateKey      = "MIIEowIBAAKCAQEAsBuxTUWFrfy0qYXaqNSeVWcJOd6TQ4+4b/3N4p/58r1d/kMU+K+BGR+tF0GKHGYngTF6puvNDff2wgW3dp3LUSMjxOhC3sK0uL90vd+IR6v1EDDGLyQNo6EjP/x5Gp/PcL2s6hZb8iLBEq4FksPnEhWqf9Nsmgf1YPJV4AvaaWe3oBFo9zJobSs3etTVitc3qEH2DpgYFtrCKhMWv5qoZtZTyZRE3LU3rvInDgYw6HDGF1G4y4Fvah6VpRmTdyMR81r1tCLmGvk61QJp7i4HteazQ6Raqh2EZ1sH/UfEp8mrwYRaRdgLDQ/Q6/YlO8NTQwzp6YwwAybhMBnOrABLCQIDAQABAoIBADqobq0DPByQsIhKmmNjtn1RvYP1++0kANXknuAeUv2kT5tyMpkGtCRvJZM6dEszR3NDzMuufPVrI1jK2Kn8sw0KfE6I4kUaa2Gh+7uGqfjdcNn8tPZctuJKuNgGOzxAALNXqjGqUuPa6Z5UMm0JLX0blFfRTzoa7oNlFG9040H6CRjJQQGfYyPS8xeo+RUR009sK/222E5jz6ThIiCrOU/ZGm5Ws9y3AAIASqJd9QPy7qxKoFZ1qKZ/cDaf1txCKq9VBXH6ypZoU1dQibhyLCIJ3tYapBtV4p8V12oHhITXb6Vbo1P9bQSVz+2rQ0nJkjdXX/N4aHE01ecbu8MpMxUCgYEA5P4ZCAdpkTaOSJi7GyL4AcZ5MN26eifFnRO/tbmw07f6vi//vdqzC9T7kxmZ8e1OvhX5OMGNb3nsXm78WgS2EVLTkaTInG6XhlOeYj9BHAQZDBr7rcAxrVQxVgaGDiZpYun++kXw+39iq3gxuYuC9mM0AQze3SjTRIM9WWXJSqMCgYEAxODfXcWMk2P/WfjE3u+8fhjc3cvqyWSyThEZC9YzpN59dL73SE7BRkMDyZO19fFvVO9mKsRfsTio0ceC5XQOO6hUxAm4gAEvMpeapQgXTxIxF5FAQ0vGmBMxT+xg7lX8HTTJX/UCttKo3BdIJQeTf8bKVzJCoLFh8Rcv5qI6umMCgYAEuj44DTcfuVmcpBKQz9sA5mEQIjO8W9/Xi1XU4Z2F8XFqxcDo4X/6yY3cDpZACV8ry3ZWtqA94e2AUZhCH4DGwMf/ZMCDgkD8k/NcIeQtOORvfIsfni0oX+mY1g+kcSSR1zTdY95CwvF9isC0DO5KOegT8XkUZchezLrSgqhyMwKBgQCvS0mWRH6V/UMu6MDhfrNl0t1U3mt+RZo8yBx03ZO+CBvMBvxF9VlBJgoJQOuSwBVQmpdtHMvXD4vAvNNfWaYSmB5hLgaIcoWDlliq+DlIvfnX8gw13xJD9VLCxsTHcOe5WXazaYOxJIAU9uXVkplR+73NRYLtcQKzluGfiHKh4QKBgFpPtOqcAbkMsV+1qPYvvvX7E4+l52Odb4tbxGBYV8tzCqMRETqMPVxFWwsj+EQ8lyAu15rCRH7DKHVK5zL6JvIZEjt0tptKqSL2o3ovS6y3DmD6t+YpvjKME7a+vunOoJWe9pWl3wZmodfyZMpAdDLvDGhPR7Jlhun41tbMMaQF"
+	otherValidPrivateKey = "MIIEowIBAAKCAQEAt7dS8iM5MsQ+1mVkNpoaUnL8BCdxSrSx8jsSnvqN/GIJ4ipqbdrTgLpFVklVTqfaa5CykGVEV577l6AWkpkm2p7SvSkCQglmyAMMjY9glmztytAnfBpm+cQ6ZVTHC4XKlUG1aJigEuXPcZUU3FiBHWEuV2huYy2bLOtIY1v9N0i2v61QCdG+SM/Yb5t86KzApRl7VyHqquge6vvRuchfF0msv/2LW32hwxg3Gt4zkAF0SJqCCcfAPZ9pQwmbdUhoX16dRFU98nyIvuR8LH/wONZe/YyywFFHDEwkFa4XEzjCEm+AD+xvK7eEu55w21xB8JKMLEBy8uRuI3bIEG4pawIDAQABAoIBADw4IT4xgYw8e4R3U7P6K2qfOjB6ZU5hkHqgFmh6JJR35ll2IdDEi9OEOzofa5EOwC/GDGH8b7xw5nM7DGsdPHko2lca3BydTE1/glvchYKJTiDOvkKVvO9d/O4+Lch/IHpwQXB5pu7K2YaXoXDgqeHhevk3yAdGabj9norDGmtGIeU/x1hialKbw6L080CdbxpjeAsM/w+G/VtwvyOKYFBYxBflRW+sS8UeclVqKRAvaXKd1JGleWzH3hFZyFI54x5LyyjPI1JyVXRjNbf8xcS6eRaN849grL1+wBxEs/lQFn4JLhAcNi912iJ3lhxvkNleXZw7B7JAM8x4wUbK7zECgYEA6SYmu3YH8XuLUfT8MMCp+ETjPkNMOJGQmTXOkW6zuXP3J8iCPIxtuz09cGIro+yJU23yPUzOVCDZMmnMWBmkoTKAFoFL9TX0Eyqn/t1MD77i3NdkMp16yI5fwOO6yX1bZgLiG00W2E5/IGgNfTtEafU/mre95JBnTgxS3sAvz8UCgYEAybjfBVt+1X0vSVAGKYHI9wtzoSx3dIGE8G5LIchPTdNDZ0ke0QCRffhyCGKy6bPos0P2z5nLgWSePBPZQowpwZiQVXdWE05ID641E2zGULdYL1yVHDt6tVTpSzTAy89BiS1G8HvgpQyaBTmvmF11Fyd/YbrDxEIHN+qQdDkM928CgYEA4lJ4ksz21QF6sqpADQtZc3lbplspqFgVp8RFq4Nsz3+00lefpSskcff2phuGBXBdtjEqTzs5pwzkCj4NcRAjcZ9WG4KTu4sOTXTA83TamwZPrtUfnMqmH/2lEdd+wI0BpjryRlJE9ODuIwUe4wwfU0QQ5B2tJizPO0JXR4gEYYkCgYBzqidm4QGm1DLq7JG79wkObmiMv/x2t1VMr1ExO7QNQdfiP1EGMjc6bdyk5kMEMf5527yHaP4BYXpBpHfs6oV+1kXcW6LlSvuS0iboznQgECDmd0WgfJJtqxRh5QuvUVWYnHeSqNU0jjc6S8tdqCjdb+5gUUCzJdERxNOzcIr4zQKBgAqcBQwlWy0PdlZ06JhJUYlwX1pOU8mWPz9LIF0wrSm9LEtAl37zZJaD3uscvk/fCixAGHOktkDGVO7aUYIAlX9iD49huGkeRTn9tz7Wanw6am04Xj0y7H1oPPV7k5nJ4s9AOWq/gkZEhrRIis2anAczsx1YHSjq/M05+AbuRzvs"
+	rsa1024PrivateKey    = "MIICXQIBAAKBgQDFa3SgzWZpcoONv3Iq3FxNieks2u2TmykxxxeggI9aNpHpuCzwGQO8wqXGVvFNlkE3GSPcz7rklzfyj577Z47lfWdBP1OAefralA3tS2mafqpZ32JwDynX4as+xauLVdP4iOR96b3L2eOb6rDpr4wBJuNqO533xsjcbNPINEDkSwIDAQABAoGASggBtEtSHDjVHFKufWQlOO5+glOWw8Nrrz75nTaYizvre7mVIHRA8ogLolT4KCAwVHkY+bTsYMxULqGs/JnY+40suHECYQ2u76PTQlvJnhJANGtCxuV4lSK6B8QBJhjGExsnAOwMMKz0p5kVftx2GA+/Rz2De7DR9keNECjcAAECQQDtr5cdkEdnIffvi782843EvX/g8615AKZeUYVUl0gVXujjpIVZXDtytPHINvIW1Z2mOm2rlJukwiKYYJ8IjsxlAkEA1KGbJ9EI6AOUcnpy7FYdGkbINTDngCqVOoaddlHS+1SaofpYXZPueXXIqIG3viksxmq/Q0IY6+JRkGo/RpGq7wJARD+BAqok9oYYbR4RX7P7ZxyKlYsiqnX3T2nVAP8XYZuI/6SD7a7AGyW9ryGnzcq0o8BvMS9QqbRcvqgvwgNOyQJBAL2ZVMaOSIjKGGZz9WHz74Nstj1n3CWW0vYa7vGASMc/S5s/pefbbvvzIPfQo0z3XiuXJ/ELUTmU1vIVK1L7tRUCQQCsuE7xckZ8H/523jdWWy9zZVP1z4c5dVLDR5RY+YQNForgb6kkSv4Gzn/FRUOxqn2MEWJLla31D4EuS+XKuwZR"
 )
+
+// The SP certificate is what every identity provider pins, so it depends on
+// the key alone: moving the API to another host or switching encrypted
+// assertions on must not break the trust an IdP has already established.
+func TestSAMLCertificateDependsOnlyOnKey(t *testing.T) {
+	certificate := func(externalURL string, allowEncrypted bool) []byte {
+		cfg := new(GlobalConfiguration)
+		cfg.API.ExternalURL = externalURL
+		cfg.SAML = SAMLConfiguration{
+			Enabled:                  true,
+			PrivateKey:               validPrivateKey,
+			AllowEncryptedAssertions: allowEncrypted,
+		}
+		require.NoError(t, populateGlobal(cfg))
+		return cfg.SAML.Certificate.Raw
+	}
+
+	want := certificate("https://projectref.supatype.com", false)
+	for _, externalURL := range []string{
+		"https://projectref.supatype.com",
+		"https://auth.example.org:8443/auth/v1",
+		"http://localhost:9999",
+	} {
+		for _, allowEncrypted := range []bool{false, true} {
+			require.Equal(t, want, certificate(externalURL, allowEncrypted),
+				"certificate changed for %s with encrypted assertions %v", externalURL, allowEncrypted)
+		}
+	}
+
+	cfg := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey}
+	require.NoError(t, cfg.PopulateFields())
+	cert := cfg.Certificate
+	require.Empty(t, cert.DNSNames, "the certificate names no host")
+	require.NotContains(t, cert.Subject.CommonName, "supatype.com")
+	require.Equal(t, x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment, cert.KeyUsage)
+	require.Equal(t, int64(0), cert.SerialNumber.Int64())
+	require.Equal(t, int64(0), cert.NotBefore.Unix())
+	require.Equal(t, 2170, cert.NotAfter.Year())
+}
+
+// SUPATYPE_SAML_NEXT_PRIVATE_KEY is the key a rotation moves to. It is held to
+// the same rules as the current key, and gets a certificate of its own.
+func TestSAMLNextPrivateKey(t *testing.T) {
+	t.Run("Validate", func(t *testing.T) {
+		for i, next := range []string{
+			"InvalidBase64!",
+			base64.StdEncoding.EncodeToString([]byte("not PKCS#1")),
+			rsa1024PrivateKey,
+		} {
+			c := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey, NextPrivateKey: next}
+			require.Error(t, c.Validate(), "invalid next key %d was regarded as valid", i)
+		}
+
+		c := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey, NextPrivateKey: otherValidPrivateKey}
+		require.NoError(t, c.Validate())
+	})
+
+	t.Run("PopulateFields", func(t *testing.T) {
+		c := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey, NextPrivateKey: otherValidPrivateKey}
+		require.NoError(t, c.PopulateFields())
+
+		current := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey}
+		require.NoError(t, current.PopulateFields())
+		next := &SAMLConfiguration{Enabled: true, PrivateKey: otherValidPrivateKey}
+		require.NoError(t, next.PopulateFields())
+
+		require.Equal(t, current.Certificate.Raw, c.Certificate.Raw, "the current key keeps its certificate")
+		require.NotNil(t, c.NextRSAPrivateKey)
+		require.Equal(t, next.RSAPrivateKey.N, c.NextRSAPrivateKey.N)
+		require.Equal(t, next.Certificate.Raw, c.NextCertificate.Raw, "the next key's certificate is the one it will have once promoted")
+	})
+
+	t.Run("PopulateFieldsWithoutNextKey", func(t *testing.T) {
+		c := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey}
+		require.NoError(t, c.PopulateFields())
+		require.Nil(t, c.NextRSAPrivateKey)
+		require.Nil(t, c.NextCertificate)
+	})
+
+	t.Run("PopulateFieldsInvalidNextKey", func(t *testing.T) {
+		c := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey, NextPrivateKey: "invalid"}
+		require.Error(t, c.PopulateFields())
+	})
+}
+
+// A next key equal to the current one, as left by a promotion that copied the
+// next key over but did not clear it, is no rotation in progress.
+func TestSAMLNextPrivateKeySameAsCurrent(t *testing.T) {
+	c := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey, NextPrivateKey: validPrivateKey}
+	require.NoError(t, c.Validate())
+	require.NoError(t, c.PopulateFields())
+	require.Nil(t, c.NextRSAPrivateKey)
+	require.Nil(t, c.NextCertificate)
+}
+
+// Compose renders SUPATYPE_SAML_NEXT_PRIVATE_KEY on every start, empty when
+// there is no rotation, so a blank value is no next key.
+func TestSAMLNextPrivateKeyBlankIsAbsent(t *testing.T) {
+	for _, blank := range []string{"", " ", "\t\n"} {
+		c := &SAMLConfiguration{Enabled: true, PrivateKey: validPrivateKey, NextPrivateKey: blank}
+		require.NoError(t, c.Validate(), "next key %q", blank)
+		require.NoError(t, c.PopulateFields(), "next key %q", blank)
+		require.Nil(t, c.NextRSAPrivateKey)
+		require.Nil(t, c.NextCertificate)
+	}
+}

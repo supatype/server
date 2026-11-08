@@ -134,6 +134,11 @@ type Email struct {
 type UserProvidedData struct {
 	Emails   []Email
 	Metadata *Claims
+
+	// SSODomainVerified is set by the SAML ACS, which holds the provider and
+	// its domains: the primary email is on a verified domain of that
+	// provider, so a first login may link to an existing account with it.
+	SSODomainVerified bool
 }
 
 // Provider is an interface for interacting with external account providers

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -28,20 +29,73 @@ type SignupParams struct {
 	Channel             string                 `json:"channel"`
 	CodeChallengeMethod string                 `json:"code_challenge_method"`
 	CodeChallenge       string                 `json:"code_challenge"`
+
+	// emailSent and phoneSent record that the request body carried that key,
+	// blank or not. A blank one is a signup whose form lost its email or phone,
+	// which is what tells it apart from an anonymous sign-in.
+	emailSent bool
+	phoneSent bool
+}
+
+// UnmarshalJSON decodes the body as usual and also notes whether it named an
+// email or a phone at all, which the plain string fields cannot show.
+func (p *SignupParams) UnmarshalJSON(body []byte) error {
+	type plain SignupParams
+	aux := struct {
+		*plain
+		Email *string `json:"email"`
+		Phone *string `json:"phone"`
+	}{plain: (*plain)(p)}
+	if err := json.Unmarshal(body, &aux); err != nil {
+		return err
+	}
+	p.emailSent = takeSent(&p.Email, aux.Email)
+	p.phoneSent = takeSent(&p.Phone, aux.Phone)
+	return nil
+}
+
+// takeSent copies a decoded key into its field and reports whether the body
+// carried the key at all.
+func takeSent(field, sent *string) bool {
+	if sent == nil {
+		return false
+	}
+	*field = *sent
+	return true
+}
+
+// isAnonymousSignIn reports whether the body asks for an anonymous account:
+// no email key, no phone key and no password.
+func (p *SignupParams) isAnonymousSignIn() bool {
+	return !p.emailSent && !p.phoneSent && p.Email == "" && p.Phone == "" && p.Password == ""
+}
+
+// missingContactError names what a signup with neither an email nor a phone
+// left out: the blank field it sent, or both when it sent neither.
+func (p *SignupParams) missingContactError() error {
+	switch {
+	case p.emailSent:
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Email is required")
+	case p.phoneSent:
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Phone is required")
+	default:
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Signup requires an email or phone number")
+	}
 }
 
 func (a *API) validateSignupParams(ctx context.Context, p *SignupParams) error {
 	config := a.config
 
+	// Checked before the password so that a missing email or phone is the error
+	// a form gets, whatever it sent as the password.
+	if p.Email == "" && p.Phone == "" {
+		return p.missingContactError()
+	}
 	if p.Password == "" {
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Signup requires a valid password")
 	}
-
 	if err := a.checkPasswordStrength(ctx, p.Password); err != nil {
 		return err
-	}
-	if p.Email == "" && p.Phone == "" {
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Signup requires an email or phone number")
 	}
 	if p.Email != "" && p.Phone != "" {
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "Only an email address or phone number should be provided on signup.")

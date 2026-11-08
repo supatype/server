@@ -201,15 +201,19 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	serviceProvider := a.getSAMLServiceProvider(idpMetadata, initiatedBy == "idp")
+	// Every caller of ParseResponse must set a ReplayCache, or replays pass.
+	serviceProvider.ReplayCache = samlReplayCache{db: db, ssoProviderID: ssoProvider.ID}
+	// The library decrypts with the next key too while a rotation is in
+	// progress (see getSAMLServiceProvider), on every binding.
 	spAssertion, err := serviceProvider.ParseResponse(r, requestIds)
 	if err != nil {
 		// The error is sent back to the browser in a redirect URL, so it names
 		// no part of the response: the whole signed response would land in
 		// browser history and access logs, and can exceed URL length limits.
 		// The reason the library refused it is logged as the internal error.
-		var ire *saml.InvalidResponseError
-		if errors.As(err, &ire) {
-			err = ire.PrivateErr
+		err = samlPrivateError(err)
+		if errors.Is(err, saml.ErrAssertionReplayed) {
+			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used").WithInternalError(err)
 		}
 
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
@@ -217,10 +221,6 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 	assertion := SAMLAssertion{
 		spAssertion,
-	}
-
-	if err := refuseReplayedSAMLAssertion(db, ssoProvider.ID, &assertion); err != nil {
-		return err
 	}
 
 	userID := assertion.UserID()
@@ -238,9 +238,15 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 	if email == "" {
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLAssertionNoEmail, "SAML Assertion does not contain an email address")
-	} else {
-		claims["email"] = email
 	}
+	// A provider with domains may only sign in addresses on them; without
+	// this it could sign in as any address, another organisation's included.
+	// The provider's domains are loaded with it.
+	emailDomain := ssoProvider.DomainOf(email)
+	if len(ssoProvider.SSODomains) > 0 && emailDomain == nil {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLEmailDomainNotAllowed, "SAML Assertion email is not on a domain of this identity provider")
+	}
+	claims["email"] = email
 
 	jsonClaims, err := json.Marshal(claims)
 	if err != nil {
@@ -273,6 +279,9 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		Verified: true,
 		Primary:  true,
 	})
+	// A first login may link to an existing account with the email only on
+	// a verified domain.
+	userProvidedData.SSODomainVerified = emailDomain != nil && emailDomain.IsVerified()
 
 	// userProvidedData.Provider.Type = "saml"
 	// userProvidedData.Provider.ID = ssoProvider.ID.String()
@@ -371,14 +380,23 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// refuseReplayedSAMLAssertion records the assertion as accepted, and refuses it
-// if it was accepted before. Without this a captured IdP-initiated response,
-// which has no RelayState to bind it, could be posted again until it expired.
-func refuseReplayedSAMLAssertion(db *storage.Connection, ssoProviderID uuid.UUID, assertion *SAMLAssertion) error {
-	err := models.ConsumeSAMLAssertion(db, ssoProviderID, assertion.ID, assertion.AcceptableUntil())
-	var replayed models.SAMLAssertionReplayedError
-	if errors.As(err, &replayed) {
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used")
+// samlReplayCache records a provider's accepted assertions in the database,
+// for the SAML library's replay check. Every server instance shares it.
+type samlReplayCache struct {
+	db            *storage.Connection
+	ssoProviderID uuid.UUID
+}
+
+func (c samlReplayCache) Consume(assertionID string, expiresAt time.Time) error {
+	return models.ConsumeSAMLAssertion(c.db, c.ssoProviderID, assertionID, expiresAt)
+}
+
+// samlPrivateError is the reason inside the library's InvalidResponseError,
+// whose own message is deliberately uninformative.
+func samlPrivateError(err error) error {
+	var ire *saml.InvalidResponseError
+	if errors.As(err, &ire) && ire.PrivateErr != nil {
+		return ire.PrivateErr
 	}
 	return err
 }

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -19,13 +20,17 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/gofrs/uuid"
 	jwt "github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/supatype/saml"
 	"github.com/supatype/saml/samlsp"
+	"github.com/supatype/saml/xmlenc"
 	"github.com/supatype/server/internal/auth/models"
+	authprovider "github.com/supatype/server/internal/auth/provider"
+	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
 )
 
@@ -59,14 +64,25 @@ func newSAMLTestIdP(t *testing.T, entityID string) *samlTestIdP {
 }
 
 func (idp *samlTestIdP) metadataXML() string {
+	return idp.metadataXMLWithArtifactResolver("")
+}
+
+// metadataXMLWithArtifactResolver is the IdP's metadata, listing an artifact
+// resolution endpoint at location when location is not empty.
+func (idp *samlTestIdP) metadataXMLWithArtifactResolver(location string) string {
+	resolver := ""
+	if location != "" {
+		resolver = fmt.Sprintf(`
+    <md:ArtifactResolutionService Binding="urn:oasis:names:tc:SAML:2.0:bindings:SOAP" Location="%s" index="0"/>`, location)
+	}
 	return fmt.Sprintf(`<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="%[1]s">
   <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
     <md:KeyDescriptor use="signing">
       <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>%[2]s</ds:X509Certificate></ds:X509Data></ds:KeyInfo>
     </md:KeyDescriptor>
-    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="%[1]s/sso"/>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="%[1]s/sso"/>%[3]s
   </md:IDPSSODescriptor>
-</md:EntityDescriptor>`, idp.entityID, idp.certB64)
+</md:EntityDescriptor>`, idp.entityID, idp.certB64, resolver)
 }
 
 // samlTestAssertion holds the parts of an assertion a test varies, as raw XML
@@ -83,32 +99,86 @@ type samlTestAssertion struct {
 // sends it.
 func (idp *samlTestIdP) response(t *testing.T, acsURL string, a samlTestAssertion) string {
 	t.Helper()
+	return idp.wrapResponse(t, acsURL, a.ID, idp.signedAssertion(t, a))
+}
+
+// encryptedResponse is response with the signed assertion encrypted to
+// certificate, as an IdP does when the SP publishes an encryption key.
+func (idp *samlTestIdP) encryptedResponse(t *testing.T, acsURL string, a samlTestAssertion, certificate *x509.Certificate) string {
+	t.Helper()
+	return idp.wrapResponse(t, acsURL, a.ID, idp.encryptedAssertion(t, a, certificate))
+}
+
+// encryptedAssertion is the signed assertion a describes, encrypted to
+// certificate.
+func (idp *samlTestIdP) encryptedAssertion(t *testing.T, a samlTestAssertion, certificate *x509.Certificate) *etree.Element {
+	t.Helper()
+	assertion := etree.NewDocument()
+	assertion.SetRoot(idp.signedAssertion(t, a))
+	plaintext, err := assertion.WriteToBytes()
+	require.NoError(t, err)
+
+	encryptedData, err := xmlenc.OAEP().Encrypt(certificate, plaintext, nil)
+	require.NoError(t, err)
+	encryptedData.CreateAttr("Type", "http://www.w3.org/2001/04/xmlenc#Element")
+
+	encryptedAssertion := etree.NewElement("saml:EncryptedAssertion")
+	encryptedAssertion.AddChild(encryptedData)
+	return encryptedAssertion
+}
+
+// signedAssertion is the assertion a describes, signed by the IdP.
+func (idp *samlTestIdP) signedAssertion(t *testing.T, a samlTestAssertion) *etree.Element {
+	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
 	doc := etree.NewDocument()
 	require.NoError(t, doc.ReadFromString(fmt.Sprintf(
 		`<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s" Version="2.0" IssueInstant="%s"><saml:Issuer>%s</saml:Issuer>%s%s%s</saml:Assertion>`,
 		a.ID, now, idp.entityID, a.Subject, a.Conditions, a.Statements)))
+	return idp.signEnveloped(t, doc.Root())
+}
 
-	signed, err := idp.signer.SignEnveloped(doc.Root())
+// signEnveloped signs el as the IdP.
+func (idp *samlTestIdP) signEnveloped(t *testing.T, el *etree.Element) *etree.Element {
+	t.Helper()
+	signed, err := idp.signer.SignEnveloped(el)
 	require.NoError(t, err)
 	// SignEnveloped appends the Signature; the schema places it after Issuer.
 	sig := signed.RemoveChildAt(len(signed.Child) - 1)
 	signed.InsertChildAt(1, sig)
+	return signed
+}
 
-	resp := etree.NewElement("samlp:Response")
-	resp.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
-	resp.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
-	resp.CreateAttr("ID", "response-"+a.ID)
-	resp.CreateAttr("Version", "2.0")
-	resp.CreateAttr("IssueInstant", now)
-	resp.CreateAttr("Destination", acsURL)
-	resp.CreateElement("saml:Issuer").SetText(idp.entityID)
-	resp.CreateElement("samlp:Status").CreateElement("samlp:StatusCode").
+// protocolMessage is a SAML protocol message named name from the IdP, with
+// the header each one carries: namespaces, ID, version, issue time, Issuer and
+// a success Status.
+func (idp *samlTestIdP) protocolMessage(name, id string) *etree.Element {
+	msg := etree.NewElement(name)
+	msg.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
+	msg.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
+	msg.CreateAttr("ID", id)
+	msg.CreateAttr("Version", "2.0")
+	msg.CreateAttr("IssueInstant", time.Now().UTC().Format(time.RFC3339))
+	msg.CreateElement("saml:Issuer").SetText(idp.entityID)
+	msg.CreateElement("samlp:Status").CreateElement("samlp:StatusCode").
 		CreateAttr("Value", "urn:oasis:names:tc:SAML:2.0:status:Success")
-	resp.AddChild(signed)
+	return msg
+}
 
+// responseElement puts assertion in an unsigned Response addressed to acsURL.
+func (idp *samlTestIdP) responseElement(acsURL, id string, assertion *etree.Element) *etree.Element {
+	resp := idp.protocolMessage("samlp:Response", "response-"+id)
+	resp.CreateAttr("Destination", acsURL)
+	resp.AddChild(assertion)
+	return resp
+}
+
+// wrapResponse is responseElement base64 encoded as the HTTP-POST binding
+// sends it.
+func (idp *samlTestIdP) wrapResponse(t *testing.T, acsURL, id string, assertion *etree.Element) string {
+	t.Helper()
 	out := etree.NewDocument()
-	out.SetRoot(resp)
+	out.SetRoot(idp.responseElement(acsURL, id, assertion))
 	xml, err := out.WriteToBytes()
 	require.NoError(t, err)
 	return base64.StdEncoding.EncodeToString(xml)
@@ -163,8 +233,18 @@ func samlTime(offset time.Duration) string {
 // subject wraps nameID, which may be empty, with a bearer confirmation for
 // the ACS.
 func (ts *SAMLACSTestSuite) subject(nameID string) string {
-	return fmt.Sprintf(`<saml:Subject>%s<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData NotOnOrAfter="%s" Recipient="%s"/></saml:SubjectConfirmation></saml:Subject>`,
-		nameID, samlTime(5*time.Minute), ts.ACSURL)
+	return ts.subjectInResponseTo(nameID, "")
+}
+
+// subjectInResponseTo is subject confirming an answer to the AuthnRequest
+// requestID, or to none when requestID is empty.
+func (ts *SAMLACSTestSuite) subjectInResponseTo(nameID, requestID string) string {
+	inResponseTo := ""
+	if requestID != "" {
+		inResponseTo = fmt.Sprintf(` InResponseTo="%s"`, requestID)
+	}
+	return fmt.Sprintf(`<saml:Subject>%s<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData%s NotOnOrAfter="%s" Recipient="%s"/></saml:SubjectConfirmation></saml:Subject>`,
+		nameID, inResponseTo, samlTime(5*time.Minute), ts.ACSURL)
 }
 
 // conditions is a currently valid Conditions element holding inner.
@@ -191,9 +271,9 @@ func (ts *SAMLACSTestSuite) victimAssertion(id string) samlTestAssertion {
 	}
 }
 
-// acsRequest is the HTTP-POST binding's form carrying samlResponse to target.
-func acsRequest(target, samlResponse string) *http.Request {
-	form := url.Values{"SAMLResponse": {samlResponse}}
+// acsRequest posts form to target, as the HTTP-POST binding and the artifact
+// binding both do.
+func acsRequest(target string, form url.Values) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return req
@@ -201,8 +281,13 @@ func acsRequest(target, samlResponse string) *http.Request {
 
 // postACS posts an IdP-initiated response and returns the redirect Location.
 func (ts *SAMLACSTestSuite) postACS(samlResponse string) *url.URL {
+	return ts.postACSForm(url.Values{"SAMLResponse": {samlResponse}})
+}
+
+// postACSForm posts form to the ACS and returns the redirect Location.
+func (ts *SAMLACSTestSuite) postACSForm(form url.Values) *url.URL {
 	w := httptest.NewRecorder()
-	ts.API.handler.ServeHTTP(w, acsRequest("http://localhost/sso/saml/acs", samlResponse))
+	ts.API.handler.ServeHTTP(w, acsRequest("http://localhost/sso/saml/acs", form))
 
 	require.Contains(ts.T(), []int{http.StatusFound, http.StatusSeeOther}, w.Code,
 		"the ACS answers with a redirect, not a crash: %d %s", w.Code, w.Body.String())
@@ -247,7 +332,7 @@ func (ts *SAMLACSTestSuite) libraryError(samlResponse string) string {
 	require.NoError(ts.T(), err)
 	sp := ts.API.getSAMLServiceProvider(metadata, true)
 
-	req := acsRequest(ts.ACSURL, samlResponse)
+	req := acsRequest(ts.ACSURL, url.Values{"SAMLResponse": {samlResponse}})
 	// ParseResponse reads PostForm, which the ACS has already parsed by now.
 	require.NoError(ts.T(), req.ParseForm())
 	_, err = sp.ParseResponse(req, nil)
@@ -354,4 +439,222 @@ func (ts *SAMLACSTestSuite) TestConsumedAssertionIDIsFreedOnExpiry() {
 	require.NoError(ts.T(), models.ConsumeSAMLAssertion(ts.API.db, provider.ID, "reused-id", future))
 	require.ErrorAs(ts.T(), models.ConsumeSAMLAssertion(ts.API.db, provider.ID, "reused-id", future), &models.SAMLAssertionReplayedError{})
 	require.Error(ts.T(), models.ConsumeSAMLAssertion(ts.API.db, provider.ID, "", future))
+}
+
+// withNextKey starts a key rotation for the length of the test, returning the
+// next key's certificate.
+func (ts *SAMLACSTestSuite) withNextKey() *x509.Certificate {
+	next := newSAMLTestKeyConfig(ts.T())
+	ts.Config.SAML.NextRSAPrivateKey = next.RSAPrivateKey
+	ts.Config.SAML.NextCertificate = next.Certificate
+	ts.T().Cleanup(func() {
+		ts.Config.SAML.NextRSAPrivateKey = nil
+		ts.Config.SAML.NextCertificate = nil
+	})
+	return next.Certificate
+}
+
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedToCurrentKeySignsIn() {
+	ts.withNextKey()
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-current"), ts.Config.SAML.Certificate)
+	location := ts.postACS(response)
+	require.NotEmpty(ts.T(), ts.signedInAs(location), "refused: %s", location)
+}
+
+// During a rotation an IdP may already encrypt to the next key.
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedToNextKeySignsIn() {
+	next := ts.withNextKey()
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-next"), next)
+	location := ts.postACS(response)
+	require.NotEmpty(ts.T(), ts.signedInAs(location), "refused: %s", location)
+}
+
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedToUnknownKeyIsRefused() {
+	ts.withNextKey()
+	stranger := newSAMLTestKeyConfig(ts.T())
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-unknown"), stranger.Certificate)
+	ts.refused(ts.postACS(response), refusedInvalid)
+}
+
+// Without a rotation in progress an assertion encrypted to some other key is
+// refused, as before.
+func (ts *SAMLACSTestSuite) TestAssertionEncryptedWithoutNextKeyToOtherKeyIsRefused() {
+	other := newSAMLTestKeyConfig(ts.T())
+	response := ts.IdP.encryptedResponse(ts.T(), ts.ACSURL, ts.victimAssertion("encrypted-other"), other.Certificate)
+	ts.refused(ts.postACS(response), refusedInvalid)
+}
+
+// setDomains gives the test IdP's provider the domains.
+func (ts *SAMLACSTestSuite) setDomains(domains ...string) {
+	provider, err := models.FindSAMLProviderByEntityID(ts.API.db, ts.IdP.entityID)
+	require.NoError(ts.T(), err)
+	body, err := json.Marshal(map[string]interface{}{"domains": domains})
+	require.NoError(ts.T(), err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/admin/sso/providers/"+provider.ID.String(), bytes.NewBuffer(body))
+	req.Header.Set("Authorization", "Bearer "+adminToken(ts.T(), ts.Config))
+	w := httptest.NewRecorder()
+	ts.API.handler.ServeHTTP(w, req)
+	require.Equal(ts.T(), http.StatusOK, w.Code, w.Body.String())
+}
+
+// assertionFor is a correct assertion for subject nameID with email.
+func (ts *SAMLACSTestSuite) assertionFor(id, nameID, email string) samlTestAssertion {
+	return samlTestAssertion{
+		ID:         id,
+		Subject:    ts.subject(`<saml:NameID Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">` + nameID + `</saml:NameID>`),
+		Conditions: conditions(ts.audienceRestriction()),
+		Statements: emailStatement(email),
+	}
+}
+
+// A provider with domains signs in only emails on those domains, or it could
+// sign in as any address it likes.
+func (ts *SAMLACSTestSuite) TestEmailOutsideProviderDomainsIsRefused() {
+	ts.setDomains("example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("outside-domain", "outsider", "ceo@other.org")))
+	ts.refused(location, "SAML Assertion email is not on a domain of this identity provider")
+	require.Equal(ts.T(), "saml_email_domain_not_allowed", location.Query().Get("error_code"))
+}
+
+func (ts *SAMLACSTestSuite) TestEmailOnProviderDomainSignsIn() {
+	ts.setDomains("example.com", "example.org")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("inside-domain", "insider", "Someone@Example.ORG")))
+	require.NotEmpty(ts.T(), ts.signedInAs(location), "refused: %s", location)
+}
+
+// A subdomain is a different domain: it must be listed itself.
+func (ts *SAMLACSTestSuite) TestEmailOnSubdomainIsRefused() {
+	ts.setDomains("example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("subdomain", "sub", "someone@eu.example.com")))
+	ts.refused(location, "SAML Assertion email is not on a domain of this identity provider")
+}
+
+// markVerified marks the provider's domain verified, as the verify endpoint
+// does once it sees the TXT record.
+func (ts *SAMLACSTestSuite) markVerified(domain string) {
+	provider, err := models.FindSAMLProviderByEntityID(ts.API.db, ts.IdP.entityID)
+	require.NoError(ts.T(), err)
+	d := provider.Domain(domain)
+	require.NotNil(ts.T(), d, "%s is a domain of the provider", domain)
+	now := time.Now().UTC()
+	d.VerifiedAt = &now
+	require.NoError(ts.T(), ts.API.db.UpdateOnly(d, "verified_at"))
+}
+
+// existingUser is a confirmed account for email that signs in with a
+// password, outside SSO. The email is stored as given: NewUser lowercases it,
+// but rows written by other means can differ from each other in case alone.
+func (ts *SAMLACSTestSuite) existingUser(email string) *models.User {
+	user, err := models.NewUser("", email, "password", ts.Config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	user.Email = storage.NullString(email)
+	confirmedAt := time.Now().UTC()
+	user.EmailConfirmedAt = &confirmedAt
+	require.NoError(ts.T(), ts.API.db.Create(user))
+	_, err = ts.API.createNewIdentity(ts.API.db, user, "email", map[string]interface{}{"sub": user.ID.String(), "email": email})
+	require.NoError(ts.T(), err)
+	return user
+}
+
+const (
+	refusedUnverifiedDomain = "This email already has an account. Ask your administrator to verify the domain so they can be linked."
+	refusedMultipleAccounts = "More than one account has this email. Ask your administrator to merge them before signing in with SSO."
+)
+
+// Several accounts with the email in different case: the one stored exactly
+// as the identity provider sends it is linked.
+func (ts *SAMLACSTestSuite) TestLoginLinksTheExactCaseAccount() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	ts.existingUser("member@example.com")
+	exact := ts.existingUser("Member@Example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("exact-case", "member-id", "Member@Example.com")))
+	require.Equal(ts.T(), exact.ID.String(), ts.signedInAs(location), "signed in as the exact-case account: %s", location)
+}
+
+// Several accounts with the email and none stored exactly as sent: no account
+// is picked, and the refusal says why instead of a server error.
+func (ts *SAMLACSTestSuite) TestLoginWithSeveralAccountsAndNoExactCaseIsRefused() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	ts.existingUser("member@example.com")
+	ts.existingUser("Member@Example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("no-exact-case", "member-id", "MEMBER@example.com")))
+	ts.refused(location, refusedMultipleAccounts)
+	require.Equal(ts.T(), "sso_multiple_accounts", location.Query().Get("error_code"))
+
+	// The redirect carries no status, so the decision is checked directly.
+	provider, err := models.FindSAMLProviderByEntityID(ts.API.db, ts.IdP.entityID)
+	require.NoError(ts.T(), err)
+	userData := &authprovider.UserProvidedData{
+		Emails:            []authprovider.Email{{Email: "MEMBER@example.com", Verified: true, Primary: true}},
+		Metadata:          &authprovider.Claims{Subject: "member-id"},
+		SSODomainVerified: true,
+	}
+	_, _, err = ts.API.createAccountFromExternalIdentity(ts.API.db, httptest.NewRequest(http.MethodPost, ts.ACSURL, nil), userData, "sso:"+provider.ID.String(), false)
+	var httpErr *HTTPError
+	require.ErrorAs(ts.T(), err, &httpErr)
+	require.Equal(ts.T(), http.StatusUnprocessableEntity, httpErr.HTTPStatus)
+	require.Equal(ts.T(), refusedMultipleAccounts, httpErr.Message)
+}
+
+// On a verified domain a first SAML login links to the account that already
+// has the email, so the person keeps one account.
+func (ts *SAMLACSTestSuite) TestLoginOnVerifiedDomainLinksExistingAccount() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	existing := ts.existingUser("member@example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("link-1", "member-id", "Member@Example.com")))
+	require.Equal(ts.T(), existing.ID.String(), ts.signedInAs(location), "signed in as the existing account: %s", location)
+
+	user, err := models.FindUserByID(ts.API.db, existing.ID)
+	require.NoError(ts.T(), err)
+	require.False(ts.T(), user.IsSSOUser, "a linked account stays a regular account")
+	ok, _, err := user.Authenticate(context.Background(), ts.API.db, "password", nil, false, "")
+	require.NoError(ts.T(), err)
+	require.True(ts.T(), ok, "the password still signs in")
+	providers := []string{}
+	for _, identity := range user.Identities {
+		providers = append(providers, identity.Provider)
+	}
+	require.Contains(ts.T(), providers, "email")
+	require.Contains(ts.T(), strings.Join(providers, ","), "sso:")
+
+	// The next login finds the linked identity.
+	location = ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("link-2", "member-id", "member@example.com")))
+	require.Equal(ts.T(), existing.ID.String(), ts.signedInAs(location))
+}
+
+// Before the domain is verified a login whose email already has an account is
+// refused, rather than creating a second account for the same address.
+func (ts *SAMLACSTestSuite) TestLoginOnUnverifiedDomainWithExistingAccountIsRefused() {
+	ts.setDomains("example.com")
+	ts.existingUser("member@example.com")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("unverified", "member-id", "member@example.com")))
+	ts.refused(location, refusedUnverifiedDomain)
+	require.Equal(ts.T(), "sso_domain_not_verified", location.Query().Get("error_code"))
+}
+
+// A provider with no domains has none verified, so it never links.
+func (ts *SAMLACSTestSuite) TestLoginWithoutDomainsWithExistingAccountIsRefused() {
+	ts.existingUser("member@example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("no-domains", "member-id", "member@example.com")))
+	ts.refused(location, refusedUnverifiedDomain)
+}
+
+// With no account for the email a login creates one, verified domain or not,
+// and the new account is an SSO account as before.
+func (ts *SAMLACSTestSuite) TestLoginWithoutExistingAccountCreatesSSOUser() {
+	ts.setDomains("example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("new-user", "new-id", "new@example.com")))
+	id := ts.signedInAs(location)
+	require.NotEmpty(ts.T(), id, "refused: %s", location)
+
+	user, err := models.FindUserByID(ts.API.db, uuid.FromStringOrNil(id))
+	require.NoError(ts.T(), err)
+	require.True(ts.T(), user.IsSSOUser)
 }

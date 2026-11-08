@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gofrs/uuid"
 	"github.com/supatype/server/internal/auth/provider"
 	"github.com/supatype/server/internal/auth/storage"
 	"github.com/supatype/server/internal/conf"
@@ -34,6 +35,11 @@ const (
 	CreateAccount
 	LinkAccount
 	MultipleAccounts
+	// ExistingAccountOnUnverifiedDomain is a first SSO login whose email
+	// already has an account, on a domain the provider has not verified. It
+	// is refused: linking needs a verified domain, and creating a second
+	// account for the same address is what verification exists to avoid.
+	ExistingAccountOnUnverifiedDomain
 )
 
 type AccountLinkingResult struct {
@@ -44,16 +50,62 @@ type AccountLinkingResult struct {
 	CandidateEmail provider.Email
 }
 
+// determineSSOAccountLinking decides the first login through an SSO provider
+// whose email is ssoEmail, as the provider sent it. The candidate is the
+// regular account (is_sso_user false) with that email exactly, or else the
+// only one with it in another case. It is linked when onVerifiedDomain says
+// the email is on a verified domain of the provider, and the login is refused
+// otherwise. With no such account a new SSO account is created, as for any
+// SSO login; with several and none exact the decision is MultipleAccounts. The
+// linked account stays a regular account, so it keeps its email and every way
+// it already signs in.
+func determineSSOAccountLinking(tx *storage.Connection, aud, ssoEmail string, candidateEmail provider.Email, linkingDomain string, onVerifiedDomain bool) (AccountLinkingResult, error) {
+	result := AccountLinkingResult{Decision: CreateAccount, LinkingDomain: linkingDomain, CandidateEmail: candidateEmail}
+
+	// The unique index on email where is_sso_user is false is
+	// case-sensitive, so at most one regular account has ssoEmail exactly.
+	// Without it, two rows are enough to tell one account from several.
+	const regular = "instance_id = ? and aud = ? and is_sso_user = false"
+	var existing []*User
+	if err := tx.Q().Where(regular+" and email = ?", uuid.Nil, aud, ssoEmail).All(&existing); err != nil {
+		return AccountLinkingResult{}, err
+	}
+	if len(existing) == 0 {
+		if err := tx.Q().Where(regular+" and lower(email) = ?", uuid.Nil, aud, strings.ToLower(ssoEmail)).Limit(2).All(&existing); err != nil {
+			return AccountLinkingResult{}, err
+		}
+	}
+
+	switch {
+	case len(existing) == 0:
+	case len(existing) > 1:
+		result.Decision = MultipleAccounts
+	case onVerifiedDomain:
+		result.Decision = LinkAccount
+		result.User = existing[0]
+	default:
+		result.Decision = ExistingAccountOnUnverifiedDomain
+	}
+	return result, nil
+}
+
 // DetermineAccountLinking uses the provided data and database state to compute a decision on whether:
 // - A new User should be created (CreateAccount)
 // - A new Identity should be created (LinkAccount) with a UserID pointing to an existing user account
 // - Nothing should be done (AccountExists)
 // - It's not possible to decide due to data inconsistency (MultipleAccounts) and the caller should decide
 //
+// ssoDomainVerified is the caller's answer for an SSO provider: whether the
+// primary email is on a verified domain of that provider. Other providers
+// pass false.
+//
 // Errors signal failure in processing only, like database access errors.
-func DetermineAccountLinking(tx *storage.Connection, config *conf.GlobalConfiguration, emails []provider.Email, aud, providerName, sub string) (AccountLinkingResult, error) {
+func DetermineAccountLinking(tx *storage.Connection, config *conf.GlobalConfiguration, emails []provider.Email, aud, providerName, sub string, ssoDomainVerified bool) (AccountLinkingResult, error) {
 	var verifiedEmails []string
 	var candidateEmail provider.Email
+	// primaryEmail is the primary email as the provider sent it, before
+	// candidateEmail lowercases it.
+	var primaryEmail string
 	for _, email := range emails {
 		if email.Verified || config.Mailer.Autoconfirm {
 			verifiedEmails = append(verifiedEmails, strings.ToLower(email.Email))
@@ -61,6 +113,7 @@ func DetermineAccountLinking(tx *storage.Connection, config *conf.GlobalConfigur
 		if email.Primary {
 			candidateEmail = email
 			candidateEmail.Email = strings.ToLower(email.Email)
+			primaryEmail = email.Email
 		}
 	}
 
@@ -91,6 +144,10 @@ func DetermineAccountLinking(tx *storage.Connection, config *conf.GlobalConfigur
 
 	// the identity does not exist, so we need to check if we should create a new account
 	// or link to an existing one
+	if strings.HasPrefix(providerName, "sso:") && slices.Contains(verifiedEmails, candidateEmail.Email) {
+		return determineSSOAccountLinking(tx, aud, primaryEmail, candidateEmail, candidateLinkingDomain, ssoDomainVerified)
+	}
+
 	if len(verifiedEmails) == 0 {
 		// if there are no verified emails, we always decide to create a new account
 		user, terr := IsDuplicatedEmail(tx, candidateEmail.Email, aud, nil, config.Experimental.ProvidersWithOwnLinkingDomain)

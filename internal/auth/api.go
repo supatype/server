@@ -52,6 +52,9 @@ type API struct {
 	overrideTime func() time.Time
 
 	limiterOpts *LimiterOptions
+
+	// samlDev is what dev mode relaxes in SAML.
+	samlDev samlDevPolicy
 }
 
 func (a *API) GetConfig() *conf.GlobalConfiguration { return a.config }
@@ -90,6 +93,7 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 		config:  globalConfig,
 		db:      db,
 		version: version,
+		samlDev: newSAMLDevPolicy(globalConfig),
 	}
 
 	api.oidcCache = provider.NewOIDCProviderCache(globalConfig.External.OIDCProviderCacheTTL)
@@ -223,11 +227,11 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 				if err := retrieveRequestParams(r, params); err != nil {
 					return err
 				}
-				// Unlike upstream GoTrue, a password with no email or phone is not an
-				// anonymous sign-in. It is a signup form that lost its email field, so it
-				// goes to Signup and is refused there instead of creating an anonymous
-				// user and dropping the password.
-				if params.Email == "" && params.Phone == "" && params.Password == "" {
+				// Unlike upstream GoTrue, a password, a blank email or a blank phone is
+				// not an anonymous sign-in. It is a signup form that lost its email or
+				// phone, so it goes to Signup and is refused there instead of creating
+				// an anonymous user and dropping what the form sent.
+				if params.isAnonymousSignIn() {
 					if !api.config.External.AnonymousUsers.Enabled {
 						return apierrors.NewUnprocessableEntityError(apierrors.ErrorCodeAnonymousProviderDisabled, "Anonymous sign-ins are disabled")
 					}
@@ -386,6 +390,8 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 						r.Get("/", api.adminSSOProvidersGet)
 						r.Put("/", api.adminSSOProvidersUpdate)
 						r.Delete("/", api.adminSSOProvidersDelete)
+
+						r.Post("/domains/{domain}/verify", api.adminSSODomainVerify)
 					})
 				})
 			})

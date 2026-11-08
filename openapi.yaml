@@ -2031,6 +2031,76 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorSchema"
 
+  /admin/sso/providers/{ssoProviderId}/domains/{domain}/verify:
+    parameters:
+      - name: ssoProviderId
+        in: path
+        required: true
+        description: The provider's UUID, or `resource_` followed by its resource ID.
+        schema:
+          type: string
+      - name: domain
+        in: path
+        required: true
+        schema:
+          type: string
+          format: hostname
+    post:
+      summary: Verify one of a SSO provider's domains.
+      description: >
+        Proves the domain with a DNS TXT record. The first call issues the domain's token, which later
+        calls keep; every call looks the record up. Once the record named by `challenge.name` holds
+        `challenge.value` the domain is verified, and it stays verified if the record is removed later.
+        A SAML login whose email is on a verified domain of the provider links to an existing account
+        with that email. In `SUPATYPE_MODE=dev` a domain ending in `.supatype.test` is verified with no
+        lookup.
+      tags:
+        - admin
+      security:
+        - APIKeyAuth: []
+          AdminAuth: []
+      responses:
+        200:
+          description: The domain's verification state after this check.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  domain:
+                    type: string
+                    format: hostname
+                  verified:
+                    type: boolean
+                  verified_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  challenge:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: "`_supatype-challenge.` followed by the domain."
+                      value:
+                        type: string
+                  found:
+                    type: array
+                    nullable: true
+                    description: The TXT values DNS returned at the challenge name; null when no lookup was made.
+                    items:
+                      type: string
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          description: The provider does not exist, or the domain is not one of its domains.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorSchema"
+
   /admin/oauth/clients:
     get:
       summary: List OAuth clients (admin)
@@ -3406,7 +3476,7 @@ components:
         id:
           type: string
           format: uuid
-        sso_domains:
+        domains:
           type: array
           items:
             type: object
@@ -3414,6 +3484,12 @@ components:
               domain:
                 type: string
                 format: hostname
+              verified:
+                type: boolean
+              verified_at:
+                type: string
+                format: date-time
+                nullable: true
         saml:
           type: object
           properties:

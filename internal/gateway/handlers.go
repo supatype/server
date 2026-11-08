@@ -20,6 +20,7 @@ import (
 	"github.com/supatype/server/internal/objstore"
 	"github.com/supatype/server/internal/platformproxy"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/publicenv"
 	"github.com/supatype/server/internal/restcache"
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/static"
@@ -330,6 +331,16 @@ func buildApp(d *Deps) http.Handler {
 		return proxy.WebSocketProxy(u, upstreamProxy(u))
 	}
 	return nil
+}
+
+// buildPublicEnv serves the deployment's public address and anon key. Never the service role key:
+// publicenv.Values has no field that could carry it.
+func buildPublicEnv(d *Deps) http.Handler {
+	return publicenv.Handler(publicenv.Values{
+		Enabled: d.Config.PublicEnv.On(),
+		URL:     publicenv.PublicURL(d.Config.SupatypeURL, d.APIExternalURL),
+		AnonKey: d.Config.AnonKey,
+	})
 }
 
 // newHookCallback builds the previous() endpoint, which reads the rows a write

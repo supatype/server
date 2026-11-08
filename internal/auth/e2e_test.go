@@ -464,7 +464,9 @@ func TestE2EHooks(t *testing.T) {
 		t.Run("SignupAnonymously", func(t *testing.T) {
 			defer inst.HookRecorder.BeforeUserCreated.ClearCalls()
 
-			req := &auth.SignupParams{}
+			// An anonymous sign-in names no email, phone or password; a marshalled
+			// SignupParams would send each of them blank.
+			req := map[string]any{}
 			res := new(auth.AccessTokenResponse)
 			err := e2eapi.Do(ctx, http.MethodPost, inst.APIServer.URL+"/signup", req, res)
 			require.NoError(t, err)
@@ -477,7 +479,9 @@ func TestE2EHooks(t *testing.T) {
 		t.Run("ExternalCallback", func(t *testing.T) {
 			defer inst.HookRecorder.BeforeUserCreated.ClearCalls()
 
-			req := &auth.SignupParams{}
+			// An anonymous sign-in names no email, phone or password; a marshalled
+			// SignupParams would send each of them blank.
+			req := map[string]any{}
 			res := new(auth.AccessTokenResponse)
 			err := e2eapi.Do(ctx, http.MethodPost, inst.APIServer.URL+"/signup", req, res)
 			require.NoError(t, err)
@@ -1231,7 +1235,9 @@ func TestE2EHooks(t *testing.T) {
 				// signup anon
 				var accessToken *auth.AccessTokenResponse
 				{
-					req := &auth.SignupParams{}
+					// An anonymous sign-in names no email, phone or password; a marshalled
+					// SignupParams would send each of them blank.
+					req := map[string]any{}
 					res := new(auth.AccessTokenResponse)
 					err := e2eapi.Do(ctx, http.MethodPost, inst.APIServer.URL+"/signup", req, res)
 					require.NoError(t, err)
@@ -1456,7 +1462,9 @@ func TestE2EHooks(t *testing.T) {
 				// signup anon
 				var accessToken *auth.AccessTokenResponse
 				{
-					req := &auth.SignupParams{}
+					// An anonymous sign-in names no email, phone or password; a marshalled
+					// SignupParams would send each of them blank.
+					req := map[string]any{}
 					res := new(auth.AccessTokenResponse)
 					err := e2eapi.Do(ctx, http.MethodPost, inst.APIServer.URL+"/signup", req, res)
 					require.NoError(t, err)

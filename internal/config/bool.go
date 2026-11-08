@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // The service has always had two spellings of "on", and collapsing them here
 // would change what existing deployments mean by their own configuration. Both
@@ -47,3 +50,35 @@ func (b *SwitchBool) Decode(value string) error {
 
 // Bool reports the value as a plain bool.
 func (b SwitchBool) Bool() bool { return bool(b) }
+
+// DefaultOnSwitch is a feature that is on unless a deployment turns it off.
+//
+// It records "turned off" rather than "on", so its zero value is on. A plain
+// bool with a `default:"true"` tag would be off in every Config built without
+// Load (a test, an embedder), which is the drift the default constants above
+// exist to prevent.
+//
+// Unlike StrictBool and SwitchBool it refuses a word it does not know, the way
+// a plain bool field does: a typo in an opt-out stops the process instead of
+// leaving the feature in whichever state the typo happens to decode to.
+type DefaultOnSwitch struct{ off bool }
+
+// Decode implements envconfig.Decoder.
+func (b *DefaultOnSwitch) Decode(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "1", "true", "yes", "on":
+		b.off = false
+	case "0", "false", "no", "off":
+		b.off = true
+	default:
+		return fmt.Errorf("%q is not a switch value: use true or false", value)
+	}
+	return nil
+}
+
+// On reports whether the feature is on.
+func (b DefaultOnSwitch) On() bool { return !b.off }
+
+// SwitchedOff is a DefaultOnSwitch that has been turned off, for a Config built
+// in code.
+func SwitchedOff() DefaultOnSwitch { return DefaultOnSwitch{off: true} }

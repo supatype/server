@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.4.0](https://github.com/supatype/server/compare/v2.3.0...v2.4.0) (2026-11-08)
+
+
+### Features
+
+* **gateway:** serve the public API address and anon key at /supatype-env.json and /supatype-env.js ([8b31feb](https://github.com/supatype/server/commit/8b31febff7c0b0f0704430871ec127e6695a0c93))
+* **saml:** a stable SP certificate, a two-key rotation, http metadata in dev, and name_id_format kept ([7d94855](https://github.com/supatype/server/commit/7d948555a9011e61348e9342100b0c446ed8c21c))
+* **saml:** accept the next rotation key on the artifact binding too ([06ff17d](https://github.com/supatype/server/commit/06ff17df7a0e90834e1d5846a012f149a1a88887))
+* **saml:** sign AuthnRequests with RSA-SHA256 ([0fb47d6](https://github.com/supatype/server/commit/0fb47d6409625dc8b668fc72e1eec067f839bae5))
+* **sso:** verify provider domains by DNS, refuse emails outside them, and link on verified domains ([b4ed02e](https://github.com/supatype/server/commit/b4ed02e565680a45c3ac08081b0293e5f5f704e1))
+* **studio:** only owners and admins may change SSO providers ([8f81d0d](https://github.com/supatype/server/commit/8f81d0d74823d6c09376e31607f2b0df8ebc8cda))
+
+
+### Bug Fixes
+
+* **auth:** answer a blank email or phone on signup with a validation error ([5664d08](https://github.com/supatype/server/commit/5664d08f4bb7b18e8ca58d7b7e2265a8aebb7be8))
+* bring the SAML and public-env stack ([#105](https://github.com/supatype/server/issues/105) to [#117](https://github.com/supatype/server/issues/117)) into main ([f5849d4](https://github.com/supatype/server/commit/f5849d49bdc1a9d7f644d844537ec43b6313d5d9))
+* **publicenv:** carry the misconfiguration reason in /supatype-env.js ([63ab9d9](https://github.com/supatype/server/commit/63ab9d92ca3b4fb519254867d4f1942b7bed7956))
+* **publicenv:** name every missing setting in one 503 ([1eaf358](https://github.com/supatype/server/commit/1eaf358d7b28e9a3438b2e6637c49b7b1d56ee39))
+* **sso:** answer 400 saml_metadata_fetch_failed when the server cannot fetch metadata_url ([76fce57](https://github.com/supatype/server/commit/76fce5778191ba46394ae58da1de8095844d254f))
+* **sso:** let the SAML library refuse replayed assertions ([fb451f1](https://github.com/supatype/server/commit/fb451f1cb08a039f41418cfc3541ab5d39e74a2e))
+* **sso:** let the SAML library refuse replayed assertions ([adf1f8c](https://github.com/supatype/server/commit/adf1f8c722407f761e02843c75482ce5c79b6bd6))
+* **sso:** metadata fetch failures answer 400, and viewers read the SSO page ([216c5b1](https://github.com/supatype/server/commit/216c5b182f3464e81a0084f566272d12e4bcd2d9))
+* **sso:** move SAML to github.com/supatype/saml and refuse replayed assertions ([c1a361a](https://github.com/supatype/server/commit/c1a361a59cd91672fe3b8c83015e91787a093e59))
+* **sso:** move SAML to github.com/supatype/saml and refuse replayed assertions ([ba60ddb](https://github.com/supatype/server/commit/ba60ddbf9af29b97fc2994215f88a3701b7285f6))
+* **static:** answer a directory without index.html with 404, and pin missing-asset 404s ([ccd3318](https://github.com/supatype/server/commit/ccd3318ca881e0e15cf94e6b1b7fccc791361f7f))
+* **studio:** a viewer can read the SSO page ([2edeff6](https://github.com/supatype/server/commit/2edeff6be7095b293147a7e9f2a3bbf83b7bcccd))
+* **studio:** a viewer's read of the SSO providers goes as the service role ([b5d04ee](https://github.com/supatype/server/commit/b5d04ee1e7fd404ff522a579f50d311c5a1b8aa8))
+
 ## [2.3.0](https://github.com/supatype/server/compare/v2.2.2...v2.3.0) (2026-11-04)
 
 

@@ -3,8 +3,8 @@ package auth
 import (
 	"net/http"
 
-	"github.com/crewjam/saml"
 	"github.com/gofrs/uuid"
+	"github.com/supatype/saml"
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/models"
 	"github.com/supatype/server/internal/auth/storage"

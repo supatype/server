@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crewjam/saml"
 	"github.com/stretchr/testify/require"
+	"github.com/supatype/saml"
 	"github.com/supatype/server/internal/auth"
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/models"

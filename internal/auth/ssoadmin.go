@@ -8,10 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/samlsp"
 	"github.com/go-chi/chi/v5"
 	"github.com/gofrs/uuid"
+	"github.com/supatype/saml"
+	"github.com/supatype/saml/samlsp"
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/models"
 	"github.com/supatype/server/internal/auth/storage"

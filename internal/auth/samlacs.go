@@ -6,14 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/crewjam/saml"
 	"github.com/fatih/structs"
 	"github.com/gofrs/uuid"
+	"github.com/supatype/saml"
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/metering"
 	"github.com/supatype/server/internal/auth/models"
@@ -202,8 +203,13 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	serviceProvider := a.getSAMLServiceProvider(idpMetadata, initiatedBy == "idp")
 	spAssertion, err := serviceProvider.ParseResponse(r, requestIds)
 	if err != nil {
-		if ire, ok := err.(*saml.InvalidResponseError); ok {
-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid %s", ire.Response).WithInternalError(ire.PrivateErr)
+		// The error is sent back to the browser in a redirect URL, so it names
+		// no part of the response: the whole signed response would land in
+		// browser history and access logs, and can exceed URL length limits.
+		// The reason the library refused it is logged as the internal error.
+		var ire *saml.InvalidResponseError
+		if errors.As(err, &ire) {
+			err = ire.PrivateErr
 		}
 
 		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
@@ -211,6 +217,10 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 	assertion := SAMLAssertion{
 		spAssertion,
+	}
+
+	if err := refuseReplayedSAMLAssertion(db, ssoProvider.ID, &assertion); err != nil {
+		return err
 	}
 
 	userID := assertion.UserID()
@@ -361,8 +371,20 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// refuseReplayedSAMLAssertion records the assertion as accepted, and refuses it
+// if it was accepted before. Without this a captured IdP-initiated response,
+// which has no RelayState to bind it, could be posted again until it expired.
+func refuseReplayedSAMLAssertion(db *storage.Connection, ssoProviderID uuid.UUID, assertion *SAMLAssertion) error {
+	err := models.ConsumeSAMLAssertion(db, ssoProviderID, assertion.ID, assertion.AcceptableUntil())
+	var replayed models.SAMLAssertionReplayedError
+	if errors.As(err, &replayed) {
+		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used")
+	}
+	return err
+}
+
 func samlResponseIssuer(responseXML []byte) (string, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(responseXML)) // #nosec G709 -- token scan only; the SAML response is fully validated by crewjam/saml after provider lookup.
+	decoder := xml.NewDecoder(bytes.NewReader(responseXML)) // #nosec G709 -- token scan only; the SAML response is fully validated by github.com/supatype/saml after provider lookup.
 	for {
 		tok, err := decoder.Token()
 		if err != nil {

@@ -3,6 +3,7 @@ package auth
 import (
 	"testing"
 
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/supatype/server/internal/auth/crypto"
 	"github.com/supatype/server/internal/auth/storage"
@@ -91,4 +92,13 @@ func TestOAuthServerCanBeEnabled(t *testing.T) {
 
 	// OAuth server instance should be initialized when enabled
 	require.NotNil(t, api.oauthServer)
+}
+
+// adminToken signs a token with the admin role, as the admin API requires.
+func adminToken(t *testing.T, config *conf.GlobalConfiguration) string {
+	t.Helper()
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &AccessTokenClaims{Role: "supatype_admin"}).
+		SignedString([]byte(config.JWT.Secret))
+	require.NoError(t, err)
+	return token
 }

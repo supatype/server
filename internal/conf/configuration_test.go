@@ -1367,3 +1367,10 @@ func TestWebAuthnConfigurationValidate(t *testing.T) {
 func toPtr[T any](v T) *T {
 	return &(&([1]T{T(v)}))[0]
 }
+
+func TestIsDevMode(t *testing.T) {
+	for mode, want := range map[string]bool{"dev": true, " dev\n": true, "": false, "standalone": false, "managed": false, "Dev": false} {
+		cfg := &GlobalConfiguration{Mode: mode}
+		require.Equal(t, want, cfg.IsDevMode(), "mode %q", mode)
+	}
+}

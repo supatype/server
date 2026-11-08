@@ -49,3 +49,37 @@ func TestBoolTypesStillDiffer(t *testing.T) {
 		}
 	}
 }
+
+// DefaultOnSwitch is on until it is turned off, and its zero value is on, so a
+// Config built without Load keeps the behaviour the variable's default
+// describes.
+func TestDefaultOnSwitch(t *testing.T) {
+	var zero DefaultOnSwitch
+	if !zero.On() {
+		t.Fatal("the zero DefaultOnSwitch must be on")
+	}
+	for value, want := range map[string]bool{
+		"1": true, "true": true, "TRUE": true, "yes": true, "on": true, " On ": true,
+		"0": false, "false": false, "False": false, "no": false, "off": false, " OFF ": false,
+	} {
+		var got DefaultOnSwitch
+		if err := got.Decode(value); err != nil {
+			t.Fatalf("%q: %v", value, err)
+		}
+		if got.On() != want {
+			t.Errorf("DefaultOnSwitch(%q).On() = %v, want %v", value, got.On(), want)
+		}
+	}
+	if SwitchedOff().On() {
+		t.Error("SwitchedOff must report off")
+	}
+}
+
+// A typo in an opt-out switch must stop the process rather than leave the
+// feature in whichever state the typo happens to decode to.
+func TestDefaultOnSwitchRefusesAnUnknownWord(t *testing.T) {
+	var got DefaultOnSwitch
+	if err := got.Decode("flase"); err == nil {
+		t.Fatal("want an error for an unrecognised value")
+	}
+}

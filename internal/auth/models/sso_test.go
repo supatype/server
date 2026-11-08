@@ -183,6 +183,38 @@ func (ts *SSOTestSuite) TestFindSSOProviderForEmailAddress() {
 	}
 }
 
+// createAtSignProvider is a provider on example.com, for the tests of
+// addresses with no "@" or several.
+func (ts *SSOTestSuite) createAtSignProvider() *SSOProvider {
+	provider := &SSOProvider{
+		SAMLProvider: SAMLProvider{EntityID: "https://example.com/saml/at-signs", MetadataXML: "<example />"},
+		SSODomains:   []SSODomain{{Domain: "example.com"}},
+	}
+	require.NoError(ts.T(), ts.db.Eager().Create(provider), "provider creation failed")
+	return provider
+}
+
+// An address with no "@" is on no domain: no provider, rather than a panic.
+func (ts *SSOTestSuite) TestFindSSOProviderForEmailAddressWithoutAtSign() {
+	provider := ts.createAtSignProvider()
+	require.Nil(ts.T(), provider.DomainOf("no-at-sign"))
+
+	rp, err := FindSSOProviderForEmailAddress(ts.db, "no-at-sign")
+	require.Nil(ts.T(), rp)
+	require.True(ts.T(), IsNotFoundError(err), "no provider for an address with no @: %v", err)
+}
+
+// An address with several "@" is on the domain after the last one, for the
+// provider lookup as for DomainOf.
+func (ts *SSOTestSuite) TestFindSSOProviderForEmailAddressAgreesWithDomainOf() {
+	provider := ts.createAtSignProvider()
+	require.NotNil(ts.T(), provider.DomainOf("a@b@example.com"))
+
+	rp, err := FindSSOProviderForEmailAddress(ts.db, "a@b@example.com")
+	require.NoError(ts.T(), err)
+	require.Equal(ts.T(), provider.ID, rp.ID)
+}
+
 func (ts *SSOTestSuite) TestFindSAMLProviderByEntityID() {
 	provider := &SSOProvider{
 		SAMLProvider: SAMLProvider{

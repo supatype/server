@@ -45,13 +45,13 @@ func (ts *AccountLinkingTestSuite) TestCreateAccountDecisionNoAccounts() {
 		Verified: true,
 		Primary:  true,
 	}
-	decision, err := DetermineAccountLinking(ts.db, ts.config, []provider.Email{testEmail}, ts.config.JWT.Aud, "provider", "abcdefgh")
+	decision, err := DetermineAccountLinking(ts.db, ts.config, []provider.Email{testEmail}, ts.config.JWT.Aud, "provider", "abcdefgh", false)
 	require.NoError(ts.T(), err)
 
 	require.Equal(ts.T(), decision.Decision, CreateAccount)
 
 	// when there are no accounts in the system -- SSO provider
-	decision, err = DetermineAccountLinking(ts.db, ts.config, []provider.Email{testEmail}, ts.config.JWT.Aud, "sso:f06f9e3d-ff92-4c47-a179-7acf1fda6387", "abcdefgh")
+	decision, err = DetermineAccountLinking(ts.db, ts.config, []provider.Email{testEmail}, ts.config.JWT.Aud, "sso:f06f9e3d-ff92-4c47-a179-7acf1fda6387", "abcdefgh", false)
 	require.NoError(ts.T(), err)
 
 	require.Equal(ts.T(), decision.Decision, CreateAccount)
@@ -87,7 +87,7 @@ func (ts *AccountLinkingTestSuite) TestCreateAccountDecisionWithAccounts() {
 			Verified: true,
 			Primary:  true,
 		},
-	}, ts.config.JWT.Aud, "provider", "abcdefgh")
+	}, ts.config.JWT.Aud, "provider", "abcdefgh", false)
 	require.NoError(ts.T(), err)
 
 	require.Equal(ts.T(), decision.Decision, CreateAccount)
@@ -100,7 +100,7 @@ func (ts *AccountLinkingTestSuite) TestCreateAccountDecisionWithAccounts() {
 			Verified: true,
 			Primary:  true,
 		},
-	}, ts.config.JWT.Aud, ssoProvider, "abcdefgh")
+	}, ts.config.JWT.Aud, ssoProvider, "abcdefgh", false)
 	require.NoError(ts.T(), err)
 
 	require.Equal(ts.T(), decision.Decision, CreateAccount)
@@ -124,7 +124,7 @@ func (ts *AccountLinkingTestSuite) TestAccountExists() {
 			Verified: true,
 			Primary:  true,
 		},
-	}, ts.config.JWT.Aud, "provider", userA.ID.String())
+	}, ts.config.JWT.Aud, "provider", userA.ID.String(), false)
 	require.NoError(ts.T(), err)
 
 	require.Equal(ts.T(), decision.Decision, AccountExists)
@@ -265,7 +265,7 @@ func (ts *AccountLinkingTestSuite) TestLinkingScenarios() {
 
 	for _, c := range cases {
 		ts.Run(c.desc, func() {
-			decision, err := DetermineAccountLinking(ts.db, ts.config, []provider.Email{c.email}, ts.config.JWT.Aud, c.provider, c.sub)
+			decision, err := DetermineAccountLinking(ts.db, ts.config, []provider.Email{c.email}, ts.config.JWT.Aud, c.provider, c.sub, false)
 			require.NoError(ts.T(), err)
 			require.Equal(ts.T(), c.decision.Decision, decision.Decision)
 			require.Equal(ts.T(), c.decision.LinkingDomain, decision.LinkingDomain)
@@ -307,8 +307,73 @@ func (ts *AccountLinkingTestSuite) TestMultipleAccounts() {
 			Verified: true,
 			Primary:  true,
 		},
-	}, ts.config.JWT.Aud, "provider", "abcdefgh")
+	}, ts.config.JWT.Aud, "provider", "abcdefgh", false)
 	require.NoError(ts.T(), err)
 
 	require.Equal(ts.T(), decision.Decision, MultipleAccounts)
+}
+
+// firstSSOLogin decides a first login of email through an SSO provider, on a
+// verified domain of it.
+func (ts *AccountLinkingTestSuite) firstSSOLogin(email string) AccountLinkingResult {
+	decision, err := DetermineAccountLinking(ts.db, ts.config, []provider.Email{
+		{Email: email, Verified: true, Primary: true},
+	}, ts.config.JWT.Aud, "sso:f06f9e3d-ff92-4c47-a179-7acf1fda6387", "first-login", true)
+	require.NoError(ts.T(), err)
+	return decision
+}
+
+// createUser saves an account for email, an SSO account when ssoUser is set.
+// The email is stored as given: NewUser lowercases it, but rows written by
+// other means can differ from each other in case alone.
+func (ts *AccountLinkingTestSuite) createUser(email string, ssoUser bool) *User {
+	user, err := NewUser("", email, "", ts.config.JWT.Aud, nil)
+	require.NoError(ts.T(), err)
+	user.Email = storage.NullString(email)
+	user.IsSSOUser = ssoUser
+	require.NoError(ts.T(), ts.db.Create(user))
+	return user
+}
+
+// A first SSO login on a verified domain links only to a regular account:
+// an SSO account of another provider with the same email is not one.
+func (ts *AccountLinkingTestSuite) TestSSOLinkSkipsSSOAccounts() {
+	ts.createUser("sso@example.com", true)
+
+	decision := ts.firstSSOLogin("sso@example.com")
+	require.Equal(ts.T(), CreateAccount, decision.Decision)
+	require.Nil(ts.T(), decision.User)
+}
+
+// When more than one regular account has the email in some case and none has
+// it exactly as the SSO login gives it, the login links to none of them.
+func (ts *AccountLinkingTestSuite) TestSSOLinkWithSeveralAccountsIsMultipleAccounts() {
+	ts.createUser("Dup@example.com", false)
+	ts.createUser("DUP@example.com", false)
+
+	decision := ts.firstSSOLogin("dup@example.com")
+	require.Equal(ts.T(), MultipleAccounts, decision.Decision)
+	require.Nil(ts.T(), decision.User)
+}
+
+// When several regular accounts have the email in some case, the one whose
+// stored email is exactly the SSO email is the account linked.
+func (ts *AccountLinkingTestSuite) TestSSOLinkToTheExactCaseAccount() {
+	ts.createUser("dup@example.com", false)
+	exact := ts.createUser("Dup@Example.com", false)
+	ts.createUser("DUP@EXAMPLE.COM", false)
+
+	decision := ts.firstSSOLogin("Dup@Example.com")
+	require.Equal(ts.T(), LinkAccount, decision.Decision)
+	require.Equal(ts.T(), exact.ID, decision.User.ID)
+}
+
+// One regular account on a verified domain is linked, whatever the case of
+// its stored email.
+func (ts *AccountLinkingTestSuite) TestSSOLinkToTheOneAccount() {
+	user := ts.createUser("One@example.com", false)
+
+	decision := ts.firstSSOLogin("one@example.com")
+	require.Equal(ts.T(), LinkAccount, decision.Decision)
+	require.Equal(ts.T(), user.ID, decision.User.ID)
 }

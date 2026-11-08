@@ -253,7 +253,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// same one.
 	corsPolicy := DefaultCORSPolicy(srvCfg, corsorigins.DBStore{DB: db}, authCfg.SiteURL)
 	outerMux := buildOuterMux(srvCfg, live.For, healthProbes, ah, dm, utilities.Version, resources, sendEmailHook,
-		WithCORSPolicy(corsPolicy), WithAfterHookListener(afterHooks))
+		WithCORSPolicy(corsPolicy), WithAfterHookListener(afterHooks), WithAPIExternalURL(authCfg.API.ExternalURL))
 
 	// ── background workers (stop on ctx cancel; drained by the returned func) ──
 	wrkLog := logrus.WithField("component", "apiworker")

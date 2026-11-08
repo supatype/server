@@ -65,6 +65,24 @@ var namedRules = []proxyRule{
 	{http.MethodPost, "/admin/studio-members", true, false, false},
 }
 
+// SSO providers decide which identity provider may sign people in, and as
+// whom, so changing them or verifying their domains is for admins (owner
+// decision 2026-11-06). Developers keep reading them with the rest of the auth
+// admin API.
+var ssoRules = []proxyRule{
+	{http.MethodGet, "/auth/v1/admin/sso/providers", true, true, false},
+	{http.MethodGet, "/auth/v1/admin/sso/providers/abc", true, true, false},
+	{http.MethodPost, "/auth/v1/admin/sso/providers", true, false, false},
+	{http.MethodPut, "/auth/v1/admin/sso/providers/abc", true, false, false},
+	{http.MethodPatch, "/auth/v1/admin/sso/providers/abc", true, false, false},
+	{http.MethodDelete, "/auth/v1/admin/sso/providers/abc", true, false, false},
+	{http.MethodDelete, "/auth/v1/admin/sso/providers/resource_acme", true, false, false},
+	{http.MethodPost, "/auth/v1/admin/sso/providers/abc/domains/acme.com/verify", true, false, false},
+	{http.MethodPost, "/auth/v1/admin/sso", true, false, false},
+	// A prefix only counts on a segment boundary.
+	{http.MethodPost, "/auth/v1/admin/ssox", true, true, false},
+}
+
 // The self-host control plane. It runs as the service role: it pushes schema,
 // deploys and deletes functions, and its reads include function secrets, so a
 // read is as privileged as a write. Admins and developers administer the project
@@ -136,6 +154,7 @@ func TestAllowsRequestMatrix(t *testing.T) {
 		"platform":     platformRules,
 		"service role": serviceRoleRules,
 		"inspector":    realtimeInspectorRules,
+		"sso":          ssoRules,
 	}
 	for group, rules := range groups {
 		for _, rule := range rules {
@@ -155,7 +174,7 @@ func TestAllowsRequestMatrix(t *testing.T) {
 // nothing at all.
 func TestAllowsRequestUnknownRoleReachesNothing(t *testing.T) {
 	var none StudioPermissions
-	for _, rules := range [][]proxyRule{dataPlaneRules, namedRules, platformRules, serviceRoleRules, realtimeInspectorRules} {
+	for _, rules := range [][]proxyRule{dataPlaneRules, namedRules, platformRules, serviceRoleRules, realtimeInspectorRules, ssoRules} {
 		for _, rule := range rules {
 			if AllowsRequest(none, rule.method, rule.path) {
 				t.Errorf("no capability must not reach %s %q", rule.method, rule.path)
@@ -328,5 +347,90 @@ func TestAFunctionNamedAdminIsContent(t *testing.T) {
 				t.Errorf("Write was refused %s %s", method, path)
 			}
 		}
+	}
+}
+
+// The Cloud owner role carries the same rule as admin wherever a host
+// understands it.
+func TestSSOWritesFollowManageMembers(t *testing.T) {
+	for _, role := range []string{"owner", RoleAdmin, "developer", "editor", "billing", "viewer"} {
+		perms, _ := PermissionsForRole(role)
+		got := AllowsRequest(perms, http.MethodPost, "/auth/v1/admin/sso/providers")
+		if got != perms.ManageMembers {
+			t.Errorf("%s: SSO write allowed %v, manageMembers %v", role, got, perms.ManageMembers)
+		}
+	}
+}
+
+// Through the proxy as the gateway mounts it, a developer's SSO change is
+// refused before it reaches the auth service, and a read still passes.
+func TestProxyRefusesDeveloperSSOWrites(t *testing.T) {
+	call := proxyThroughRouter(t, "developer")
+	if code, landed := call(http.MethodPost, "/studio/proxy/auth/v1/admin/sso/providers"); code != http.StatusForbidden || landed != "" {
+		t.Errorf("developer SSO create: got %d landing on %q, want 403 landing nowhere", code, landed)
+	}
+	if code, landed := call(http.MethodPost, "/studio/proxy/auth/v1/admin/sso/providers/abc/domains/acme.com/verify"); code != http.StatusForbidden || landed != "" {
+		t.Errorf("developer domain verify: got %d landing on %q, want 403 landing nowhere", code, landed)
+	}
+	if _, landed := call(http.MethodGet, "/studio/proxy/auth/v1/admin/sso/providers"); landed != "app" {
+		t.Errorf("developer SSO read: landed on %q, want it passed on", landed)
+	}
+	if _, landed := proxyThroughRouter(t, RoleAdmin)(http.MethodPost, "/studio/proxy/auth/v1/admin/sso/providers"); landed != "app" {
+		t.Errorf("admin SSO create: landed on %q, want it passed on", landed)
+	}
+}
+
+// A viewer reads the SSO page as it reads the Studio members list: the
+// providers can be listed and opened, never changed, and the rest of the auth
+// API stays closed to them (owner decision 2026-11-07, issue 53).
+func TestViewerReadsSSOProvidersOnly(t *testing.T) {
+	viewer, _ := PermissionsForRole("viewer")
+	for _, rule := range []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodGet, "/auth/v1/admin/sso/providers", true},
+		{http.MethodGet, "/auth/v1/admin/sso/providers/abc", true},
+		// The page also shows whether SAML is on, and the SP metadata.
+		{http.MethodGet, "/auth/v1/settings", true},
+		{http.MethodGet, "/auth/v1/sso/saml/metadata", true},
+		{http.MethodPost, "/auth/v1/sso/saml/acs", false},
+		{http.MethodPut, "/auth/v1/settings", false},
+		{http.MethodPost, "/auth/v1/admin/sso/providers", false},
+		{http.MethodDelete, "/auth/v1/admin/sso/providers/abc", false},
+		{http.MethodPost, "/auth/v1/admin/sso/providers/abc/domains/acme.com/verify", false},
+		{http.MethodGet, "/auth/v1/admin/users", false},
+		{http.MethodGet, "/auth/v1/admin/ssox", false},
+	} {
+		if got := AllowsRequest(viewer, rule.method, rule.path); got != rule.want {
+			t.Errorf("viewer %s %s: got %v, want %v", rule.method, rule.path, got, rule.want)
+		}
+	}
+	editor, _ := PermissionsForRole("editor")
+	if AllowsRequest(editor, http.MethodGet, "/auth/v1/admin/sso/providers") {
+		t.Error("editor SSO read: allowed, want refused (no schemaView, no manageUsers)")
+	}
+	if _, landed := proxyThroughRouter(t, "viewer")(http.MethodGet, "/studio/proxy/auth/v1/admin/sso/providers"); landed != "app" {
+		t.Errorf("viewer SSO read through the proxy: landed on %q, want it passed on", landed)
+	}
+}
+
+// The auth admin API admits only the service role, so a viewer's read of the
+// SSO providers went upstream with a Studio token and was refused "User not
+// allowed" (issue 53, retest). The read goes as the service role, as the
+// metadata catalogue's does, while the viewer's write is still refused before
+// it leaves the proxy.
+func TestViewerSSOReadReachesTheAuthServerAsTheServiceRole(t *testing.T) {
+	for _, mode := range []string{"", ModeStudio} {
+		next, rec := proxyAs(t, "viewer", mode, http.MethodGet, "/auth/v1/admin/sso/providers")
+		if !next.reached || next.auth != "Bearer service-role-key" {
+			t.Errorf("mode %q: reached %v with authorization %q, want the service role (%d %s)", mode, next.reached, next.auth, rec.Code, rec.Body.String())
+		}
+	}
+	if next, rec := proxyAs(t, "viewer", "", http.MethodPost, "/auth/v1/admin/sso/providers"); next.reached || rec.Code != http.StatusForbidden {
+		t.Errorf("viewer SSO write: reached %v with %d, want 403 before the upstream", next.reached, rec.Code)
+	}
+	if next, _ := proxyAs(t, "viewer", "", http.MethodGet, "/auth/v1/settings"); next.auth == "Bearer service-role-key" {
+		t.Error("viewer settings read: sent as the service role, want only the SSO provider reads elevated")
 	}
 }

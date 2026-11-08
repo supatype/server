@@ -69,7 +69,7 @@ jobs:
             cross: false
           - goos: darwin
             goarch: arm64
-            runner: macos-14
+            runner: macos-15
             cross: false
           - goos: windows
             goarch: amd64

@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/modelhooks"
+	"github.com/supatype/server/internal/publicenv"
 	"github.com/supatype/server/internal/studioctx"
 )
 
@@ -244,6 +245,16 @@ func Routes() []Route {
 			Strip:   true,
 			Build:   buildStudioProxy,
 			Log:     "mux: Studio auth mounted at /studio/auth/verify and /studio/proxy",
+		},
+		// The public frontend values, whatever the app mode. Exact patterns, so they win over the
+		// catch-all below: over a file of the same name in a static app's dist, the SPA fallback and
+		// an app proxy alike.
+		{Pattern: publicenv.JSONPath, Verb: HandleExact, Build: buildPublicEnv},
+		{
+			Pattern: publicenv.ScriptPath,
+			Verb:    HandleExact,
+			Build:   buildPublicEnv,
+			Log:     "mux: public env mounted at " + publicenv.JSONPath + " and " + publicenv.ScriptPath,
 		},
 		{
 			Pattern: "/",

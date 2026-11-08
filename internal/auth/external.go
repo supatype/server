@@ -298,7 +298,7 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 		identityData = structs.Map(userData.Metadata)
 	}
 
-	decision, terr := models.DetermineAccountLinking(tx, config, userData.Emails, aud, providerType, userData.Metadata.Subject)
+	decision, terr := models.DetermineAccountLinking(tx, config, userData.Emails, aud, providerType, userData.Metadata.Subject, userData.SSODomainVerified)
 	if terr != nil {
 		return 0, nil, terr
 	}
@@ -375,7 +375,14 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 			return 0, nil, terr
 		}
 
+	case models.ExistingAccountOnUnverifiedDomain:
+		return 0, nil, apierrors.NewUnprocessableEntityError(apierrors.ErrorCodeSSODomainNotVerified, "This email already has an account. Ask your administrator to verify the domain so they can be linked.")
+
 	case models.MultipleAccounts:
+		// For SSO this is accounts an administrator can merge, not a fault.
+		if strings.HasPrefix(providerType, "sso:") {
+			return 0, nil, apierrors.NewUnprocessableEntityError(apierrors.ErrorCodeSSOMultipleAccounts, "More than one account has this email. Ask your administrator to merge them before signing in with SSO.")
+		}
 		return 0, nil, apierrors.NewInternalServerError("Multiple accounts with the same email address in the same linking domain detected: %v", decision.LinkingDomain)
 
 	default:

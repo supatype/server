@@ -36,6 +36,7 @@ It can:
 - `/admin/v1/*` -> admin API
 - `/studio-config` -> Studio config payload
 - `/sql` -> SQL runner endpoint
+- `/supatype-env.json`, `/supatype-env.js` -> the public API address and anon key (see `SUPATYPE_PUBLIC_ENV`)
 - `/*` -> app runtime (`none`, `static`, or `proxy`)
 
 The functions admin API's old address, `/functions/v1/admin/*`, still answers for a transition: a
@@ -129,6 +130,24 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_DENO_PORT`
 - `SUPATYPE_TENANT_HMAC_SECRET`
 - `SUPATYPE_TLS_DOMAIN`
+- `SUPATYPE_PUBLIC_ENV` (default `true`). `GET /supatype-env.json` answers `{"url":...,"anonKey":...}` for `supatype build`, and `GET /supatype-env.js` sets `window.__SUPATYPE_ENV__` for a static app's script tag, whatever `SUPATYPE_APP_MODE` is and ahead of a file of the same name in the app. `url` is `SUPATYPE_URL`, else `SUPATYPE_API_EXTERNAL_URL` without a trailing `/auth/v1`; the key is `SUPATYPE_ANON_KEY`. The service role key is never served. A misconfigured deployment names every setting to fix, one per line, key before URL: no anon key, an anon key whose JWT role is `service_role` (refused, never echoed), or neither URL set. `/supatype-env.json` answers that text as a 503 with `no-store`. `/supatype-env.js` answers 200 with `no-store` and `window.__SUPATYPE_ENV__ = {"error":"..."};` carrying the same text and no key, because a browser neither runs a script answered with an error status nor tells the page why, and the client throws that reason on its first call. Set `false` for an API-only project: both paths then answer 404.
+
+SAML single sign-on (the service provider side of `/auth/v1/sso`):
+
+- `SUPATYPE_SAML_ENABLED`, `SUPATYPE_SAML_PRIVATE_KEY` (standard base64, PKCS#1, RSA 2048 or more,
+  exponent 65537), `SUPATYPE_SAML_ALLOW_ENCRYPTED_ASSERTIONS`,
+  `SUPATYPE_SAML_RELAY_STATE_VALIDITY_PERIOD`, `SUPATYPE_SAML_EXTERNAL_URL`,
+  `SUPATYPE_SAML_RATE_LIMIT_ASSERTION`.
+- The SP certificate in the metadata (`/auth/v1/sso/saml/metadata`) is derived from the private key
+  alone. Changing the host or the encrypted-assertions setting does not change it, so identity
+  providers keep trusting it; only a new key does.
+- Key rotation: set `SUPATYPE_SAML_NEXT_PRIVATE_KEY` (same format) to the new key. While it is set,
+  the metadata lists both certificates, AuthnRequests are still signed with the current key, and an
+  assertion encrypted to either key is accepted, by the HTTP-POST and artifact bindings alike. Once
+  every identity provider has the new certificate, move the new key to `SUPATYPE_SAML_PRIVATE_KEY`
+  and clear `SUPATYPE_SAML_NEXT_PRIVATE_KEY`.
+- An identity provider registered by `metadata_url` must use HTTPS, except when `SUPATYPE_MODE=dev`,
+  where `http` is accepted too, for a local test identity provider.
 
 Local storage mode:
 

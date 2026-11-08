@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -80,6 +81,9 @@ func TestAnEscapingPathServesNothing(t *testing.T) {
 	if anyRepresentableFile(dir, "/../outside") {
 		t.Error("anyRepresentableFile accepted a path outside the root")
 	}
+	if isDir, _ := directoryIndex(dir, "/../outside"); isDir {
+		t.Error("directoryIndex accepted a path outside the root")
+	}
 }
 
 // A directory that does not exist cannot be served from, and the handler has to
@@ -92,6 +96,9 @@ func TestAMissingRootDirectory(t *testing.T) {
 	}
 	if anyRepresentableFile(absent, "/app.js") {
 		t.Error("anyRepresentableFile found something under a directory that does not exist")
+	}
+	if isDir, _ := directoryIndex(absent, "/"); isDir {
+		t.Error("directoryIndex found a directory under a directory that does not exist")
 	}
 
 	rec := httptest.NewRecorder()
@@ -384,10 +391,10 @@ func TestAnyRepresentableFile(t *testing.T) {
 		path string
 		want bool
 	}{
-		"a file":      {"/index.html", true},
-		"a directory": {"/assets", true},
-		// The root is not a name os.Root can stat, so it reports absent. That is
-		// the answer the fallback wants anyway: "/" should serve index.html.
+		"a file": {"/index.html", true},
+		// Directories are settled by directoryIndex before this is asked, so
+		// neither one nor the root counts as a file here.
+		"a directory":             {"/assets", false},
 		"the root":                {"/", false},
 		"a brotli sidecar alone":  {"/br-only", true},
 		"a gzip sidecar alone":    {"/gz-only", true},
@@ -690,5 +697,222 @@ func TestAMissInADirectoryThatCannotBeOpened(t *testing.T) {
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("cache-control = %q, want no-store", cc)
+	}
+}
+
+// serve runs one request with the given method and Accept through an SPA
+// handler over dir.
+func serve(t *testing.T, dir, method, target, accept string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, nil)
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	rec := httptest.NewRecorder()
+	Handler(dir, true, CacheOpts{}).ServeHTTP(rec, req)
+	return rec
+}
+
+// After a redeploy a stale tab asks for chunks the build no longer has. Each
+// of those requests, in the forms a browser sends them, must be a 404 and not
+// the app shell, or the script fails with a MIME error instead of a clean miss.
+func TestAMissingAssetIsNeverTheAppShell(t *testing.T) {
+	const shell = "<html>app</html>"
+	dir := tree(t, map[string]string{"index.html": shell})
+
+	const script = "*/*"
+	const style = "text/css,*/*;q=0.1"
+	const image = "image/avif,image/webp,image/*,*/*;q=0.8"
+	for _, tc := range []struct{ method, target, accept string }{
+		{http.MethodGet, "/assets/missing-abc.js", script},
+		{http.MethodGet, "/assets/missing-abc.js?v=2", script},
+		{http.MethodGet, "/assets/missing-abc.js", ""},
+		{http.MethodHead, "/assets/missing-abc.js", script},
+		{http.MethodGet, "/assets/missing-abc.css", style},
+		{http.MethodGet, "/assets/nested/missing", script},
+		{http.MethodGet, "/chunk-abc.js", script},
+		{http.MethodGet, "/favicon.ico", image},
+		{http.MethodGet, "/favicon.ico?x=1", image},
+		{http.MethodHead, "/favicon.ico", ""},
+	} {
+		rec := serve(t, dir, tc.method, tc.target, tc.accept)
+		name := tc.method + " " + tc.target + " Accept=" + tc.accept
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", name, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), shell) {
+			t.Errorf("%s: served the app shell", name)
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("%s: cache-control = %q, want no-store", name, cc)
+		}
+	}
+}
+
+// A deep link is still the app shell, exactly as built, with the HTML policy,
+// whatever its query string carries.
+func TestADeepLinkIsTheAppShellByteForByte(t *testing.T) {
+	const shell = "<!doctype html>\n<html><body>\xef\xbb\xbfapp \t</body></html>\n"
+	dir := tree(t, map[string]string{"index.html": shell})
+
+	const nav = "text/html,application/xhtml+xml,*/*;q=0.8"
+	for _, target := range []string{"/dashboard", "/dashboard/settings?tab=1", "/dashboard?file=x.js", "/a/b/c/"} {
+		rec := serve(t, dir, http.MethodGet, target, nav)
+		if rec.Code != http.StatusOK || rec.Body.String() != shell {
+			t.Errorf("GET %s: status = %d body = %q, want 200 with index.html", target, rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+			t.Errorf("GET %s: content-type = %q", target, ct)
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != defaultHTMLCache {
+			t.Errorf("GET %s: cache-control = %q, want %q", target, cc, defaultHTMLCache)
+		}
+	}
+
+	head := serve(t, dir, http.MethodHead, "/dashboard", nav)
+	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Length") != strconv.Itoa(len(shell)) {
+		t.Errorf("HEAD /dashboard: status = %d body length = %d content-length = %q, want 200, 0, %d",
+			head.Code, head.Body.Len(), head.Header().Get("Content-Length"), len(shell))
+	}
+}
+
+// A file that exists keeps the policy for its kind: hashed bundles are cached
+// for good, the shell at / is revalidated, and a HEAD agrees with the GET.
+func TestAnExistingFileKeepsItsCachePolicy(t *testing.T) {
+	dir := tree(t, map[string]string{
+		"index.html":        "<html>app</html>",
+		"assets/app-abc.js": "console.log(1)",
+	})
+
+	for _, tc := range []struct{ method, target, want string }{
+		{http.MethodGet, "/assets/app-abc.js", defaultHashedCache},
+		{http.MethodGet, "/assets/app-abc.js?v=2", defaultHashedCache},
+		{http.MethodHead, "/assets/app-abc.js", defaultHashedCache},
+		{http.MethodGet, "/", defaultHTMLCache},
+		{http.MethodHead, "/", defaultHTMLCache},
+	} {
+		rec := serve(t, dir, tc.method, tc.target, "*/*")
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s %s: status = %d, want 200", tc.method, tc.target, rec.Code)
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != tc.want {
+			t.Errorf("%s %s: cache-control = %q, want %q", tc.method, tc.target, cc, tc.want)
+		}
+	}
+}
+
+// A directory with no index.html behind it is a miss: 404 with no-store, with
+// or without the trailing slash, for GET and HEAD, at any depth, SPA or not.
+// It is never a listing of the bundle and never the app shell, even when the
+// request looks like a navigation.
+func TestADirectoryWithoutAnIndexIsAMiss(t *testing.T) {
+	const shell = "<html>app</html>"
+	dir := tree(t, map[string]string{
+		"index.html":              shell,
+		"assets/app-abc.js":       "console.log(1)",
+		"assets/nested/chunk.js":  "console.log(2)",
+		"images/logo.png":         "png",
+		"odd/index.html/inner.js": "console.log(3)",
+	})
+
+	const nav = "text/html,application/xhtml+xml,*/*;q=0.8"
+	targets := []string{"/assets/", "/assets", "/assets/nested/", "/assets/nested", "/images/", "/images", "/odd/"}
+	for _, spa := range []bool{true, false} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			for _, accept := range []string{nav, "*/*"} {
+				for _, target := range targets {
+					req := httptest.NewRequest(method, target, nil)
+					req.Header.Set("Accept", accept)
+					rec := httptest.NewRecorder()
+					Handler(dir, spa, CacheOpts{}).ServeHTTP(rec, req)
+
+					name := method + " " + target + " Accept=" + accept + " spa=" + strconv.FormatBool(spa)
+					if rec.Code != http.StatusNotFound {
+						t.Errorf("%s: status = %d, want 404", name, rec.Code)
+					}
+					if body := rec.Body.String(); strings.Contains(body, shell) || strings.Contains(body, ".js") || strings.Contains(body, ".png") {
+						t.Errorf("%s: body = %q, want neither the shell nor a listing", name, body)
+					}
+					if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+						t.Errorf("%s: cache-control = %q, want no-store", name, cc)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The site root with no index.html is the same miss, not a listing.
+func TestARootWithoutAnIndexIsAMiss(t *testing.T) {
+	dir := tree(t, map[string]string{"assets/app-abc.js": "console.log(1)"})
+
+	for _, spa := range []bool{true, false} {
+		rec := get(t, dir, "/", spa, nil)
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "assets") {
+			t.Errorf("spa=%v: status = %d body = %q, want 404 with no listing", spa, rec.Code, rec.Body.String())
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("spa=%v: cache-control = %q, want no-store", spa, cc)
+		}
+	}
+}
+
+// The site root is a directory like any other: with an index.html it is
+// served it in either mode, which without the SPA fallback used to be a 404.
+func TestARootWithAnIndexServesIt(t *testing.T) {
+	const shell = "<html>app</html>"
+	dir := tree(t, map[string]string{"index.html": shell})
+
+	for _, spa := range []bool{true, false} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			rec := httptest.NewRecorder()
+			Handler(dir, spa, CacheOpts{}).ServeHTTP(rec, httptest.NewRequest(method, "/", nil))
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Length") != strconv.Itoa(len(shell)) {
+				t.Errorf("spa=%v %s /: status = %d content-length = %q, want 200, %d", spa, method, rec.Code, rec.Header().Get("Content-Length"), len(shell))
+			}
+			if method == http.MethodGet && rec.Body.String() != shell {
+				t.Errorf("spa=%v GET /: body = %q, want %q", spa, rec.Body.String(), shell)
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+				t.Errorf("spa=%v %s /: content-type = %q", spa, method, ct)
+			}
+			if cc := rec.Header().Get("Cache-Control"); cc != defaultHTMLCache {
+				t.Errorf("spa=%v %s /: cache-control = %q, want %q", spa, method, cc, defaultHTMLCache)
+			}
+		}
+	}
+}
+
+// A directory that has its own index.html keeps being served it, and the bare
+// name keeps redirecting to the slash form, as http.FileServer does.
+func TestADirectoryWithAnIndexServesIt(t *testing.T) {
+	const page = "<html>docs</html>"
+	dir := tree(t, map[string]string{
+		"index.html":            "<html>app</html>",
+		"docs/index.html":       page,
+		"docs/guide/index.html": "<html>guide</html>",
+	})
+
+	for _, spa := range []bool{true, false} {
+		for _, tc := range []struct{ target, want string }{
+			{"/docs/", page},
+			{"/docs/guide/", "<html>guide</html>"},
+		} {
+			rec := get(t, dir, tc.target, spa, nil)
+			if rec.Code != http.StatusOK || rec.Body.String() != tc.want {
+				t.Errorf("spa=%v GET %s: status = %d body = %q, want 200 %q", spa, tc.target, rec.Code, rec.Body.String(), tc.want)
+			}
+		}
+
+		head := httptest.NewRecorder()
+		Handler(dir, spa, CacheOpts{}).ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/docs/", nil))
+		if head.Code != http.StatusOK || head.Body.Len() != 0 {
+			t.Errorf("spa=%v HEAD /docs/: status = %d body length = %d, want 200, 0", spa, head.Code, head.Body.Len())
+		}
+
+		rec := get(t, dir, "/docs", spa, nil)
+		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "docs/" {
+			t.Errorf("spa=%v GET /docs: status = %d location = %q, want 301 to docs/", spa, rec.Code, rec.Header().Get("Location"))
+		}
 	}
 }

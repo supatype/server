@@ -88,6 +88,10 @@ type Deps struct {
 	// CORS decides which browser origins may call the API outside dev mode, and is what the
 	// origins API reads and edits. Without WithCORSPolicy it is the configured origins alone.
 	CORS *corsorigins.Policy
+
+	// APIExternalURL is the auth service's API_EXTERNAL_URL, the public address the deployment
+	// answers on when SUPATYPE_URL is not set. Set by WithAPIExternalURL.
+	APIExternalURL string
 }
 
 // DepsOption sets something NewDeps cannot derive from its arguments.
@@ -97,6 +101,12 @@ type DepsOption func(*Deps)
 // database the saved list lives in, which only the bootstrap holds.
 func WithCORSPolicy(policy *corsorigins.Policy) DepsOption {
 	return func(d *Deps) { d.CORS = policy }
+}
+
+// WithAPIExternalURL gives the gateway the auth service's external URL, which the bootstrap
+// loads with the auth configuration rather than with the gateway's.
+func WithAPIExternalURL(externalURL string) DepsOption {
+	return func(d *Deps) { d.APIExternalURL = externalURL }
 }
 
 // NewDeps resolves everything the mounts share.

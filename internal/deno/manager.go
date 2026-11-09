@@ -35,6 +35,10 @@ var command = func(ctx context.Context, path string, args ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, path, args...)
 }
 
+// adopt ties a started worker to this server, a seam for the same reason as
+// command: only Windows can refuse, and the server must carry on when it does.
+var adopt = adoptWorker
+
 // LogLine is a captured line from the Deno process stdout/stderr.
 type LogLine struct {
 	Timestamp time.Time
@@ -258,6 +262,12 @@ func (m *Manager) run(ctx context.Context) error {
 	cmd := command(ctx, m.denoPath, args...)
 	cmd.Env = envForDenoProcess(m.port, m.env)
 
+	// 0.9.1 release test (FF12): a worker left behind by a server that was
+	// killed kept the functions port, and the next server could not start
+	// functions. Released only once the worker has exited; see lifetime_*.go.
+	release := tieLifetime(cmd)
+	defer release()
+
 	// Capture stdout and stderr into the ring buffer.
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -270,6 +280,10 @@ func (m *Manager) run(ctx context.Context) error {
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("deno start: %w", err)
+	}
+	if err := adopt(cmd.Process); err != nil {
+		// Functions still work; only the clean-up after a crash is lost.
+		logrus.WithError(err).Warn("deno: the worker may outlive this server if it is killed")
 	}
 
 	// Drain stdout and stderr concurrently into the ring buffer.

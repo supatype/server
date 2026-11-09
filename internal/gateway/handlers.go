@@ -34,14 +34,25 @@ import (
 // itoa keeps the header-building code free of strconv noise.
 func itoa(n int) string { return strconv.Itoa(n) }
 
-// upstreamProxy is the proxy every mount uses, with the shared round-trip cap
-// that stops a wedged upstream hanging requests indefinitely.
-func upstreamProxy(u *url.URL, opts ...func(*proxy.ProxyOpts)) http.Handler {
+// upstreamOpts are the proxy options every mount uses, with the shared
+// round-trip cap that stops a wedged upstream hanging requests indefinitely.
+func upstreamOpts(opts ...func(*proxy.ProxyOpts)) proxy.ProxyOpts {
 	o := proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}
 	for _, apply := range opts {
 		apply(&o)
 	}
-	return proxy.New(u, o)
+	return o
+}
+
+// upstreamProxy is the proxy for this server's own services.
+func upstreamProxy(u *url.URL, opts ...func(*proxy.ProxyOpts)) http.Handler {
+	return proxy.New(u, upstreamOpts(opts...))
+}
+
+// devServerProxy is the proxy for a developer's app server, which also
+// carries its WebSocket upgrades and names the server localhost.
+func devServerProxy(u *url.URL) http.Handler {
+	return proxy.DevServerProxy(u, upstreamOpts())
 }
 
 // withHeaders adds request headers to an upstream proxy.
@@ -289,7 +300,9 @@ func buildPlatform(d *Deps) http.Handler {
 
 // buildVite proxies Vite's HMR socket in dev mode. With no Vite URL configured
 // it falls back to the app upstream, but only when that upstream is not already
-// serving the catch-all, since proxying it twice would be pointless.
+// serving the catch-all, since proxying it twice would be pointless. Like the
+// app proxy it names the dev server as localhost, since Vite 6.0.9 and later
+// refuse any other Host, host.docker.internal included.
 func buildVite(d *Deps) http.Handler {
 	target := ViteDevURL(d.Baseline, d.Config)
 	if target == "" && AppMode(d.Baseline, d.Config) != "proxy" {
@@ -303,7 +316,7 @@ func buildVite(d *Deps) http.Handler {
 		return nil
 	}
 	logrus.WithField("vite_dev_url", target).Info("mux: Vite HMR proxy mounted at /_vite")
-	return proxy.WebSocketProxy(u, upstreamProxy(u))
+	return devServerProxy(u)
 }
 
 // buildApp answers everything not claimed by a service above: nothing, a
@@ -328,7 +341,7 @@ func buildApp(d *Deps) http.Handler {
 			return nil
 		}
 		logrus.WithField("upstream", upstream).Info("mux: app proxy mounted")
-		return proxy.WebSocketProxy(u, upstreamProxy(u))
+		return devServerProxy(u)
 	}
 	return nil
 }

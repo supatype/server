@@ -24,6 +24,42 @@ type ProxyOpts struct {
 
 	// RequestTimeout caps the upstream round-trip duration.
 	RequestTimeout time.Duration
+
+	// UpstreamHost, when set, is the Host header sent upstream in place of the
+	// target's own host. The address the client used is in X-Forwarded-Host
+	// either way.
+	UpstreamHost string
+}
+
+// DevServerProxy proxies HTTP and WebSocket requests to a developer's app
+// server, naming it localhost on its own port in the Host header.
+//
+// 0.9.1 release test: on Docker dev the app is Vite on the host, reached as
+// host.docker.internal:5173, and Vite 6.0.9 and later refuse any Host not on
+// their allow list with 403 "Blocked request. This host is not allowed."
+// localhost is the one name every dev server accepts by default. Only the app
+// upstream gets this: the other upstreams are this server's own services,
+// which expect their own names.
+func DevServerProxy(target *url.URL, opts ProxyOpts) http.Handler {
+	opts.UpstreamHost = localhostOn(target)
+	return webSocketProxy(target, opts.UpstreamHost, New(target, opts))
+}
+
+// localhostOn is localhost with target's port, or bare localhost when target
+// names none and so uses its scheme's default.
+func localhostOn(target *url.URL) string {
+	if port := target.Port(); port != "" {
+		return net.JoinHostPort("localhost", port)
+	}
+	return "localhost"
+}
+
+// upstreamHostFor is the Host header for a request forwarded to target.
+func upstreamHostFor(target *url.URL, override string) string {
+	if override != "" {
+		return override
+	}
+	return target.Host
 }
 
 // augmentForwardedHeaders sets X-Forwarded-For (client IP only), X-Forwarded-Proto,
@@ -176,7 +212,7 @@ func carryForwardingHeaders(pr *httputil.ProxyRequest) {
 func rewriteForUpstream(out *http.Request, clientFacingHost string, target *url.URL, opts ProxyOpts) {
 	out.URL.Scheme = target.Scheme
 	out.URL.Host = target.Host
-	out.Host = target.Host
+	out.Host = upstreamHostFor(target, opts.UpstreamHost)
 
 	if opts.StripPrefix != "" {
 		out.URL.Path = strings.TrimPrefix(out.URL.Path, opts.StripPrefix)

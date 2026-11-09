@@ -477,7 +477,7 @@ func TestPrepareUpstreamWebSocketRequest(t *testing.T) {
 	req := upgradeRequest("/realtime/v1/websocket")
 	req.RequestURI = "/realtime/v1/websocket"
 	req.URL.Path = "/websocket"
-	prepareUpstreamWebSocketRequest(req, target, "api.example.com")
+	prepareUpstreamWebSocketRequest(req, target, "", "api.example.com")
 
 	if req.RequestURI != "" {
 		t.Errorf("RequestURI = %q, want it cleared so URL is used", req.RequestURI)
@@ -494,7 +494,7 @@ func TestPrepareUpstreamWebSocketRequest(t *testing.T) {
 func TestPrepareUpstreamWebSocketRequestFillsAnEmptyPath(t *testing.T) {
 	req := upgradeRequest("/")
 	req.URL.Path = ""
-	prepareUpstreamWebSocketRequest(req, mustParse(t, "http://upstream:4000"), "api.example.com")
+	prepareUpstreamWebSocketRequest(req, mustParse(t, "http://upstream:4000"), "", "api.example.com")
 
 	if req.URL.Path != "/" {
 		t.Errorf("path = %q, want /", req.URL.Path)

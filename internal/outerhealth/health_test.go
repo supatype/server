@@ -214,3 +214,48 @@ func TestHealthReady_graphqlEnabledStillProbed(t *testing.T) {
 		t.Fatal("expected the GraphQL probe to run when not disabled")
 	}
 }
+
+// TestHealthReady_storageDisabledIsReportedNotProbed covers a native
+// `supatype dev` stack whose storage service could not start. The gateway
+// answers /storage/v1 itself with 503, so probing a storage upstream or a local
+// store says nothing about what clients get, and a stack that started on
+// purpose without storage is not a failed stack.
+func TestHealthReady_storageDisabledIsReportedNotProbed(t *testing.T) {
+	var storageHits atomic.Int32
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		storageHits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(storage.Close)
+	postgrest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(postgrest.Close)
+
+	for _, provider := range []string{"", "local"} {
+		cfg := &config.Config{
+			Mode: "dev", PostgRESTURL: postgrest.URL, GraphQLDisabled: true,
+			StorageURL: storage.URL, StorageProvider: provider,
+			StoragePath: t.TempDir() + "/missing", StorageDisabled: true,
+		}
+		r := chi.NewRouter()
+		Attach(r, cfg, "v1", func() ProbeConfig { return ProbeConfigFrom(cfg, nil, "") })
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("provider %q: expected 200 with storage disabled, got %d body=%s", provider, rr.Code, rr.Body.String())
+		}
+		var body struct {
+			Components map[string]map[string]any `json:"components"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := json.Marshal(body.Components["storage"])
+		if want := `{"enabled":false,"skipped":true,"status":"disabled"}`; string(got) != want {
+			t.Fatalf("provider %q: storage component %s, want %s", provider, got, want)
+		}
+	}
+	if n := storageHits.Load(); n != 0 {
+		t.Fatalf("expected no storage probe when disabled, got %d request(s)", n)
+	}
+}

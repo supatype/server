@@ -23,7 +23,10 @@ type ProbeConfig struct {
 	GraphQLURL   string
 	// GraphQLDisabled mirrors SUPATYPE_GRAPHQL_DISABLED: GraphQL is reported as
 	// disabled instead of probed, and does not affect readiness.
-	GraphQLDisabled  bool
+	GraphQLDisabled bool
+	// StorageDisabled mirrors SUPATYPE_STORAGE_DISABLED: storage is reported as
+	// disabled instead of probed, and does not affect readiness.
+	StorageDisabled  bool
 	StorageLocalPath string
 	StorageRemoteURL string
 	DenoBaseURL      string
@@ -107,7 +110,14 @@ func graphqlComponent(probes ProbeConfig, timeout time.Duration) map[string]any 
 	return map[string]any{"url": gqURL, "ready": gqReady}
 }
 
+// storageComponent reports storage as disabled, without probing it and without a
+// ready value, when SUPATYPE_STORAGE_DISABLED is set: the gateway answers
+// /storage/v1 itself with 503, so neither the upstream nor a local store says
+// anything about what clients get.
 func storageComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
+	if probes.StorageDisabled {
+		return map[string]any{"enabled": false, "skipped": true, "status": "disabled"}
+	}
 	if p := strings.TrimSpace(probes.StorageLocalPath); p != "" {
 		return map[string]any{"mode": "local", "path": p, "ready": isDirReadable(p)}
 	}

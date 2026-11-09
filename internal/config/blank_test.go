@@ -68,3 +68,18 @@ func TestLoadTreatsABlankTypedSettingFromDotEnvAsUnset(t *testing.T) {
 		t.Fatal("blank SUPATYPE_APP_SPA_FALLBACK from .env should take its default, true")
 	}
 }
+
+// Native `supatype dev` switches storage off with SUPATYPE_STORAGE_DISABLED=true
+// when its storage service could not start; a blank line leaves storage on.
+func TestLoadReadsStorageDisabled(t *testing.T) {
+	for value, want := range map[string]bool{"true": true, "": false, "false": false} {
+		t.Setenv("SUPATYPE_STORAGE_DISABLED", value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load with SUPATYPE_STORAGE_DISABLED=%q: %v", value, err)
+		}
+		if cfg.StorageDisabled != want {
+			t.Fatalf("SUPATYPE_STORAGE_DISABLED=%q: StorageDisabled = %v, want %v", value, cfg.StorageDisabled, want)
+		}
+	}
+}

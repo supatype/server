@@ -229,11 +229,20 @@ func buildGraphQL(d *Deps) http.Handler {
 // find the function graphql_public.graphql", which read like a fault in the
 // stack or the caller's query rather than a stack without GraphQL.
 func graphQLUnavailable(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	utilities.WriteJSON(w, http.StatusNotImplemented, map[string]string{
 		"code":    "graphql_unavailable",
 		"message": "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1.",
+	})
+}
+
+// storageUnavailable answers /storage/v1 on a native `supatype dev` stack whose
+// storage service could not start. Falling back to the built-in object store
+// there served every object with no read rules applied, so the gateway refuses
+// instead and points at the dev log that says why storage is down.
+func storageUnavailable(w http.ResponseWriter, _ *http.Request) {
+	utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"code":    "storage_unavailable",
+		"message": "The storage service is not running; supatype dev printed why when it started.",
 	})
 }
 
@@ -249,8 +258,13 @@ func rewriteToGraphQLRPC(req *http.Request) *http.Request {
 }
 
 // buildStorage serves objects from disk when a local store is configured, and
-// otherwise proxies to the storage service.
+// otherwise proxies to the storage service. Switched off, it answers every
+// request itself, ahead of both.
 func buildStorage(d *Deps) http.Handler {
+	if d.Config.StorageDisabled {
+		logrus.Info("mux: storage switched off; /storage/v1 answers 503 storage_unavailable")
+		return http.HandlerFunc(storageUnavailable)
+	}
 	if d.Config.StorageProvider == "local" && d.Config.StoragePath != "" {
 		logrus.WithField("path", d.Config.StoragePath).
 			Info("mux: local storage handler mounted at /storage/v1")

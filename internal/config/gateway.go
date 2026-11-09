@@ -180,6 +180,13 @@ type Config struct {
 	// GraphQL as before.
 	GraphQLDisabled bool `envconfig:"SUPATYPE_GRAPHQL_DISABLED"`
 
+	// StorageDisabled answers every /storage/v1 request with 503
+	// storage_unavailable, whatever STORAGE_PROVIDER or the storage URLs say.
+	// Native `supatype dev` sets it when its storage service could not start:
+	// falling back to the built-in object store would serve objects with no
+	// read rules applied. Off by default.
+	StorageDisabled bool `envconfig:"SUPATYPE_STORAGE_DISABLED"`
+
 	// StorageURL is the upstream storage service URL (used when StorageProvider != "local").
 	StorageURL string `envconfig:"SUPATYPE_STORAGE_URL" default:"http://localhost:5000"`
 

@@ -28,6 +28,7 @@ func ProbeConfigFrom(cfg *config.Config, m *proxy.RouteManifest, denoBaseURL str
 		PostgRESTURL:     postgRESTURL,
 		GraphQLURL:       graphQLProbeBase,
 		GraphQLDisabled:  cfg.GraphQLDisabled,
+		StorageDisabled:  cfg.StorageDisabled,
 		StorageLocalPath: storageLocalPath,
 		StorageRemoteURL: storageRemoteURL,
 		DenoBaseURL:      strings.TrimSpace(denoBaseURL),

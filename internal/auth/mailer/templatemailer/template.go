@@ -612,6 +612,8 @@ func lookupEmailContentConfig(
 		return cfg.MFAFactorEnrolledNotification, true
 	case MFAFactorUnenrolledNotificationTemplate:
 		return cfg.MFAFactorUnenrolledNotification, true
+	case SSOLinkedNotificationTemplate:
+		return cfg.SSOLinkedNotification, true
 	}
 }
 

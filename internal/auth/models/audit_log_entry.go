@@ -45,6 +45,7 @@ const (
 	UpdateFactorAction              AuditAction = "factor_updated"
 	MFACodeLoginAction              AuditAction = "mfa_code_login"
 	IdentityUnlinkAction            AuditAction = "identity_unlinked"
+	SSOIdentityLinkedAction         AuditAction = "sso_identity_linked"
 	PasskeyCreatedAction            AuditAction = "passkey_created"
 	PasskeyUpdatedAction            AuditAction = "passkey_updated"
 	PasskeyDeletedAction            AuditAction = "passkey_deleted"
@@ -61,6 +62,7 @@ var ActionLogTypeMap = map[AuditAction]auditLogType{
 	LoginAction:                     account,
 	LogoutAction:                    account,
 	InviteAcceptedAction:            account,
+	SSOIdentityLinkedAction:         account,
 	UserSignedUpAction:              team,
 	UserInvitedAction:               team,
 	UserDeletedAction:               team,

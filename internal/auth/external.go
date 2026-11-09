@@ -307,11 +307,22 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 	case models.LinkAccount:
 		user = decision.User
 
+		var priorIdentities []*models.Identity
+		if priorIdentities, terr = identitiesBeforeSSOLink(tx, user, providerType); terr != nil {
+			return 0, nil, terr
+		}
+
 		if identity, terr = a.createNewIdentity(tx, user, providerType, identityData); terr != nil {
 			return 0, nil, terr
 		}
 
-		if terr = user.UpdateUserMetaData(tx, identityData); terr != nil {
+		if isFirstSSOLink(priorIdentities, providerType) {
+			// This replaces user_metadata with identityData, so merging
+			// identityData into it as well would change nothing.
+			if terr = a.secureAccountForSSOLink(tx, r, user, identity, priorIdentities); terr != nil {
+				return 0, nil, terr
+			}
+		} else if terr = user.UpdateUserMetaData(tx, identityData); terr != nil {
 			return 0, nil, terr
 		}
 

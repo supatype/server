@@ -339,12 +339,7 @@ func (a *API) sendConfirmation(r *http.Request, tx *storage.Connection, u *model
 		tokenHashWithPrefix: u.ConfirmationToken,
 	}); err != nil {
 		u.ConfirmationToken = oldToken
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending confirmation email").WithInternalError(err)
+		return sendEmailError(err, "Error sending confirmation email")
 	}
 	u.ConfirmationSentAt = &now
 	if err := tx.UpdateOnly(u, "confirmation_token", "confirmation_sent_at"); err != nil {
@@ -374,12 +369,7 @@ func (a *API) sendInvite(r *http.Request, tx *storage.Connection, u *models.User
 	})
 	if err != nil {
 		u.ConfirmationToken = oldToken
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending invite email").WithInternalError(err)
+		return sendEmailError(err, "Error sending invite email")
 	}
 	u.InvitedAt = &now
 	u.ConfirmationSentAt = &now
@@ -417,12 +407,7 @@ func (a *API) sendPasswordRecovery(r *http.Request, tx *storage.Connection, u *m
 	})
 	if err != nil {
 		u.RecoveryToken = oldToken
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending recovery email").WithInternalError(err)
+		return sendEmailError(err, "Error sending recovery email")
 	}
 	u.RecoverySentAt = &now
 
@@ -459,12 +444,7 @@ func (a *API) sendReauthenticationOtp(r *http.Request, tx *storage.Connection, u
 	})
 	if err != nil {
 		u.ReauthenticationToken = oldToken
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending reauthentication email").WithInternalError(err)
+		return sendEmailError(err, "Error sending reauthentication email")
 	}
 	u.ReauthenticationSentAt = &now
 	if err := tx.UpdateOnly(u, "reauthentication_token", "reauthentication_sent_at"); err != nil {
@@ -502,12 +482,7 @@ func (a *API) sendMagicLink(r *http.Request, tx *storage.Connection, u *models.U
 		tokenHashWithPrefix: u.RecoveryToken,
 	}); err != nil {
 		u.RecoveryToken = oldToken
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending magic link email").WithInternalError(err)
+		return sendEmailError(err, "Error sending magic link email")
 	}
 	u.RecoverySentAt = &now
 	if err := tx.UpdateOnly(u, "recovery_token", "recovery_sent_at"); err != nil {
@@ -554,12 +529,7 @@ func (a *API) sendEmailChange(r *http.Request, tx *storage.Connection, u *models
 		tokenHashWithPrefix: u.EmailChangeTokenNew,
 	})
 	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending email change email").WithInternalError(err)
+		return sendEmailError(err, "Error sending email change email")
 	}
 
 	u.EmailChangeSentAt = &now
@@ -589,20 +559,26 @@ func (a *API) sendEmailChange(r *http.Request, tx *storage.Connection, u *models
 	return nil
 }
 
+// sendEmailError is what a function that sends an email returns for the error
+// sendEmail gave it: nil when the email went out, a 429 when the email rate
+// limit was hit, an HTTPError as it is, and otherwise a 500 with message.
+func sendEmailError(err error, message string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, EmailRateLimitExceeded) {
+		return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
+	} else if herr, ok := err.(*HTTPError); ok {
+		return herr
+	}
+	return apierrors.NewInternalServerError("%s", message).WithInternalError(err)
+}
+
 func (a *API) sendPasswordChangedNotification(r *http.Request, tx *storage.Connection, u *models.User) error {
 	err := a.sendEmail(r, tx, u, sendEmailParams{
 		emailActionType: mail.PasswordChangedNotification,
 	})
-	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending password changed notification email").WithInternalError(err)
-	}
-
-	return nil
+	return sendEmailError(err, "Error sending password changed notification email")
 }
 
 func (a *API) sendEmailChangedNotification(r *http.Request, tx *storage.Connection, u *models.User, oldEmail string) error {
@@ -610,16 +586,7 @@ func (a *API) sendEmailChangedNotification(r *http.Request, tx *storage.Connecti
 		emailActionType: mail.EmailChangedNotification,
 		oldEmail:        oldEmail,
 	})
-	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending email changed notification email").WithInternalError(err)
-	}
-
-	return nil
+	return sendEmailError(err, "Error sending email changed notification email")
 }
 
 func (a *API) sendPhoneChangedNotification(r *http.Request, tx *storage.Connection, u *models.User, oldPhone string) error {
@@ -627,16 +594,7 @@ func (a *API) sendPhoneChangedNotification(r *http.Request, tx *storage.Connecti
 		emailActionType: mail.PhoneChangedNotification,
 		oldPhone:        oldPhone,
 	})
-	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending phone changed notification email").WithInternalError(err)
-	}
-
-	return nil
+	return sendEmailError(err, "Error sending phone changed notification email")
 }
 
 func (a *API) sendIdentityLinkedNotification(r *http.Request, tx *storage.Connection, u *models.User, provider string) error {
@@ -644,16 +602,17 @@ func (a *API) sendIdentityLinkedNotification(r *http.Request, tx *storage.Connec
 		emailActionType: mail.IdentityLinkedNotification,
 		provider:        provider,
 	})
-	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending identity linked notification email").WithInternalError(err)
-	}
+	return sendEmailError(err, "Error sending identity linked notification email")
+}
 
-	return nil
+// sendSSOLinkedNotification tells u that SSO is now how the account signs in.
+// provider is a name a person recognises, not the sso:<id> provider type.
+func (a *API) sendSSOLinkedNotification(r *http.Request, tx *storage.Connection, u *models.User, provider string) error {
+	err := a.sendEmail(r, tx, u, sendEmailParams{
+		emailActionType: mail.SSOLinkedNotification,
+		provider:        provider,
+	})
+	return sendEmailError(err, "Error sending SSO linked notification email")
 }
 
 func (a *API) sendIdentityUnlinkedNotification(r *http.Request, tx *storage.Connection, u *models.User, provider string) error {
@@ -661,16 +620,7 @@ func (a *API) sendIdentityUnlinkedNotification(r *http.Request, tx *storage.Conn
 		emailActionType: mail.IdentityUnlinkedNotification,
 		provider:        provider,
 	})
-	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending identity unlinked notification email").WithInternalError(err)
-	}
-
-	return nil
+	return sendEmailError(err, "Error sending identity unlinked notification email")
 }
 
 func (a *API) sendMFAFactorEnrolledNotification(r *http.Request, tx *storage.Connection, u *models.User, factorType string) error {
@@ -678,16 +628,7 @@ func (a *API) sendMFAFactorEnrolledNotification(r *http.Request, tx *storage.Con
 		emailActionType: mail.MFAFactorEnrolledNotification,
 		factorType:      factorType,
 	})
-	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending MFA factor enrolled notification email").WithInternalError(err)
-	}
-
-	return nil
+	return sendEmailError(err, "Error sending MFA factor enrolled notification email")
 }
 
 func (a *API) sendMFAFactorUnenrolledNotification(r *http.Request, tx *storage.Connection, u *models.User, factorType string) error {
@@ -695,16 +636,7 @@ func (a *API) sendMFAFactorUnenrolledNotification(r *http.Request, tx *storage.C
 		emailActionType: mail.MFAFactorUnenrolledNotification,
 		factorType:      factorType,
 	})
-	if err != nil {
-		if errors.Is(err, EmailRateLimitExceeded) {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverEmailSendRateLimit, "%s", EmailRateLimitExceeded.Error())
-		} else if herr, ok := err.(*HTTPError); ok {
-			return herr
-		}
-		return apierrors.NewInternalServerError("Error sending MFA factor unenrolled notification email").WithInternalError(err)
-	}
-
-	return nil
+	return sendEmailError(err, "Error sending MFA factor unenrolled notification email")
 }
 
 func (a *API) validateEmail(email string) (string, error) {
@@ -856,7 +788,7 @@ func (a *API) sendEmail(r *http.Request, tx *storage.Connection, u *models.User,
 			emailData.OldEmail = params.oldEmail
 		case mail.PhoneChangedNotification:
 			emailData.OldPhone = params.oldPhone
-		case mail.IdentityLinkedNotification, mail.IdentityUnlinkedNotification:
+		case mail.IdentityLinkedNotification, mail.IdentityUnlinkedNotification, mail.SSOLinkedNotification:
 			emailData.Provider = params.provider
 		case mail.MFAFactorEnrolledNotification, mail.MFAFactorUnenrolledNotification:
 			emailData.FactorType = params.factorType
@@ -921,6 +853,8 @@ func (a *API) deliverTemplatedEmailSwitch(
 		err = mr.MFAFactorEnrolledNotificationMail(r, u, params.factorType)
 	case mail.MFAFactorUnenrolledNotification:
 		err = mr.MFAFactorUnenrolledNotificationMail(r, u, params.factorType)
+	case mail.SSOLinkedNotification:
+		err = mr.SSOLinkedNotificationMail(r, u, params.provider)
 	default:
 		err = errors.New("invalid email action type")
 	}

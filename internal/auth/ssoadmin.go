@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -255,7 +254,7 @@ func samlMetadataFetchReason(err error) string {
 	var certErr *tls.CertificateVerificationError
 	var netErr net.Error
 	switch {
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case errors.Is(err, errConnectionRefused):
 		return "connection refused"
 	case errors.As(err, &dnsErr):
 		return "the host name could not be resolved"

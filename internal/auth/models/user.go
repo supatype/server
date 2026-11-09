@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -972,6 +973,132 @@ func (u *User) RemoveUnconfirmedIdentities(tx *storage.Connection, identity *Ide
 		return terr
 	}
 	return nil
+}
+
+// SSOLinkCleanup is what RemoveCredentialsForSSOLink took away from an
+// account, for the audit log.
+type SSOLinkCleanup struct {
+	RemovedIdentities []string
+	PasswordRemoved   bool
+	PhoneRemoved      bool
+}
+
+// keepsIdentityAfterSSOLink reports whether identity stays a way into the
+// account once an SSO identity is linked to it. Another SSO identity was
+// linked on a verified domain itself. An OAuth identity stays only when its
+// own provider verified the account's email address, so the person signing in
+// with it proved they hold that inbox. Manual linking can attach an OAuth
+// identity for any address, and auto-confirm lets unverified provider emails
+// link, so neither a verified other address nor an unverified match counts.
+func keepsIdentityAfterSSOLink(u *User, identity *Identity) bool {
+	if identity.IsForSSOProvider() {
+		return true
+	}
+	if identity.Provider == "email" || identity.Provider == "phone" {
+		return false
+	}
+	verified, _ := identity.IdentityData["email_verified"].(bool)
+	return verified && identity.GetEmail() != "" && strings.EqualFold(identity.GetEmail(), u.GetEmail())
+}
+
+// RemoveCredentialsForSSOLink closes every way into the account that was set
+// up before its first SSO identity was linked, so that SSO, and OAuth
+// identities whose provider verified the account's email, are the only ways
+// in. 0.9.1 release test (RB1): on a stack that auto-confirms sign-ups anyone
+// can register a confirmed password account for a colleague's address; when
+// the colleague later signed in with SSO the identity was linked to that
+// account and the registrant's password kept working.
+//
+// It removes the password, the phone number, every identity
+// keepsIdentityAfterSSOLink rejects, pending email and phone changes with
+// their one-time tokens, every session (and with them every refresh token),
+// every MFA factor and every passkey. As for an unconfirmed account, the
+// profile is replaced with the one ssoIdentity carries, so nothing the
+// registrant wrote into user_metadata is shown as the SSO user's.
+//
+// priorIdentities are the account's identities as loaded before ssoIdentity
+// was created. The caller updates the providers in app_metadata afterwards.
+func (u *User) RemoveCredentialsForSSOLink(tx *storage.Connection, ssoIdentity *Identity, priorIdentities []*Identity) (*SSOLinkCleanup, error) {
+	cleanup := &SSOLinkCleanup{
+		PasswordRemoved: u.HasPassword(),
+		PhoneRemoved:    u.GetPhone() != "",
+	}
+	removed, err := u.removeIdentitiesForSSOLink(tx, ssoIdentity, priorIdentities)
+	if err != nil {
+		return nil, err
+	}
+	cleanup.RemovedIdentities = removed
+
+	if err := u.resetUserRowForSSOLink(tx, ssoIdentity.IdentityData); err != nil {
+		return nil, err
+	}
+	if err := ClearAllOneTimeTokensForUser(tx, u.ID); err != nil {
+		return nil, err
+	}
+	// Deleting the sessions deletes their refresh tokens too (on delete cascade).
+	if err := Logout(tx, u.ID); err != nil {
+		return nil, err
+	}
+	if err := DeleteFactorsByUserId(tx, u.ID); err != nil {
+		return nil, err
+	}
+	u.Factors = nil
+	if err := DeleteWebAuthnCredentialsByUserID(tx, u.ID); err != nil {
+		return nil, err
+	}
+	return cleanup, nil
+}
+
+// removeIdentitiesForSSOLink deletes the priorIdentities
+// keepsIdentityAfterSSOLink rejects and returns their providers. The account
+// keeps ssoIdentity, newest of all, so it goes last in u.Identities, where
+// loading the identities oldest first would put it.
+func (u *User) removeIdentitiesForSSOLink(tx *storage.Connection, ssoIdentity *Identity, priorIdentities []*Identity) ([]string, error) {
+	removed := []string{}
+	kept := []Identity{}
+	for _, identity := range priorIdentities {
+		if keepsIdentityAfterSSOLink(u, identity) {
+			kept = append(kept, *identity)
+			continue
+		}
+		if err := tx.Destroy(identity); err != nil {
+			return nil, err
+		}
+		removed = append(removed, identity.Provider)
+	}
+	u.Identities = append(kept, *ssoIdentity)
+	return removed, nil
+}
+
+// resetUserRowForSSOLink clears the password, the phone number and every
+// pending change or token on the user row, and sets the profile to profile. A
+// pending email change would hand the account to whoever holds the new address
+// once they confirm it.
+func (u *User) resetUserRowForSSOLink(tx *storage.Connection, profile JSONMap) error {
+	u.UserMetaData = maps.Clone(profile)
+	u.EncryptedPassword = nil
+	u.Phone = storage.NullString("")
+	u.PhoneConfirmedAt = nil
+	u.EmailChange = ""
+	u.EmailChangeTokenNew = ""
+	u.EmailChangeTokenCurrent = ""
+	u.EmailChangeSentAt = nil
+	u.EmailChangeConfirmStatus = 0
+	u.PhoneChange = ""
+	u.PhoneChangeToken = ""
+	u.PhoneChangeSentAt = nil
+	u.RecoveryToken = ""
+	u.RecoverySentAt = nil
+	u.ReauthenticationToken = ""
+	u.ReauthenticationSentAt = nil
+	return tx.UpdateOnly(u,
+		"encrypted_password", "phone", "phone_confirmed_at",
+		"email_change", "email_change_token_new", "email_change_token_current",
+		"email_change_sent_at", "email_change_confirm_status",
+		"phone_change", "phone_change_token", "phone_change_sent_at",
+		"recovery_token", "recovery_sent_at", "reauthentication_token", "reauthentication_sent_at",
+		"raw_user_meta_data",
+	)
 }
 
 // BeforeDestroy runs on every hard delete of a user, the admin API's and the

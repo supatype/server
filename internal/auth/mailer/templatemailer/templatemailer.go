@@ -27,6 +27,7 @@ const (
 	IdentityUnlinkedNotificationTemplate    = "identity_unlinked_notification"
 	MFAFactorEnrolledNotificationTemplate   = "mfa_factor_enrolled_notification"
 	MFAFactorUnenrolledNotificationTemplate = "mfa_factor_unenrolled_notification"
+	SSOLinkedNotificationTemplate           = "sso_linked_notification"
 )
 
 const defaultInviteMail = `<h2>You have been invited</h2>
@@ -108,6 +109,16 @@ const defaultMFAFactorUnenrolledNotificationMail = `<h2>An MFA factor has been u
 <p>If you did not make this change, please contact support immediately.</p>
 `
 
+// defaultSSOLinkedNotificationMail is sent when an SSO identity is first linked
+// to an existing account (0.9.1 release test, RB1). .Provider is a name a
+// person recognises, such as the provider's domain, and may be empty.
+const defaultSSOLinkedNotificationMail = `<h2>Single sign-on is now how you sign in</h2>
+
+<p>The account for {{ .Email }} now signs in with your company's single sign-on{{ if .Provider }} ({{ .Provider }}){{ end }}.</p>
+<p>Its password, two-factor methods, passkeys and other sign-in methods were removed.</p>
+<p>If you did not expect this, contact your administrator.</p>
+`
+
 var (
 	templateTypes = []string{
 		InviteTemplate,
@@ -125,6 +136,7 @@ var (
 		IdentityUnlinkedNotificationTemplate,
 		MFAFactorEnrolledNotificationTemplate,
 		MFAFactorUnenrolledNotificationTemplate,
+		SSOLinkedNotificationTemplate,
 	}
 	defaultTemplateSubjects = &conf.EmailContentConfiguration{
 		Invite:           "You have been invited",
@@ -142,6 +154,7 @@ var (
 		IdentityUnlinkedNotification:    "An identity has been unlinked",
 		MFAFactorEnrolledNotification:   "A new MFA factor has been enrolled",
 		MFAFactorUnenrolledNotification: "An MFA factor has been unenrolled",
+		SSOLinkedNotification:           "Single sign-on is now how you sign in",
 	}
 	defaultTemplateBodies = &conf.EmailContentConfiguration{
 		Invite:           defaultInviteMail,
@@ -159,6 +172,7 @@ var (
 		IdentityUnlinkedNotification:    defaultIdentityUnlinkedNotificationMail,
 		MFAFactorEnrolledNotification:   defaultMFAFactorEnrolledNotificationMail,
 		MFAFactorUnenrolledNotification: defaultMFAFactorUnenrolledNotificationMail,
+		SSOLinkedNotification:           defaultSSOLinkedNotificationMail,
 	}
 )
 
@@ -484,6 +498,18 @@ func (m *Mailer) MFAFactorUnenrolledNotificationMail(r *http.Request, user *mode
 		"Data":       user.UserMetaData,
 	}
 	return m.mail(r.Context(), m.cfg, MFAFactorUnenrolledNotificationTemplate, user.GetEmail(), data)
+}
+
+// SSOLinkedNotificationMail tells the account's address that it now signs in
+// with SSO only. provider is a name a person recognises, such as the
+// provider's domain, or empty; never the raw sso:<id> provider type.
+func (m *Mailer) SSOLinkedNotificationMail(r *http.Request, user *models.User, provider string) error {
+	data := map[string]any{
+		"Email":    user.GetEmail(),
+		"Provider": provider,
+		"Data":     user.UserMetaData,
+	}
+	return m.mail(r.Context(), m.cfg, SSOLinkedNotificationTemplate, user.GetEmail(), data)
 }
 
 type emailParams struct {

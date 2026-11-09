@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 567 names
+# total: 570 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -753,6 +753,8 @@ SUPATYPE_MAILER_SUBJECTS_REAUTHENTICATION
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_SUBJECTS_RECOVERY
     struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUBJECTS_SSO_LINKED_NOTIFICATION
+    struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_SUPATYPE_RESEND_API_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_SUPATYPE_RESEND_FROM
@@ -784,6 +786,8 @@ SUPATYPE_MAILER_TEMPLATES_PHONE_CHANGED_NOTIFICATION
 SUPATYPE_MAILER_TEMPLATES_REAUTHENTICATION
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_TEMPLATES_RECOVERY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_TEMPLATES_SSO_LINKED_NOTIFICATION
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_TEMPLATE_MAX_AGE
     struct internal/conf.GlobalConfiguration
@@ -820,6 +824,8 @@ SUPATYPE_MAILER_URLPATHS_PHONE_CHANGED_NOTIFICATION
 SUPATYPE_MAILER_URLPATHS_REAUTHENTICATION
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_URLPATHS_RECOVERY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_URLPATHS_SSO_LINKED_NOTIFICATION
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MANAGED_PROJECT_REF
     struct internal/config.Config

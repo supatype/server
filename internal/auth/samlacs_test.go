@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gofrs/uuid"
 	jwt "github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
@@ -28,6 +29,7 @@ import (
 	"github.com/supatype/saml"
 	"github.com/supatype/saml/samlsp"
 	"github.com/supatype/saml/xmlenc"
+	"github.com/supatype/server/internal/auth/mailer/mockclient"
 	"github.com/supatype/server/internal/auth/models"
 	authprovider "github.com/supatype/server/internal/auth/provider"
 	"github.com/supatype/server/internal/auth/storage"
@@ -192,15 +194,18 @@ type SAMLACSTestSuite struct {
 	ACSURL string
 	// Audience is the service provider entity ID assertions are issued to.
 	Audience string
+	// Mailer records the emails the server sends.
+	Mailer *mockclient.MockMailer
 }
 
 func TestSAMLACS(t *testing.T) {
-	api, config, err := setupAPIForTest()
+	mockMailer := &mockclient.MockMailer{}
+	api, config, err := setupAPIForTest(WithMailer(mockMailer))
 	require.NoError(t, err)
 	defer api.db.Close()
 
 	if config.SAML.Enabled {
-		suite.Run(t, &SAMLACSTestSuite{API: api, Config: config})
+		suite.Run(t, &SAMLACSTestSuite{API: api, Config: config, Mailer: mockMailer})
 	}
 }
 
@@ -214,6 +219,7 @@ func (ts *SAMLACSTestSuite) SetupSuite() {
 
 func (ts *SAMLACSTestSuite) SetupTest() {
 	require.NoError(ts.T(), models.TruncateAll(ts.API.db))
+	ts.Mailer.Reset()
 
 	body, err := json.Marshal(map[string]string{"type": "saml", "metadata_xml": ts.IdP.metadataXML()})
 	require.NoError(ts.T(), err)
@@ -613,15 +619,7 @@ func (ts *SAMLACSTestSuite) TestLoginOnVerifiedDomainLinksExistingAccount() {
 	user, err := models.FindUserByID(ts.API.db, existing.ID)
 	require.NoError(ts.T(), err)
 	require.False(ts.T(), user.IsSSOUser, "a linked account stays a regular account")
-	ok, _, err := user.Authenticate(context.Background(), ts.API.db, "password", nil, false, "")
-	require.NoError(ts.T(), err)
-	require.True(ts.T(), ok, "the password still signs in")
-	providers := []string{}
-	for _, identity := range user.Identities {
-		providers = append(providers, identity.Provider)
-	}
-	require.Contains(ts.T(), providers, "email")
-	require.Contains(ts.T(), strings.Join(providers, ","), "sso:")
+	require.Contains(ts.T(), strings.Join(identityProviders(user), ","), "sso:")
 
 	// The next login finds the linked identity.
 	location = ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("link-2", "member-id", "member@example.com")))
@@ -657,4 +655,175 @@ func (ts *SAMLACSTestSuite) TestLoginWithoutExistingAccountCreatesSSOUser() {
 	user, err := models.FindUserByID(ts.API.db, uuid.FromStringOrNil(id))
 	require.NoError(ts.T(), err)
 	require.True(ts.T(), user.IsSSOUser)
+}
+
+// identityProviders lists the providers of user's identities.
+func identityProviders(user *models.User) []string {
+	providers := []string{}
+	for _, identity := range user.Identities {
+		providers = append(providers, identity.Provider)
+	}
+	return providers
+}
+
+// tokenStatus posts body to the token endpoint with grantType and returns the
+// status code.
+func (ts *SAMLACSTestSuite) tokenStatus(grantType string, body map[string]string) int {
+	encoded, err := json.Marshal(body)
+	require.NoError(ts.T(), err)
+	req := httptest.NewRequest(http.MethodPost, "http://localhost/token?grant_type="+grantType, bytes.NewBuffer(encoded))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ts.API.handler.ServeHTTP(w, req)
+	return w.Code
+}
+
+// factorCount is the number of MFA factors user has enrolled.
+func (ts *SAMLACSTestSuite) factorCount(user *models.User) int {
+	count, err := ts.API.db.Q().Where("user_id = ?", user.ID).Count(&models.Factor{})
+	require.NoError(ts.T(), err)
+	return count
+}
+
+// passwordSignInStatus is the status of a password sign-in as email.
+func (ts *SAMLACSTestSuite) passwordSignInStatus(email, password string) int {
+	return ts.tokenStatus("password", map[string]string{"email": email, "password": password})
+}
+
+// refreshStatus is the status of exchanging refreshToken for a new session.
+func (ts *SAMLACSTestSuite) refreshStatus(refreshToken string) int {
+	return ts.tokenStatus("refresh_token", map[string]string{"refresh_token": refreshToken})
+}
+
+// identityFor links an identity of provider to user with identity data
+// carrying email and emailVerified, as an OAuth sign-in would.
+func (ts *SAMLACSTestSuite) identityFor(user *models.User, provider, email string, emailVerified bool) {
+	_, err := ts.API.createNewIdentity(ts.API.db, user, provider, map[string]interface{}{
+		"sub":            provider + "-" + email,
+		"email":          email,
+		"email_verified": emailVerified,
+	})
+	require.NoError(ts.T(), err)
+}
+
+// preRegister gives user every way back in that whoever registered it could
+// set up: a phone number with its identity, a verified TOTP factor, a passkey,
+// a pending email change to their own address and a signed-in session, plus a
+// profile of their choosing. It returns that session's refresh token.
+func (ts *SAMLACSTestSuite) preRegister(user *models.User) string {
+	db := ts.API.db
+	now := time.Now().UTC()
+	user.Phone = storage.NullString("15550001111")
+	user.PhoneConfirmedAt = &now
+	user.EmailChange = "attacker@evil.test"
+	user.EmailChangeTokenNew = "pending-email-change"
+	user.UserMetaData = map[string]interface{}{"full_name": "Registrant", "pay_to": "registrant-account"}
+	require.NoError(ts.T(), db.UpdateOnly(user, "phone", "phone_confirmed_at", "email_change", "email_change_token_new", "raw_user_meta_data"))
+	_, err := ts.API.createNewIdentity(db, user, "phone", map[string]interface{}{"sub": user.ID.String(), "phone": "15550001111"})
+	require.NoError(ts.T(), err)
+
+	require.NoError(ts.T(), db.Create(models.NewFactor(user, "attacker totp", models.TOTP, models.FactorStateVerified)))
+	passkey := &webauthn.Credential{ID: []byte("attacker-passkey"), PublicKey: []byte("public-key")}
+	require.NoError(ts.T(), db.Create(models.NewWebAuthnCredential(user.ID, passkey, "attacker laptop")))
+
+	token, err := models.GrantAuthenticatedUser(db, user, models.GrantParams{})
+	require.NoError(ts.T(), err)
+	return token.Token
+}
+
+// 0.9.1 release test (RB1): someone registers a confirmed password account for
+// a colleague's address (any stack that auto-confirms sign-ups allows it).
+// When the colleague first signs in with SSO on a verified domain the identity
+// is linked to that account, and nothing the registrant set up before the
+// link may still sign in: password, phone, MFA factor, passkey, pending email
+// change, or a session they already hold. An OAuth identity whose provider
+// verified the account's own address stays.
+func (ts *SAMLACSTestSuite) TestFirstSSOLinkRemovesWaysInSetUpBefore() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	registered := ts.existingUser("member@example.com")
+	refreshToken := ts.preRegister(registered)
+	ts.identityFor(registered, "google", "member@example.com", true)
+	ts.identityFor(registered, "github", "attacker@evil.test", true)
+	ts.identityFor(registered, "gitlab", "member@example.com", false)
+	require.Equal(ts.T(), http.StatusOK, ts.passwordSignInStatus("member@example.com", "password"), "the password signs in before the link")
+
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("first-link", "member-id", "member@example.com")))
+	require.Equal(ts.T(), registered.ID.String(), ts.signedInAs(location), "the SSO user keeps the one account: %s", location)
+
+	require.Equal(ts.T(), http.StatusBadRequest, ts.passwordSignInStatus("member@example.com", "password"), "the registrant's password no longer signs in")
+	require.Equal(ts.T(), http.StatusBadRequest, ts.refreshStatus(refreshToken), "the registrant's session is signed out")
+
+	user, err := models.FindUserByID(ts.API.db, registered.ID)
+	require.NoError(ts.T(), err)
+	require.False(ts.T(), user.HasPassword(), "the password is cleared")
+	require.Empty(ts.T(), user.GetPhone(), "the phone number no longer signs in")
+	require.Nil(ts.T(), user.PhoneConfirmedAt)
+	require.Empty(ts.T(), user.EmailChange, "the pending email change is dropped")
+	require.Empty(ts.T(), user.EmailChangeTokenNew)
+	require.NotContains(ts.T(), user.UserMetaData, "pay_to", "the registrant's profile is replaced by the SSO profile")
+	require.NotEqual(ts.T(), "Registrant", user.UserMetaData["full_name"])
+	require.Equal(ts.T(), "member@example.com", user.UserMetaData["email"])
+
+	providers := identityProviders(user)
+	require.Len(ts.T(), providers, 2, "only SSO and the verified OAuth identity for this address stay: %v", providers)
+	require.Contains(ts.T(), providers, "google")
+	require.Contains(ts.T(), strings.Join(providers, ","), "sso:")
+
+	require.Zero(ts.T(), ts.factorCount(user), "MFA factors enrolled before the link are removed")
+	passkeys, err := models.FindWebAuthnCredentialsByUserID(ts.API.db, user.ID)
+	require.NoError(ts.T(), err)
+	require.Empty(ts.T(), passkeys, "passkeys registered before the link are removed")
+
+	var entries []models.AuditLogEntry
+	require.NoError(ts.T(), ts.API.db.Q().Where("payload->>'action' = ? and payload->>'actor_id' = ?", "sso_identity_linked", user.ID.String()).All(&entries))
+	require.Len(ts.T(), entries, 1, "the link is audited")
+
+	require.Len(ts.T(), ts.Mailer.SSOLinkedMailCalls, 1, "the address is told SSO is now how it signs in, notifications setting or not")
+	require.Equal(ts.T(), user.ID, ts.Mailer.SSOLinkedMailCalls[0].User.ID)
+	require.Equal(ts.T(), "example.com", ts.Mailer.SSOLinkedMailCalls[0].Provider, "the provider is named by its domain, not its sso: id")
+	require.Empty(ts.T(), ts.Mailer.IdentityLinkedMailCalls, "the generic identity linked email stays behind its setting")
+}
+
+// Only the first link clears the account. Once linked, a password the SSO user
+// sets for themselves, and their sessions, survive their next SSO sign-in.
+func (ts *SAMLACSTestSuite) TestLaterSSOSignInKeepsCredentials() {
+	ts.setDomains("example.com")
+	ts.markVerified("example.com")
+	registered := ts.existingUser("member@example.com")
+	location := ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("link-once", "member-id", "member@example.com")))
+	require.Equal(ts.T(), registered.ID.String(), ts.signedInAs(location))
+
+	user, err := models.FindUserByID(ts.API.db, registered.ID)
+	require.NoError(ts.T(), err)
+	require.NoError(ts.T(), user.SetPassword(context.Background(), "chosen-later", false, "", ""))
+	require.NoError(ts.T(), ts.API.db.UpdateOnly(user, "encrypted_password"))
+	token, err := models.GrantAuthenticatedUser(ts.API.db, user, models.GrantParams{})
+	require.NoError(ts.T(), err)
+
+	location = ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, ts.assertionFor("link-again", "member-id", "member@example.com")))
+	require.Equal(ts.T(), registered.ID.String(), ts.signedInAs(location))
+	require.Equal(ts.T(), http.StatusOK, ts.passwordSignInStatus("member@example.com", "chosen-later"))
+	require.Equal(ts.T(), http.StatusOK, ts.refreshStatus(token.Token))
+	require.Len(ts.T(), ts.Mailer.SSOLinkedMailCalls, 1, "only the first link sends the email")
+}
+
+// Linking a non-SSO identity is unchanged: the account keeps its password,
+// sessions and factors.
+func (ts *SAMLACSTestSuite) TestOAuthLinkKeepsCredentials() {
+	registered := ts.existingUser("member@example.com")
+	refreshToken := ts.preRegister(registered)
+	userData := &authprovider.UserProvidedData{
+		Emails:   []authprovider.Email{{Email: "member@example.com", Verified: true, Primary: true}},
+		Metadata: &authprovider.Claims{Subject: "google-member", Email: "member@example.com", EmailVerified: true},
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/callback", nil)
+	decision, user, err := ts.API.createAccountFromExternalIdentity(ts.API.db, req, userData, "google", false)
+	require.NoError(ts.T(), err)
+	require.Equal(ts.T(), models.LinkAccount, decision)
+	require.Equal(ts.T(), registered.ID, user.ID)
+
+	require.Equal(ts.T(), http.StatusOK, ts.passwordSignInStatus("member@example.com", "password"))
+	require.Equal(ts.T(), http.StatusOK, ts.refreshStatus(refreshToken))
+	require.Equal(ts.T(), 1, ts.factorCount(user))
 }

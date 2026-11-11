@@ -272,24 +272,28 @@ func buildStorage(d *Deps) http.Handler {
 	}
 	serve := storageServer(d)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if !serviceswitch.On(d.ManifestFor(req), d.Config, proxy.ServiceStorage) {
+		m := d.ManifestFor(req)
+		if !serviceswitch.On(m, d.Config, proxy.ServiceStorage) {
 			storageUnavailable(w, req)
 			return
 		}
-		serve.ServeHTTP(w, req)
+		serve(w, req, m)
 	})
 }
 
-// storageServer is what serves /storage/v1 while storage is switched on.
-func storageServer(d *Deps) http.Handler {
+// storageServer is what serves /storage/v1 while storage is switched on, given the request's
+// manifest, which buildStorage has already looked up (a lock and a copy per tenant lookup).
+func storageServer(d *Deps) func(http.ResponseWriter, *http.Request, *proxy.RouteManifest) {
 	if d.Config.StorageProvider == "local" && d.Config.StoragePath != "" {
 		logrus.WithField("path", d.Config.StoragePath).
 			Info("mux: local storage handler mounted at /storage/v1")
-		return objstore.Handler(d.Config.StoragePath, d.Config.JWTSecret)
+		local := objstore.Handler(d.Config.StoragePath, d.Config.JWTSecret)
+		return func(w http.ResponseWriter, req *http.Request, _ *proxy.RouteManifest) { local.ServeHTTP(w, req) }
 	}
 	logrus.Info("mux: Storage proxy mounted at /storage/v1")
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		storageURL := StorageUpstream(d.ManifestFor(req), d.Config)
+	unreachable := whenUnreachable(storageUnavailable)
+	return func(w http.ResponseWriter, req *http.Request, m *proxy.RouteManifest) {
+		storageURL := StorageUpstream(m, d.Config)
 		if storageURL == "" {
 			badGateway(w, "storage not configured")
 			return
@@ -299,8 +303,8 @@ func storageServer(d *Deps) http.Handler {
 			badGateway(w, "bad gateway")
 			return
 		}
-		upstreamProxy(u, whenUnreachable(storageUnavailable)).ServeHTTP(safeStorageWriter(w, req), req)
-	})
+		upstreamProxy(u, unreachable).ServeHTTP(safeStorageWriter(w, req), req)
+	}
 }
 
 // whenUnreachable answers a request whose upstream is not listening with unavailable. A storage

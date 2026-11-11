@@ -24,8 +24,10 @@ type ProbeConfig struct {
 	// GraphQLDisabled mirrors SUPATYPE_GRAPHQL_DISABLED: GraphQL is reported as
 	// disabled instead of probed, and does not affect readiness.
 	GraphQLDisabled bool
-	// StorageDisabled mirrors SUPATYPE_STORAGE_DISABLED: storage is reported as
-	// disabled instead of probed, and does not affect readiness.
+	// StorageDisabled: storage is switched off (serviceswitch: the route manifest's
+	// services map, else SUPATYPE_STORAGE_DISABLED), so it is reported as disabled
+	// instead of probed, and does not affect readiness. Off rather than on, so a
+	// ProbeConfig that leaves it out still probes storage.
 	StorageDisabled  bool
 	StorageLocalPath string
 	StorageRemoteURL string

@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -268,7 +269,8 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 		}
 	}
 	cm.Tables = cloneTables(m.Tables)
-	cm.Services = cloneServices(m.Services)
+	// A copy, so one tenant's reload cannot write into another's.
+	cm.Services = maps.Clone(m.Services)
 	return &cm
 }
 

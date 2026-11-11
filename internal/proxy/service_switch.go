@@ -50,18 +50,6 @@ func mergeServices(base, overlay *RouteManifest) {
 	}
 }
 
-// cloneServices copies the map, so one tenant's reload cannot write into another's.
-func cloneServices(services map[string]ServiceSwitch) map[string]ServiceSwitch {
-	if services == nil {
-		return nil
-	}
-	copied := make(map[string]ServiceSwitch, len(services))
-	for name, s := range services {
-		copied[name] = s
-	}
-	return copied
-}
-
 // legacySwitches are the keys that switched a service before Services existed. Cloud and older
 // CLIs still write them, so they are read into Services. A Services entry wins over its legacy key.
 var legacySwitches = map[string]string{

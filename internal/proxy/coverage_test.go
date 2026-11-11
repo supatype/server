@@ -711,13 +711,16 @@ func TestMergeRouteManifestWithNothing(t *testing.T) {
 	}
 }
 
-// The booleans are taken from the overlay unconditionally, because false is a
-// meaningful value: a tenant turning realtime off has to be able to.
-func TestMergeTakesBooleansFromTheOverlayEvenWhenFalse(t *testing.T) {
-	base := &RouteManifest{RealtimeEnabled: true, FunctionsEnabled: true}
+// A switch is taken from the overlay when it says, false included, because a tenant turning
+// realtime off has to be able to. An overlay that says nothing leaves the base: absence is not off.
+func TestMergeTakesSwitchesFromTheOverlayEvenWhenFalse(t *testing.T) {
+	base := &RouteManifest{Services: SwitchesOf(map[string]bool{ServiceRealtime: true, ServiceFunctions: true})}
 	MergeRouteManifest(base, &RouteManifest{})
-
-	if base.RealtimeEnabled || base.FunctionsEnabled {
+	if !base.ServiceOn(ServiceRealtime, false) || !base.ServiceOn(ServiceFunctions, false) {
+		t.Error("an overlay that said nothing switched a service off")
+	}
+	MergeRouteManifest(base, &RouteManifest{Services: SwitchesOf(map[string]bool{ServiceRealtime: false, ServiceFunctions: false})})
+	if base.ServiceOn(ServiceRealtime, true) || base.ServiceOn(ServiceFunctions, true) {
 		t.Error("an overlay that says off was ignored")
 	}
 }

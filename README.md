@@ -113,6 +113,16 @@ Available commands:
 - Server/gateway config from `SUPATYPE_*` variables.
 - Optional route manifest (default `.supatype/manifest.json`).
 
+Service switches. The route manifest switches upstream services on and off with one shape,
+`"services": { "<name>": { "enabled": true | false } }`, for `realtime`, `storage` and `functions`. It is
+read per request, so a switch takes effect without a restart. A service the manifest says nothing about
+keeps the server's start value: storage is on unless `SUPATYPE_STORAGE_DISABLED`, functions are on when
+`SUPATYPE_FUNCTIONS_WORKER_URL` is set, and realtime is off. A service switched off is answered by the
+gateway itself (realtime and functions 404, storage 503 `storage_unavailable`), and `/health` reports it
+as `{"enabled": false, "skipped": true, "status": "disabled"}`, not counted toward readiness. The legacy
+`realtime_enabled` and `functions_enabled` keys are still read as the same switches; a `services` entry
+wins over its legacy key.
+
 Common `SUPATYPE_*` variables:
 
 - `SUPATYPE_MODE`
@@ -124,7 +134,7 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_GRAPHQL_URL` (unset: PostgREST's URL, where pg_graphql is an RPC)
 - `SUPATYPE_GRAPHQL_DISABLED` (answer `/graphql/v1` with 501 `graphql_unavailable`; native `supatype dev` sets it. `/health` and `/health/ready` then report `components.graphql.status` as `disabled`, do not probe it, and do not count it toward readiness)
 - `SUPATYPE_STORAGE_URL`
-- `SUPATYPE_STORAGE_DISABLED` (answer every `/storage/v1` request with 503 `storage_unavailable`, whatever `STORAGE_PROVIDER` or the storage URLs say; native `supatype dev` sets it when its storage service could not start. `/health` and `/health/ready` then report `components.storage.status` as `disabled`, do not probe it, and do not count it toward readiness)
+- `SUPATYPE_STORAGE_DISABLED` (answer every `/storage/v1` request with 503 `storage_unavailable`, whatever `STORAGE_PROVIDER` or the storage URLs say; native `supatype dev` sets it when its storage service could not start. `/health` and `/health/ready` then report `components.storage.status` as `disabled`, do not probe it, and do not count it toward readiness. It is only the starting value: the route manifest's `services.storage.enabled` overrides it while the server runs, see Service switches below)
 - `SUPATYPE_FUNCTIONS_WORKER_URL`
 - `SUPATYPE_DENO_PATH`
 - `SUPATYPE_DENO_FUNCTIONS_DIR`

@@ -7,7 +7,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/modelhooks"
+	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/publicenv"
+	"github.com/supatype/server/internal/serviceswitch"
 	"github.com/supatype/server/internal/studioctx"
 )
 
@@ -219,7 +221,7 @@ func Routes() []Route {
 			Verb:    MountAll,
 			Strip:   true,
 			When: func(d *Deps) bool {
-				return d.Baseline.RealtimeEnabled || strings.TrimSpace(d.Config.RealtimeURL) != ""
+				return serviceswitch.On(d.Baseline, d.Config, proxy.ServiceRealtime) || strings.TrimSpace(d.Config.RealtimeURL) != ""
 			},
 			Build:     buildRealtime,
 			DataPlane: true,

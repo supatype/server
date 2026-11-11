@@ -48,9 +48,15 @@ func IsSAMLMetadataStale(idpMetadata *saml.EntityDescriptor, samlProvider models
 	return hasValidityExpired || hasCacheDurationExceeded || needsForceUpdate
 }
 
+// SamlAcs answers the identity provider. A refusal goes to the Site URL, or back to Studio when
+// Studio started the sign-in (N-FF3), as a refused Studio OAuth sign-in does.
 func (a *API) SamlAcs(w http.ResponseWriter, r *http.Request) error {
-	if err := a.handleSamlAcs(w, r); err != nil {
-		u, uerr := url.Parse(a.config.SiteURL)
+	if studio, err := a.handleSamlAcs(w, r); err != nil {
+		failTo := a.config.SiteURL
+		if studio {
+			failTo = a.studioReturn()
+		}
+		u, uerr := url.Parse(failTo)
 		if uerr != nil {
 			return apierrors.NewInternalServerError("site url is improperly formattted").WithInternalError(err)
 		}
@@ -62,8 +68,9 @@ func (a *API) SamlAcs(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// handleSamlAcs implements the main Assertion Consumer Service endpoint behavior.
-func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+// handleSamlAcs implements the main Assertion Consumer Service endpoint behavior. It reports
+// studio once it knows Studio started the sign-in, so a refusal after that point can return there.
+func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) (studio bool, err error) {
 	ctx := r.Context()
 
 	db := a.db.WithContext(ctx)
@@ -85,17 +92,17 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 		relayState, err := models.FindSAMLRelayStateByID(db, relayStateUUID)
 		if models.IsNotFoundError(err) {
-			return apierrors.NewNotFoundError(apierrors.ErrorCodeSAMLRelayStateNotFound, "SAML RelayState does not exist, try logging in again?")
+			return studio, apierrors.NewNotFoundError(apierrors.ErrorCodeSAMLRelayStateNotFound, "SAML RelayState does not exist, try logging in again?")
 		} else if err != nil {
-			return err
+			return studio, err
 		}
 
 		if time.Since(relayState.CreatedAt) >= a.config.SAML.RelayStateValidityPeriod {
 			if err := a.samlDestroyRelayState(ctx, relayState); err != nil {
-				return apierrors.NewInternalServerError("SAML RelayState has expired and destroying it failed. Try logging in again?").WithInternalError(err)
+				return studio, apierrors.NewInternalServerError("SAML RelayState has expired and destroying it failed. Try logging in again?").WithInternalError(err)
 			}
 
-			return apierrors.NewUnprocessableEntityError(apierrors.ErrorCodeSAMLRelayStateExpired, "SAML RelayState has expired. Try logging in again?")
+			return studio, apierrors.NewUnprocessableEntityError(apierrors.ErrorCodeSAMLRelayStateExpired, "SAML RelayState has expired. Try logging in again?")
 		}
 
 		// TODO: add abuse detection to bind the RelayState UUID with a
@@ -103,11 +110,11 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 		ssoProvider, err := models.FindSSOProviderByID(db, relayState.SSOProviderID)
 		if err != nil {
-			return apierrors.NewInternalServerError("Unable to find SSO Provider from SAML RelayState")
+			return studio, apierrors.NewInternalServerError("Unable to find SSO Provider from SAML RelayState")
 		}
 
 		if !ssoProvider.IsEnabled() {
-			return apierrors.NewNotFoundError(
+			return studio, apierrors.NewNotFoundError(
 				apierrors.ErrorCodeSSOProviderDisabled,
 				"SSO Provider assigned for this domain is currently disabled")
 		}
@@ -118,10 +125,11 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		requestIds = append(requestIds, relayState.RequestID)
 		if relayState.FlowState != nil {
 			flowState = relayState.FlowState
+			studio = flowState.Studio
 		}
 
 		if err := a.samlDestroyRelayState(ctx, relayState); err != nil {
-			return err
+			return studio, err
 		}
 	} else if relayStateValue == "" || relayStateURL != nil {
 		// RelayState may be a URL in which case it's the URL where the
@@ -131,47 +139,47 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 			// SAML Artifact responses are possible only when
 			// RelayState can be used to identify the Identity
 			// Provider.
-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Artifact response can only be used with SP initiated flow")
+			return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Artifact response can only be used with SP initiated flow")
 		}
 
 		samlResponse := r.FormValue("SAMLResponse")
 		if samlResponse == "" {
-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is missing")
+			return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is missing")
 		}
 
 		responseXML, err := base64.StdEncoding.DecodeString(samlResponse)
 		if err != nil {
-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid Base64 string")
+			return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid Base64 string")
 		}
 
 		entityId, err = samlResponseIssuer(responseXML)
 		if err != nil {
-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid XML SAML assertion").WithInternalError(err)
+			return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAMLResponse is not a valid XML SAML assertion").WithInternalError(err)
 		}
 
 		initiatedBy = "idp"
 		redirectTo = relayStateValue
 	} else {
 		// RelayState can't be identified, so SAML flow can't continue
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML RelayState is not a valid UUID or URL")
+		return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML RelayState is not a valid UUID or URL")
 	}
 
 	ssoProvider, err := models.FindSAMLProviderByEntityID(db, entityId)
 	if models.IsNotFoundError(err) {
-		return apierrors.NewNotFoundError(apierrors.ErrorCodeSAMLIdPNotFound, "A SAML connection has not been established with this Identity Provider")
+		return studio, apierrors.NewNotFoundError(apierrors.ErrorCodeSAMLIdPNotFound, "A SAML connection has not been established with this Identity Provider")
 	} else if err != nil {
-		return err
+		return studio, err
 	}
 
 	if !ssoProvider.IsEnabled() {
-		return apierrors.NewNotFoundError(
+		return studio, apierrors.NewNotFoundError(
 			apierrors.ErrorCodeSSOProviderDisabled,
 			"SSO Provider assigned for this domain is currently disabled")
 	}
 
 	idpMetadata, err := ssoProvider.SAMLProvider.EntityDescriptor()
 	if err != nil {
-		return err
+		return studio, err
 	}
 
 	samlMetadataModified := false
@@ -213,10 +221,10 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		// The reason the library refused it is logged as the internal error.
 		err = samlPrivateError(err)
 		if errors.Is(err, saml.ErrAssertionReplayed) {
-			return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used").WithInternalError(err)
+			return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion has already been used").WithInternalError(err)
 		}
 
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
+		return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeValidationFailed, "SAML Assertion is not valid").WithInternalError(err)
 	}
 
 	assertion := SAMLAssertion{
@@ -225,7 +233,7 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 	userID := assertion.UserID()
 	if userID == "" {
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLAssertionNoUserID, "SAML Assertion did not contain a persistent Subject Identifier attribute or Subject NameID uniquely identifying this user")
+		return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLAssertionNoUserID, "SAML Assertion did not contain a persistent Subject Identifier attribute or Subject NameID uniquely identifying this user")
 	}
 
 	claims := assertion.Process(ssoProvider.SAMLProvider.AttributeMapping)
@@ -237,25 +245,25 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if email == "" {
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLAssertionNoEmail, "SAML Assertion does not contain an email address")
+		return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLAssertionNoEmail, "SAML Assertion does not contain an email address")
 	}
 	// A provider with domains may only sign in addresses on them; without
 	// this it could sign in as any address, another organisation's included.
 	// The provider's domains are loaded with it.
 	emailDomain := ssoProvider.DomainOf(email)
 	if len(ssoProvider.SSODomains) > 0 && emailDomain == nil {
-		return apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLEmailDomainNotAllowed, "SAML Assertion email is not on a domain of this identity provider")
+		return studio, apierrors.NewBadRequestError(apierrors.ErrorCodeSAMLEmailDomainNotAllowed, "SAML Assertion email is not on a domain of this identity provider")
 	}
 	claims["email"] = email
 
 	jsonClaims, err := json.Marshal(claims)
 	if err != nil {
-		return apierrors.NewInternalServerError("Mapped claims from provider could not be serialized into JSON").WithInternalError(err)
+		return studio, apierrors.NewInternalServerError("Mapped claims from provider could not be serialized into JSON").WithInternalError(err)
 	}
 
 	providerClaims := &provider.Claims{}
 	if err := json.Unmarshal(jsonClaims, providerClaims); err != nil {
-		return apierrors.NewInternalServerError("Mapped claims from provider could not be deserialized from JSON").WithInternalError(err)
+		return studio, apierrors.NewInternalServerError("Mapped claims from provider could not be deserialized from JSON").WithInternalError(err)
 	}
 
 	providerClaims.Subject = userID
@@ -309,14 +317,14 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 	var token *AccessTokenResponse
 	if samlMetadataModified {
 		if err := db.UpdateColumns(&ssoProvider.SAMLProvider, "metadata_xml", "updated_at"); err != nil {
-			return err
+			return studio, err
 		}
 	}
 
 	providerType := "sso:" + ssoProvider.ID.String()
 	if err := a.triggerBeforeUserCreatedExternal(
 		r, db, &userProvidedData, providerType); err != nil {
-		return err
+		return studio, err
 	}
 
 	var createdUser bool
@@ -347,25 +355,29 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 		return nil
 	}); err != nil {
-		return err
+		return studio, err
 	}
 	if createdUser {
 		if err := a.triggerAfterUserCreated(r, db, user); err != nil {
-			return err
+			return studio, err
 		}
 	}
 
 	if !utilities.IsRedirectURLValid(config, redirectTo) {
 		redirectTo = config.SiteURL
 	}
+	if flowState != nil && flowState.Studio {
+		// A sign-in Studio started (N-FF3) returns to Studio, whatever the relay state holds.
+		redirectTo = a.studioReturn()
+	}
 	if flowState != nil && flowState.IsPKCE() {
 		// PKCE flow: redirect with auth code
 		redirectTo, err = a.prepPKCERedirectURL(redirectTo, *flowState.AuthCode)
 		if err != nil {
-			return err
+			return studio, err
 		}
 		redirectFound(w, r, redirectTo)
-		return nil
+		return studio, nil
 	}
 
 	// Record login for analytics - only when token is issued (not during pkce authorize)
@@ -377,7 +389,7 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 	redirectFound(w, r, token.AsRedirectURL(redirectTo, url.Values{}))
 
-	return nil
+	return studio, nil
 }
 
 // samlReplayCache records a provider's accepted assertions in the database,

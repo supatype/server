@@ -5,6 +5,7 @@ import (
 
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/serviceswitch"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -28,10 +29,10 @@ func ProbeConfigFrom(cfg *config.Config, m *proxy.RouteManifest, denoBaseURL str
 		PostgRESTURL:     postgRESTURL,
 		GraphQLURL:       graphQLProbeBase,
 		GraphQLDisabled:  cfg.GraphQLDisabled,
-		StorageDisabled:  cfg.StorageDisabled,
+		StorageDisabled:  !serviceswitch.On(m, cfg, proxy.ServiceStorage),
 		StorageLocalPath: storageLocalPath,
 		StorageRemoteURL: storageRemoteURL,
 		DenoBaseURL:      strings.TrimSpace(denoBaseURL),
-		RealtimeEnabled:  m.RealtimeEnabled,
+		RealtimeEnabled:  serviceswitch.On(m, cfg, proxy.ServiceRealtime),
 	}
 }

@@ -1,12 +1,15 @@
 package proxy
 
 import (
+	"errors"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,6 +32,11 @@ type ProxyOpts struct {
 	// target's own host. The address the client used is in X-Forwarded-Host
 	// either way.
 	UpstreamHost string
+
+	// Unreachable, when set, answers a request whose upstream could not be dialled at all, in
+	// place of the bare 502 every other proxy error gets. A service that is not listening is
+	// down, which its mount can say in its own words (0.9.2 release test round 2, R2-S1).
+	Unreachable http.HandlerFunc
 }
 
 // DevServerProxy proxies HTTP and WebSocket requests to a developer's app
@@ -183,12 +191,57 @@ func New(target *url.URL, opts ProxyOpts) http.Handler {
 	}
 
 	if opts.RequestTimeout > 0 {
-		rp.Transport = &http.Transport{
-			ResponseHeaderTimeout: opts.RequestTimeout,
-		}
+		rp.Transport = sharedTransport(opts.RequestTimeout)
+	}
+
+	if opts.Unreachable != nil {
+		rp.ErrorHandler = unreachableOrBadGateway(opts.Unreachable)
 	}
 
 	return rp
+}
+
+// transports holds one transport per upstream timeout, shared by every proxy that asks for it.
+var transports sync.Map // time.Duration -> *http.Transport
+
+// idleUpstreamConnTimeout closes a kept-alive upstream connection nothing has used for this long.
+const idleUpstreamConnTimeout = 90 * time.Second
+
+// sharedTransport is the transport for proxies with this response header timeout. The gateway
+// builds a proxy per request, and each had a transport of its own, so no upstream connection was
+// reused and every idle one kept its goroutines and file descriptor until the upstream closed it
+// (0.9.2 release test round 2 review). Not a clone of http.DefaultTransport: that honours
+// HTTP_PROXY, and these upstreams are this server's own services.
+func sharedTransport(timeout time.Duration) *http.Transport {
+	if t, ok := transports.Load(timeout); ok {
+		return t.(*http.Transport)
+	}
+	t, _ := transports.LoadOrStore(timeout, &http.Transport{
+		ResponseHeaderTimeout: timeout,
+		IdleConnTimeout:       idleUpstreamConnTimeout,
+		MaxIdleConnsPerHost:   32,
+	})
+	return t.(*http.Transport)
+}
+
+// unreachableOrBadGateway hands a failed dial to unreachable, and answers any other proxy error
+// as ReverseProxy does by default: logged, then a bare 502.
+func unreachableOrBadGateway(unreachable http.HandlerFunc) func(http.ResponseWriter, *http.Request, error) {
+	return func(w http.ResponseWriter, req *http.Request, err error) {
+		if isDialFailure(err) {
+			unreachable(w, req)
+			return
+		}
+		log.Printf("http: proxy error: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
+}
+
+// isDialFailure is whether err is the transport failing to connect, refused or otherwise. An
+// error after the connection opened (a reset, an EOF) is the service failing, not being down.
+func isDialFailure(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
 }
 
 // forwardingHeaders are the ones Rewrite mode strips from the outbound request.

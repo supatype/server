@@ -22,6 +22,7 @@ import (
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/publicenv"
 	"github.com/supatype/server/internal/restcache"
+	"github.com/supatype/server/internal/serviceswitch"
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/studioauth"
@@ -242,7 +243,7 @@ func graphQLUnavailable(w http.ResponseWriter, _ *http.Request) {
 func storageUnavailable(w http.ResponseWriter, _ *http.Request) {
 	utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 		"code":    "storage_unavailable",
-		"message": "The storage service is not running; supatype dev printed why when it started.",
+		"message": "The storage service is not running. Its log says why: the storage pane of supatype dev, or supatype self-host compose logs --service storage.",
 	})
 }
 
@@ -260,11 +261,27 @@ func rewriteToGraphQLRPC(req *http.Request) *http.Request {
 // buildStorage serves objects from disk when a local store is configured, and
 // otherwise proxies to the storage service. Switched off, it answers every
 // request itself, ahead of both.
+//
+// Whether it is switched off is asked per request: the route manifest's
+// services.storage, when it says, else SUPATYPE_STORAGE_DISABLED (serviceswitch). Read once at
+// start, `supatype dev` had to stop a storage service that had not answered by
+// its deadline, as nothing could switch it on later (0.9.2 release test N-FF2).
 func buildStorage(d *Deps) http.Handler {
-	if d.Config.StorageDisabled {
-		logrus.Info("mux: storage switched off; /storage/v1 answers 503 storage_unavailable")
-		return http.HandlerFunc(storageUnavailable)
+	if !serviceswitch.Start(d.Config, proxy.ServiceStorage) {
+		logrus.Info("mux: storage switched off at start; /storage/v1 answers 503 storage_unavailable until the route manifest switches it on")
 	}
+	serve := storageServer(d)
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !serviceswitch.On(d.ManifestFor(req), d.Config, proxy.ServiceStorage) {
+			storageUnavailable(w, req)
+			return
+		}
+		serve.ServeHTTP(w, req)
+	})
+}
+
+// storageServer is what serves /storage/v1 while storage is switched on.
+func storageServer(d *Deps) http.Handler {
 	if d.Config.StorageProvider == "local" && d.Config.StoragePath != "" {
 		logrus.WithField("path", d.Config.StoragePath).
 			Info("mux: local storage handler mounted at /storage/v1")
@@ -282,8 +299,16 @@ func buildStorage(d *Deps) http.Handler {
 			badGateway(w, "bad gateway")
 			return
 		}
-		upstreamProxy(u).ServeHTTP(safeStorageWriter(w, req), req)
+		upstreamProxy(u, whenUnreachable(storageUnavailable)).ServeHTTP(safeStorageWriter(w, req), req)
 	})
+}
+
+// whenUnreachable answers a request whose upstream is not listening with unavailable. A storage
+// service that crashed while `supatype dev` ran answered a bare 502 for as long as its supervisor
+// kept retrying, where storage switched off says 503 storage_unavailable; down is down either way
+// (0.9.2 release test round 2, R2-S1).
+func whenUnreachable(unavailable http.HandlerFunc) func(*proxy.ProxyOpts) {
+	return func(o *proxy.ProxyOpts) { o.Unreachable = unavailable }
 }
 
 func buildFunctionsAdmin(d *Deps) http.Handler {

@@ -437,7 +437,7 @@ func TestProbeConfigFromStorageMode(t *testing.T) {
 }
 
 func TestProbeConfigFromCarriesRealtime(t *testing.T) {
-	got := ProbeConfigFrom(&config.Config{}, &proxy.RouteManifest{RealtimeEnabled: true}, "")
+	got := ProbeConfigFrom(&config.Config{}, &proxy.RouteManifest{Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceRealtime: true})}, "")
 	if !got.RealtimeEnabled {
 		t.Error("the manifest's realtime flag was dropped")
 	}

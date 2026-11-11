@@ -17,6 +17,9 @@ type SingleSignOnParams struct {
 	SkipHTTPRedirect    *bool     `json:"skip_http_redirect"`
 	CodeChallenge       string    `json:"code_challenge"`
 	CodeChallengeMethod string    `json:"code_challenge_method"`
+	// Studio marks a sign-in Studio started. As with studio=1 on /authorize, the ACS then returns
+	// the browser to the server's own Studio address and RedirectTo is ignored.
+	Studio bool `json:"studio"`
 }
 
 type SingleSignOnResponse struct {
@@ -83,6 +86,16 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
+	// 0.9.2 release test (N-FF3): Studio signs in with SAML too, since an SSO-only project turns
+	// email sign-in off and the first SSO link removes the account's password. A Studio sign-in
+	// keeps no request-supplied address, exactly as on /authorize.
+	if params.Studio {
+		if err := a.studioSignInAvailable(); err != nil {
+			return err
+		}
+		params.RedirectTo = ""
+	}
+
 	// Always create flow state for all SSO flows
 	flowParams := models.FlowStateParams{
 		ProviderType:         models.SSOSAML.String(),
@@ -90,6 +103,7 @@ func (a *API) SingleSignOn(w http.ResponseWriter, r *http.Request) error {
 		CodeChallenge:        codeChallenge,
 		CodeChallengeMethod:  codeChallengeMethod,
 		Referrer:             params.RedirectTo,
+		Studio:               params.Studio,
 	}
 	flowState, err := models.NewFlowState(flowParams)
 	if err != nil {

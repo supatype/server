@@ -17,16 +17,16 @@ func TestTenantConfig_mergeRoutingInto(t *testing.T) {
 	}
 	m := &proxy.RouteManifest{Schema: "public"}
 	tc.mergeRoutingInto(m)
-	if m.PostgRESTURL != "http://pg:3000" || m.GraphQLURL != "http://pg:3000" || m.StorageURL != "http://st:5000" || m.Schema != "tenant1" || !m.RealtimeEnabled {
+	if m.PostgRESTURL != "http://pg:3000" || m.GraphQLURL != "http://pg:3000" || m.StorageURL != "http://st:5000" || m.Schema != "tenant1" || !m.ServiceOn(proxy.ServiceRealtime, false) {
 		t.Fatalf("mergeRoutingInto: %#v", m)
 	}
 }
 
 func TestTenantConfig_mergeRoutingInto_nilPointersNoBoolChange(t *testing.T) {
 	tc := &TenantConfig{PostgRESTURL: "http://x:3000"}
-	m := &proxy.RouteManifest{Schema: "public", RealtimeEnabled: true}
+	m := &proxy.RouteManifest{Schema: "public", Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceRealtime: true})}
 	tc.mergeRoutingInto(m)
-	if !m.RealtimeEnabled {
+	if !m.ServiceOn(proxy.ServiceRealtime, false) {
 		t.Fatal("realtime should stay true when tenant omits pointer")
 	}
 }
@@ -41,7 +41,7 @@ func TestTenantConfig_mergeRoutingInto_corsOrigins(t *testing.T) {
 }
 
 // Cloud has no manifest file, so the hook map has to arrive through tenant config or a project's
-// hooks are declared in its schema and never called — every hooked write proceeding unvalidated with
+// hooks are declared in its schema and never called: every hooked write proceeding unvalidated with
 // nothing to show it.
 func TestTenantConfigCarriesHooks(t *testing.T) {
 	base := &proxy.RouteManifest{Schema: "public"}
@@ -76,7 +76,7 @@ func TestTenantConfigWithoutHooksLeavesTheFileManifestAlone(t *testing.T) {
 }
 
 // The declaration has to arrive the same way, and an absent one is read as "nothing may be
-// cached" — so a control plane that carried hooks and not cache would switch every paid project's
+// cached", so a control plane that carried hooks and not cache would switch every paid project's
 // cache off and name the schema as the reason.
 func TestTenantConfigCarriesTheCacheDeclaration(t *testing.T) {
 	enabled := true
@@ -185,7 +185,7 @@ func TestEveryRoutingFieldIsCarried(t *testing.T) {
 			t.Errorf("%s was dropped", name)
 		}
 	}
-	if !m.RealtimeEnabled || !m.FunctionsEnabled {
+	if !m.ServiceOn(proxy.ServiceRealtime, false) || !m.ServiceOn(proxy.ServiceFunctions, false) {
 		t.Errorf("a boolean was dropped: %+v", m)
 	}
 	if m.FunctionWorkerURLs["fn"] != "http://fn" {

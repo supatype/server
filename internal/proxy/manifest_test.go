@@ -6,15 +6,14 @@ import (
 )
 
 func TestMergeRouteManifest(t *testing.T) {
-	base := &RouteManifest{Schema: "public", PostgRESTURL: "http://old:3000", RealtimeEnabled: false}
+	base := &RouteManifest{Schema: "public", PostgRESTURL: "http://old:3000", Services: SwitchesOf(map[string]bool{ServiceRealtime: false})}
 	overlay := &RouteManifest{
-		Schema:           "app",
-		PostgRESTURL:     "http://new:3000",
-		RealtimeEnabled:  true,
-		FunctionsEnabled: true,
+		Schema:       "app",
+		PostgRESTURL: "http://new:3000",
+		Services:     SwitchesOf(map[string]bool{ServiceRealtime: true, ServiceFunctions: true}),
 	}
 	MergeRouteManifest(base, overlay)
-	if base.Schema != "app" || base.PostgRESTURL != "http://new:3000" || !base.RealtimeEnabled || !base.FunctionsEnabled {
+	if base.Schema != "app" || base.PostgRESTURL != "http://new:3000" || !base.ServiceOn(ServiceRealtime, false) || !base.ServiceOn(ServiceFunctions, false) {
 		t.Fatalf("unexpected merge: %#v", base)
 	}
 }
@@ -69,7 +68,7 @@ func TestParseRouteManifestJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Schema != "x" || m.PostgRESTURL != "http://pg:3000" || !m.RealtimeEnabled {
+	if m.Schema != "x" || m.PostgRESTURL != "http://pg:3000" || !m.ServiceOn(ServiceRealtime, false) {
 		t.Fatalf("parse: %#v", m)
 	}
 }

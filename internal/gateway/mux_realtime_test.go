@@ -15,7 +15,7 @@ func TestRealtimeProxy_DisabledReturns404(t *testing.T) {
 		Mode:        "dev",
 		RealtimeURL: "http://127.0.0.1:4000",
 	}
-	manifest := &proxy.RouteManifest{RealtimeEnabled: false}
+	manifest := &proxy.RouteManifest{Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceRealtime: false})}
 	mf := func(*http.Request) *proxy.RouteManifest { return manifest }
 
 	h := realtimeInvocationProxy(cfg, mf)
@@ -39,8 +39,8 @@ func TestRealtimeProxy_ForwardsHTTPToUpstream(t *testing.T) {
 
 	cfg := &config.Config{Mode: "dev"}
 	manifest := &proxy.RouteManifest{
-		RealtimeEnabled: true,
-		RealtimeURL:     upstream.URL,
+		Services:    proxy.SwitchesOf(map[string]bool{proxy.ServiceRealtime: true}),
+		RealtimeURL: upstream.URL,
 	}
 	mf := func(*http.Request) *proxy.RouteManifest { return manifest }
 

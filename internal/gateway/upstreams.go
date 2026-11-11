@@ -15,6 +15,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/serviceswitch"
 )
 
 func functionsInvocationProxy(
@@ -25,7 +26,7 @@ func functionsInvocationProxy(
 	opts := proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := manifestFor(req)
-		if m != nil && !m.FunctionsEnabled && strings.TrimSpace(cfg.FunctionsWorkerURL) == "" {
+		if !serviceswitch.On(m, cfg, proxy.ServiceFunctions) {
 			http.Error(w, "functions disabled", http.StatusNotFound)
 			return
 		}
@@ -55,7 +56,7 @@ func realtimeInvocationProxy(
 	opts := proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := manifestFor(req)
-		if m != nil && !m.RealtimeEnabled {
+		if !serviceswitch.On(m, cfg, proxy.ServiceRealtime) {
 			http.Error(w, "realtime disabled", http.StatusNotFound)
 			return
 		}

@@ -97,12 +97,19 @@ func postgrestComponent(probes ProbeConfig, timeout time.Duration) map[string]an
 	return map[string]any{"url": prURL, "ready": prReady}
 }
 
+// switchedOff is what /health says of any service that is switched off, whichever it is and
+// whatever switched it: not probed, no ready value, and not counted toward readiness. Realtime
+// said "ready": true where GraphQL and storage said "status": "disabled" (0.9.2).
+func switchedOff() map[string]any {
+	return map[string]any{"enabled": false, "skipped": true, "status": "disabled"}
+}
+
 // graphqlComponent reports GraphQL as disabled, without probing it and without a
 // ready value, when SUPATYPE_GRAPHQL_DISABLED is set: the gateway answers
 // /graphql/v1 itself with 501, so the upstream says nothing about what clients get.
 func graphqlComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
 	if probes.GraphQLDisabled {
-		return map[string]any{"enabled": false, "skipped": true, "status": "disabled"}
+		return switchedOff()
 	}
 	gqBase := strings.TrimSpace(utilities.FirstNonEmpty(probes.GraphQLURL, probes.PostgRESTURL))
 	gqURL := joinURL(gqBase, "/graphql/v1")
@@ -111,12 +118,12 @@ func graphqlComponent(probes ProbeConfig, timeout time.Duration) map[string]any 
 }
 
 // storageComponent reports storage as disabled, without probing it and without a
-// ready value, when SUPATYPE_STORAGE_DISABLED is set: the gateway answers
+// ready value, when it is switched off (serviceswitch): the gateway answers
 // /storage/v1 itself with 503, so neither the upstream nor a local store says
 // anything about what clients get.
 func storageComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
 	if probes.StorageDisabled {
-		return map[string]any{"enabled": false, "skipped": true, "status": "disabled"}
+		return switchedOff()
 	}
 	if p := strings.TrimSpace(probes.StorageLocalPath); p != "" {
 		return map[string]any{"mode": "local", "path": p, "ready": isDirReadable(p)}
@@ -138,7 +145,7 @@ func denoComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
 
 func realtimeComponent(probes ProbeConfig, timeout time.Duration) map[string]any {
 	if !probes.RealtimeEnabled {
-		return map[string]any{"enabled": false, "skipped": true, "ready": true}
+		return switchedOff()
 	}
 	selfBase := strings.TrimSpace(probes.SelfBaseURL)
 	if selfBase == "" {

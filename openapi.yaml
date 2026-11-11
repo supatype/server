@@ -1224,6 +1224,9 @@ paths:
                   enum:
                     - plain
                     - s256
+                studio:
+                  type: boolean
+                  description: Set by Studio's own sign-in. The browser then returns to the server's Studio address and `redirect_to` is ignored.
                 supatype_meta_security:
                   $ref: "#/components/schemas/MetaSecurity"
       responses:

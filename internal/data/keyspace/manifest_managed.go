@@ -83,7 +83,7 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 		m.Schema = tc.Schema
 	}
 	if tc.RealtimeEnabled != nil {
-		m.RealtimeEnabled = *tc.RealtimeEnabled
+		m.SetService(proxy.ServiceRealtime, *tc.RealtimeEnabled)
 	}
 	if tc.RealtimeURL != "" {
 		m.RealtimeURL = tc.RealtimeURL
@@ -109,7 +109,7 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 		m.Validators = tc.Validators
 	}
 	if tc.FunctionsEnabled != nil {
-		m.FunctionsEnabled = *tc.FunctionsEnabled
+		m.SetService(proxy.ServiceFunctions, *tc.FunctionsEnabled)
 	}
 	if tc.FunctionsWorkerURL != "" {
 		m.FunctionsWorkerURL = tc.FunctionsWorkerURL

@@ -56,10 +56,14 @@ func (ts *SAMLACSTestSuite) idpProvider() *models.SSOProvider {
 // startSPLogin starts an SP-initiated login with the test IdP, returning the
 // RelayState and the ID of the AuthnRequest the response must answer.
 func (ts *SAMLACSTestSuite) startSPLogin() (relayState, requestID string) {
-	body, err := json.Marshal(struct {
-		ProviderID       string `json:"provider_id"`
-		SkipHTTPRedirect bool   `json:"skip_http_redirect"`
-	}{ts.idpProvider().ID.String(), true})
+	return ts.startSPLoginWith(map[string]interface{}{})
+}
+
+// startSPLoginWith is startSPLogin with extra /sso body fields, such as studio or redirect_to.
+func (ts *SAMLACSTestSuite) startSPLoginWith(fields map[string]interface{}) (relayState, requestID string) {
+	fields["provider_id"] = ts.idpProvider().ID.String()
+	fields["skip_http_redirect"] = true
+	body, err := json.Marshal(fields)
 	require.NoError(ts.T(), err)
 	w := httptest.NewRecorder()
 	ts.API.handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "http://localhost/sso", bytes.NewBuffer(body)))

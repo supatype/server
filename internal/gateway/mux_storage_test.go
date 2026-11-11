@@ -75,7 +75,7 @@ func assertStorageUnavailable(t *testing.T, name string, rr *httptest.ResponseRe
 	if body.Code != "storage_unavailable" {
 		t.Errorf("%s: code %q, want storage_unavailable", name, body.Code)
 	}
-	want := "The storage service is not running; supatype dev printed why when it started."
+	want := "The storage service is not running. Its log says why: the storage pane of supatype dev, or supatype self-host compose logs --service storage."
 	if body.Message != want {
 		t.Errorf("%s: message %q, want %q", name, body.Message, want)
 	}

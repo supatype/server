@@ -14,10 +14,10 @@ func TestProbeConfigFrom(t *testing.T) {
 		StorageURL:   "http://env-st:5000",
 	}
 	m := &proxy.RouteManifest{
-		PostgRESTURL:    "http://m-pg:3000",
-		GraphQLURL:      "",
-		StorageURL:      "http://m-st:5000",
-		RealtimeEnabled: true,
+		PostgRESTURL: "http://m-pg:3000",
+		GraphQLURL:   "",
+		StorageURL:   "http://m-st:5000",
+		Services:     proxy.SwitchesOf(map[string]bool{proxy.ServiceRealtime: true}),
 	}
 	p := ProbeConfigFrom(cfg, m, "http://127.0.0.1:8001")
 	if p.PostgRESTURL != "http://m-pg:3000" {

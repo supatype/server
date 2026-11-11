@@ -43,14 +43,13 @@ type RouteManifest struct {
 	// ViteDevURL overrides SUPATYPE_VITE_DEV_URL when set (dev HMR at /_vite/*).
 	ViteDevURL string `json:"vite_dev_url,omitempty"`
 
-	// RealtimeEnabled gates /realtime/v1 (tier / feature flag).
-	RealtimeEnabled bool `json:"realtime_enabled"`
+	// Services switches upstream services on and off by name (ServiceRealtime, ServiceStorage,
+	// ServiceFunctions), read per request. A service it says nothing about keeps the server's start
+	// value. The legacy realtime_enabled and functions_enabled keys are read into it (UnmarshalJSON).
+	Services map[string]ServiceSwitch `json:"services,omitempty"`
 
 	// RealtimeURL overrides SUPATYPE_REALTIME_URL when set (internal realtime service base URL).
 	RealtimeURL string `json:"realtime_url,omitempty"`
-
-	// FunctionsEnabled indicates the Deno functions subsystem should start.
-	FunctionsEnabled bool `json:"functions_enabled"`
 
 	// FunctionsWorkerURL is the per-project worker base URL (Pro+ / self-host).
 	FunctionsWorkerURL string `json:"functions_worker_url,omitempty"`
@@ -269,10 +268,11 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 		}
 	}
 	cm.Tables = cloneTables(m.Tables)
+	cm.Services = cloneServices(m.Services)
 	return &cm
 }
 
-// MergeRouteManifest copies non-empty string fields and bool fields from overlay onto base (mutates base).
+// MergeRouteManifest copies non-empty string fields, and the service switches it sets, from overlay onto base (mutates base).
 // Used when applying tenant:{ref}:manifest over lower-priority layers.
 func MergeRouteManifest(base, overlay *RouteManifest) {
 	if base == nil || overlay == nil {
@@ -302,11 +302,10 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	if overlay.ViteDevURL != "" {
 		base.ViteDevURL = overlay.ViteDevURL
 	}
-	base.RealtimeEnabled = overlay.RealtimeEnabled
+	mergeServices(base, overlay)
 	if overlay.RealtimeURL != "" {
 		base.RealtimeURL = overlay.RealtimeURL
 	}
-	base.FunctionsEnabled = overlay.FunctionsEnabled
 	if overlay.FunctionsWorkerURL != "" {
 		base.FunctionsWorkerURL = overlay.FunctionsWorkerURL
 	}

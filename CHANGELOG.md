@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.5.0](https://github.com/supatype/server/compare/v2.4.0...v2.5.0) (2026-11-11)
+
+
+### Features
+
+* **gateway:** answer 503 when storage is switched off ([ac2a89d](https://github.com/supatype/server/commit/ac2a89ddd69c5019d9ffc3b23a0e59756fcb2495))
+
+
+### Bug Fixes
+
+* **auth:** close every other way in when SSO first links an account ([5b0fc85](https://github.com/supatype/server/commit/5b0fc8594f00b9c691dfe5579bef3ee1087fa76d))
+* **deps:** bump Go to 1.26.11 for a reachable net/http vulnerability ([8a269c9](https://github.com/supatype/server/commit/8a269c91a312040ace5368bd4acee23e9aa9acda))
+* **gateway:** call the dev app localhost, and end Deno with the server ([d27fc3f](https://github.com/supatype/server/commit/d27fc3f4bf1acafa9bff7d3cab13556f4f4e8b5c))
+* SSO first-link takeover, storage 503 switch, dev proxy Host and Deno lifetime (0.9.2) ([3d568c6](https://github.com/supatype/server/commit/3d568c6e3fd013ec53157cb89141c741d1da6194))
+* switch every service from one manifest map, log in to the keyspace, and answer 503 for an unreachable upstream ([e66a04c](https://github.com/supatype/server/commit/e66a04c7a8120db93fb4e68882489daf8da8c13c))
+
 ## [2.4.0](https://github.com/supatype/server/compare/v2.3.0...v2.4.0) (2026-11-08)
 
 

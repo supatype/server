@@ -497,6 +497,10 @@ type EmailContentConfiguration struct {
 	IdentityUnlinkedNotification    string `json:"identity_unlinked_notification" split_words:"true"`
 	MFAFactorEnrolledNotification   string `json:"mfa_factor_enrolled_notification" split_words:"true"`
 	MFAFactorUnenrolledNotification string `json:"mfa_factor_unenrolled_notification" split_words:"true"`
+	// SSOLinkedNotification is sent whenever an SSO identity is first linked to an
+	// existing account, which removes the account's other ways in. It has no
+	// enabled switch: the address must learn its password is gone.
+	SSOLinkedNotification string `json:"sso_linked_notification" split_words:"true"`
 }
 
 // NotificationsConfiguration holds the configuration for notification email states to indicate whether they are enabled or disabled.

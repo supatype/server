@@ -128,9 +128,8 @@ func newRig(t *testing.T, mode string, opts ...rigOption) *rig {
 		opt(cfg)
 	}
 	manifest := &proxy.RouteManifest{
-		Schema:           "public",
-		FunctionsEnabled: true,
-		RealtimeEnabled:  true,
+		Schema:   "public",
+		Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: true, proxy.ServiceRealtime: true}),
 	}
 
 	r.handler = buildOuterMux(

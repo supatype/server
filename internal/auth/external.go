@@ -307,11 +307,22 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 	case models.LinkAccount:
 		user = decision.User
 
+		var priorIdentities []*models.Identity
+		if priorIdentities, terr = identitiesBeforeSSOLink(tx, user, providerType); terr != nil {
+			return 0, nil, terr
+		}
+
 		if identity, terr = a.createNewIdentity(tx, user, providerType, identityData); terr != nil {
 			return 0, nil, terr
 		}
 
-		if terr = user.UpdateUserMetaData(tx, identityData); terr != nil {
+		if isFirstSSOLink(priorIdentities, providerType) {
+			// This replaces user_metadata with identityData, so merging
+			// identityData into it as well would change nothing.
+			if terr = a.secureAccountForSSOLink(tx, r, user, identity, priorIdentities); terr != nil {
+				return 0, nil, terr
+			}
+		} else if terr = user.UpdateUserMetaData(tx, identityData); terr != nil {
 			return 0, nil, terr
 		}
 
@@ -906,10 +917,25 @@ func (a *API) flowReturn(r *http.Request, query url.Values) (referrer string, st
 	if !studio {
 		return utilities.GetReferrer(r, a.config), false, nil
 	}
+	return "", true, a.studioSignInAvailable()
+}
+
+// studioSignInAvailable refuses to start a Studio sign-in (OAuth or SAML) that could not come back
+// to Studio, because the API external URL gives no Studio address.
+func (a *API) studioSignInAvailable() error {
 	if _, err := utilities.StudioURL(a.config.API.ExternalURL); err != nil {
-		return "", true, apierrors.NewInternalServerError("Studio sign-in is unavailable: the API external URL is not usable").WithInternalError(err)
+		return apierrors.NewInternalServerError("Studio sign-in is unavailable: the API external URL is not usable").WithInternalError(err)
 	}
-	return "", true, nil
+	return nil
+}
+
+// studioReturn is where a Studio sign-in ends: the server's own Studio address. It is checked when
+// the flow starts, so the Site URL fallback only applies if the configuration changed since.
+func (a *API) studioReturn() string {
+	if studio, err := utilities.StudioURL(a.config.API.ExternalURL); err == nil {
+		return studio
+	}
+	return a.config.SiteURL
 }
 
 func isStudioSignIn(value string) bool {
@@ -921,11 +947,7 @@ func (a *API) getExternalRedirectURL(r *http.Request) string {
 	ctx := r.Context()
 	config := a.config
 	if flowState := getFlowState(ctx); flowState != nil && flowState.Studio {
-		// Checked when the flow started, so this only fails if the configuration changed since.
-		if studio, err := utilities.StudioURL(config.API.ExternalURL); err == nil {
-			return studio
-		}
-		return config.SiteURL
+		return a.studioReturn()
 	}
 	if config.External.RedirectURL != "" {
 		return config.External.RedirectURL

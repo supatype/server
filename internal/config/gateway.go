@@ -1,9 +1,14 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/supatype/server/internal/envparse"
+	"github.com/supatype/server/internal/utilities"
 )
 
 // Defaults that callers need by name as well as by tag.
@@ -138,6 +143,31 @@ type Config struct {
 	// precedence.
 	ProjectKeyspaceAddrBare string `envconfig:"PROJECT_KEYSPACE_ADDR"`
 
+	// KeyspaceUsername and KeyspacePassword are the credentials sent to the
+	// platform keyspace, and to the project keyspace only when both share one
+	// address and so one client. pg_keyspace requires a password, so a keyspace
+	// reachable from the network is not open to anyone who can reach the port.
+	// Read through LoadKeyspaceCredentials, which states the precedence and the
+	// default username.
+	KeyspaceUsername string `envconfig:"SUPATYPE_KEYSPACE_USERNAME"`
+	KeyspacePassword Secret `envconfig:"SUPATYPE_KEYSPACE_PASSWORD"`
+
+	// ProjectKeyspaceUsername and ProjectKeyspacePassword are the credentials
+	// sent to a project keyspace at its own address. They never fall back to
+	// the platform pair: the project's credentials are handed to its users, and
+	// the platform keyspace holds every tenant's configuration.
+	// LoadKeyspaceCredentials refuses a project password equal to the platform
+	// one.
+	ProjectKeyspaceUsername string `envconfig:"SUPATYPE_PROJECT_KEYSPACE_USERNAME"`
+	ProjectKeyspacePassword Secret `envconfig:"SUPATYPE_PROJECT_KEYSPACE_PASSWORD"`
+
+	// KeyspacePasswordFile and ProjectKeyspacePasswordFile name files holding
+	// each password, for a deployment that mounts secrets as files rather than
+	// putting them in the environment. LoadKeyspaceCredentials reads them;
+	// setting a password and its file together is refused there.
+	KeyspacePasswordFile        string `envconfig:"SUPATYPE_KEYSPACE_PASSWORD_FILE"`
+	ProjectKeyspacePasswordFile string `envconfig:"SUPATYPE_PROJECT_KEYSPACE_PASSWORD_FILE"`
+
 	// ManagedProjectRef is the cloud project ref (slug) for a single-tenant managed pod.
 	// When set with Mode=managed and a keyspace address, the route manifest is merged
 	// from keyspace keys tenant:{ref}:config and tenant:{ref}:manifest.
@@ -179,6 +209,13 @@ type Config struct {
 	// `supatype dev`). Off by default, so every Config built without it serves
 	// GraphQL as before.
 	GraphQLDisabled bool `envconfig:"SUPATYPE_GRAPHQL_DISABLED"`
+
+	// StorageDisabled answers every /storage/v1 request with 503
+	// storage_unavailable, whatever STORAGE_PROVIDER or the storage URLs say.
+	// Native `supatype dev` sets it when its storage service could not start:
+	// falling back to the built-in object store would serve objects with no
+	// read rules applied. Off by default.
+	StorageDisabled bool `envconfig:"SUPATYPE_STORAGE_DISABLED"`
 
 	// StorageURL is the upstream storage service URL (used when StorageProvider != "local").
 	StorageURL string `envconfig:"SUPATYPE_STORAGE_URL" default:"http://localhost:5000"`
@@ -364,6 +401,126 @@ func (c *Config) ProjectKeyspaceAddress() string {
 		}
 	}
 	return c.KeyspaceAddress()
+}
+
+// DefaultKeyspaceUsername is the user sent with a keyspace password when no
+// username is configured. It is the user pg_keyspace creates its password for.
+const DefaultKeyspaceUsername = "supatype"
+
+// KeyspaceCredentials is what a keyspace client authenticates with. A zero
+// value means send no AUTH at all, which is how every deployment from before
+// the password behaves.
+type KeyspaceCredentials struct {
+	Username string
+	Password Secret
+}
+
+// errSharedKeyspacePassword refuses a project keyspace password equal to the
+// platform one, whether each was set directly or by file and whatever the
+// addresses. The project's credentials are handed to its users, so sharing the
+// password would hand them the platform keyspace. It names the variables and
+// neither value.
+var errSharedKeyspacePassword = errors.New("config: SUPATYPE_PROJECT_KEYSPACE_PASSWORD must differ from " +
+	"SUPATYPE_KEYSPACE_PASSWORD; the project keyspace's credentials are given to its users")
+
+// LoadKeyspaceCredentials resolves the platform and project keyspace
+// credentials, reading any password file, and refuses what cannot be right
+// before a keyspace is dialled: a password set both directly and by file, a
+// file that cannot be read or holds nothing, and a project password equal to
+// the platform one. Every error names variables and paths, never a password.
+//
+// The platform pair is sent to the platform keyspace, and to the project
+// keyspace only when both share one address and so one client. The project
+// pair is sent to a project keyspace at its own address and is resolved from
+// the project variables only: unset, it is no AUTH, as every project keyspace
+// was before passwords, and never the platform pair.
+func (c *Config) LoadKeyspaceCredentials() (platform, project KeyspaceCredentials, err error) {
+	platform, err = keyspaceCredentialSource{
+		name: "SUPATYPE_KEYSPACE_PASSWORD", username: c.KeyspaceUsername,
+		password: c.KeyspacePassword, passwordFile: c.KeyspacePasswordFile,
+	}.resolve()
+	if err != nil {
+		return KeyspaceCredentials{}, KeyspaceCredentials{}, err
+	}
+	project, err = keyspaceCredentialSource{
+		name: "SUPATYPE_PROJECT_KEYSPACE_PASSWORD", username: c.ProjectKeyspaceUsername,
+		password: c.ProjectKeyspacePassword, passwordFile: c.ProjectKeyspacePasswordFile,
+	}.resolve()
+	if err != nil {
+		return KeyspaceCredentials{}, KeyspaceCredentials{}, err
+	}
+	if project.Password != "" && project.Password == platform.Password {
+		return KeyspaceCredentials{}, KeyspaceCredentials{}, errSharedKeyspacePassword
+	}
+	return platform, project, nil
+}
+
+// keyspaceCredentialSource is where one keyspace's credentials are set: a
+// username, and a password given directly or by file. name is the password's
+// variable, which errors name in place of the value.
+type keyspaceCredentialSource struct {
+	name         string
+	username     string
+	password     Secret
+	passwordFile string
+}
+
+// resolve reads the password file, if one is named, and pairs the password
+// with the username. A username without a password is ignored rather than
+// sent: AUTH needs both, and a deployment that set only the username has not
+// turned authentication on. A password without a username uses
+// DefaultKeyspaceUsername. The password is used exactly as set, because spaces
+// can be part of one; only a value that is all whitespace counts as unset, as
+// a blank line in a .env does everywhere else.
+func (s keyspaceCredentialSource) resolve() (KeyspaceCredentials, error) {
+	fromFile, err := readPasswordFile(s.name, s.passwordFile, s.password)
+	if err != nil {
+		return KeyspaceCredentials{}, err
+	}
+	password := utilities.FirstNonEmpty(string(fromFile), string(s.password))
+	if password == "" {
+		return KeyspaceCredentials{}, nil
+	}
+	user := strings.TrimSpace(s.username)
+	if user == "" {
+		user = DefaultKeyspaceUsername
+	}
+	return KeyspaceCredentials{Username: user, Password: Secret(password)}, nil
+}
+
+// readPasswordFile reads the password in path, the file named by name+"_FILE",
+// or returns "" when no file is named. direct is the password set by name
+// itself, which may not be set as well: two sources would leave the operator
+// guessing which one the server used.
+//
+// One trailing newline, LF or CRLF, is stripped, since an editor or `echo`
+// adds one that is not part of the password. Nothing else is trimmed.
+func readPasswordFile(name, path string, direct Secret) (Secret, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	fileVar := name + "_FILE"
+	if strings.TrimSpace(string(direct)) != "" {
+		return "", fmt.Errorf("config: set %s or %s, not both", name, fileVar)
+	}
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("config: %s names %s, which cannot be read: %w", fileVar, path, err)
+	}
+	password := stripOneNewline(string(data))
+	if strings.TrimSpace(password) == "" {
+		return "", fmt.Errorf("config: %s names %s, which holds no password", fileVar, path)
+	}
+	return Secret(password), nil
+}
+
+// stripOneNewline removes one trailing CRLF or LF, and nothing else.
+func stripOneNewline(s string) string {
+	if strings.HasSuffix(s, "\r\n") {
+		return strings.TrimSuffix(s, "\r\n")
+	}
+	return strings.TrimSuffix(s, "\n")
 }
 
 // SQLDSN is the connection string for the server-side features that read the

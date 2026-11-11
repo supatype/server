@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,6 +39,17 @@ func TestChildProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, "crashing")
 		os.Exit(1)
 	case "linger":
+		<-time.After(30 * time.Second)
+	case "record":
+		// Says who it is, so a test can look for it after its server is gone.
+		// Written aside and renamed, so the test never reads half a number.
+		pidFile := os.Getenv("DENO_TEST_PIDFILE")
+		if err := os.WriteFile(pidFile+".tmp", []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil { // #nosec G703 -- the path is this test's own temp dir, set by the test itself
+			os.Exit(2)
+		}
+		if err := os.Rename(pidFile+".tmp", pidFile); err != nil { // #nosec G703 -- the same temp-dir path
+			os.Exit(2)
+		}
 		<-time.After(30 * time.Second)
 	}
 	os.Exit(0)

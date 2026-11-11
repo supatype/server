@@ -292,7 +292,7 @@ func (d Deps) serveAndStore(w http.ResponseWriter, req *http.Request, next http.
 			RawQuery:    req.URL.RawQuery,
 		}
 		if err := storeEntry(req.Context(), d.Cache, p.key, entry, p.ttl); err != nil {
-			logrus.WithError(err).Warn("restcache: keyspace SET failed")
+			warnUnlessDown(err, "restcache: keyspace SET failed")
 			label, reason = "BYPASS", ReasonStoreFailed
 		}
 		w.Header().Set("Vary", VaryHeader(req))
@@ -331,7 +331,7 @@ func storable(rec *httptest.ResponseRecorder) bool {
 func tryServeHit(ctx context.Context, vk keyspace.Client, w http.ResponseWriter, req *http.Request, key string, ttl int) (served, ok bool) {
 	raw, err := vk.GetBytes(ctx, key)
 	if err != nil {
-		logrus.WithError(err).Warn("restcache: keyspace GET failed")
+		warnUnlessDown(err, "restcache: keyspace GET failed")
 		return false, false
 	}
 	if raw == nil {
@@ -358,6 +358,16 @@ func tryServeHit(ctx context.Context, vk keyspace.Client, w http.ResponseWriter,
 		_, _ = w.Write(entry.Body)
 	}
 	return true, true
+}
+
+// warnUnlessDown logs a keyspace read or write that failed, unless it failed for want of any
+// connection: the server said that once at start, and the caller's BYPASS header says it again.
+// Logged per request, it was two "keyspace: not configured" lines for every cached request, even
+// after a refused login (0.9.2 release test round 2, R2-S13).
+func warnUnlessDown(err error, msg string) {
+	if !keyspace.Down(err) {
+		logrus.WithError(err).Warn(msg)
+	}
 }
 
 func storeEntry(ctx context.Context, vk keyspace.Client, key string, entry Entry, ttl int) error {

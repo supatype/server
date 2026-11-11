@@ -41,9 +41,9 @@ var ErrNoDatabase = errors.New("data: no database configured (SUPATYPE_SQL_DATAB
 const adminMaxConns = 10
 
 // openKeyspace is the keyspace constructor, indirected so tests can exercise
-// the path where a cache connects. keyspace.New dials eagerly, so without this
+// the path where a cache connects. keyspace.Dial dials eagerly, so without this
 // the only reachable branch in a unit test is the failure one.
-var openKeyspace = keyspace.New
+var openKeyspace = keyspace.Dial
 
 // newPool is the pgxpool constructor, indirected for the same reason: once
 // ParseConfig has succeeded and MaxConns is a sane constant, it has no reason
@@ -100,44 +100,66 @@ type Resources struct {
 // starts. Making it fatal would turn a cold start into a crashloop and take the
 // whole gateway down to protect a cache.
 func Open(ctx context.Context, cfg *config.Config) (*Resources, error) {
+	// Before anything is dialled, and in every mode: a shared password or an
+	// unreadable password file is a configuration mistake, not a keyspace that
+	// may come up later.
+	platformAuth, projectAuth, err := cfg.LoadKeyspaceCredentials()
+	if err != nil {
+		return nil, err
+	}
 	r := &Resources{cache: keyspace.Unavailable(), platform: keyspace.Unavailable()}
 
 	platformAddr := cfg.KeyspaceAddress()
 	if platformAddr != "" {
-		client, err := openKeyspace(platformAddr)
-		if err != nil {
-			managed := strings.TrimSpace(cfg.Mode) == "managed"
-			if managed {
-				return nil, fmt.Errorf("data: keyspace connect failed in managed mode: %w", err)
+		client, err := openKeyspace(platformAddr, keyspaceAuth(platformAuth))
+		if err != nil && strings.TrimSpace(cfg.Mode) == "managed" {
+			if client != nil {
+				client.Close()
 			}
-			logrus.WithError(err).Warn("data: keyspace connect failed, caches will bypass")
-		} else {
-			r.platform = client
-			r.cache = client
-			r.onClose(func() error { client.Close(); return nil })
+			return nil, fmt.Errorf("data: keyspace connect failed in managed mode: %w", err)
 		}
+		if err != nil {
+			logrus.WithError(err).Warn("data: keyspace connect failed, caches bypass until it connects; redialling in the background")
+		}
+		r.platform = r.keep(client)
+		r.cache = r.platform
 	}
 
 	// Only when it names a different server. Equal addresses are the
-	// single-keyspace deployment, already served by the client above.
+	// single-keyspace deployment, already served by the client above, which
+	// logs in with the platform pair. A project keyspace at its own address
+	// gets the project pair or none, never the platform's.
 	if addr := cfg.ProjectKeyspaceAddress(); addr != "" && addr != platformAddr {
-		client, err := openKeyspace(addr)
+		client, err := openKeyspace(addr, keyspaceAuth(projectAuth))
 		if err != nil {
 			// Deliberately not fatal, and logged at warn rather than error: the
 			// gateway serves every request it would have served, slower.
 			logrus.WithError(err).WithField("addr", addr).
-				Warn("data: project keyspace connect failed, response cache will bypass")
-			r.cache = keyspace.Unavailable()
-		} else {
-			r.cache = client
-			r.onClose(func() error { client.Close(); return nil })
+				Warn("data: project keyspace connect failed, response cache bypasses until it connects; redialling in the background")
 		}
+		r.cache = r.keep(client)
 	}
 
 	if err := r.openDatabases(ctx, cfg); err != nil {
 		return nil, r.closeAfter(err)
 	}
 	return r, nil
+}
+
+// keep registers client to be closed with the rest. A failed dial hands back a client that keeps
+// redialling (keyspace.Dial), so it is kept too; with no client at all it is the unavailable one.
+func (r *Resources) keep(client keyspace.Client) keyspace.Client {
+	if client == nil {
+		return keyspace.Unavailable()
+	}
+	r.onClose(func() error { client.Close(); return nil })
+	return client
+}
+
+// keyspaceAuth hands resolved credentials to the keyspace client, the one
+// place the password leaves its masking type.
+func keyspaceAuth(creds config.KeyspaceCredentials) keyspace.Auth {
+	return keyspace.Auth{Username: creds.Username, Password: creds.Password.Reveal()}
 }
 
 // openDatabases opens the admin pool and, when it names a different connection,

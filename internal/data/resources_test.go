@@ -204,7 +204,7 @@ func (f *fakeCache) Close()          { f.closed++ }
 func TestOpenAcquiresAndClosesTheCache(t *testing.T) {
 	cache := &fakeCache{Client: keyspace.Unavailable()}
 	original := openKeyspace
-	openKeyspace = func(string) (keyspace.Client, error) { return cache, nil }
+	openKeyspace = func(string, keyspace.Auth) (keyspace.Client, error) { return cache, nil }
 	t.Cleanup(func() { openKeyspace = original })
 
 	r, err := Open(context.Background(), &config.Config{KeyspaceAddr: "db:6379"})
@@ -290,7 +290,7 @@ func TestOpenSharesOneClientWhenBothAddressesMatch(t *testing.T) {
 	var opened []string
 	cache := &fakeCache{Client: keyspace.Unavailable()}
 	original := openKeyspace
-	openKeyspace = func(addr string) (keyspace.Client, error) {
+	openKeyspace = func(addr string, _ keyspace.Auth) (keyspace.Client, error) {
 		opened = append(opened, addr)
 		return cache, nil
 	}
@@ -322,7 +322,7 @@ func TestOpenSeparatesTheProjectKeyspaceFromThePlatformOne(t *testing.T) {
 	platform := &fakeCache{Client: keyspace.Unavailable()}
 	project := &fakeCache{Client: keyspace.Unavailable()}
 	original := openKeyspace
-	openKeyspace = func(addr string) (keyspace.Client, error) {
+	openKeyspace = func(addr string, _ keyspace.Auth) (keyspace.Client, error) {
 		if addr == "postgres-platform:6379" {
 			return platform, nil
 		}
@@ -358,7 +358,7 @@ func TestOpenSeparatesTheProjectKeyspaceFromThePlatformOne(t *testing.T) {
 func TestOpenSurvivesAnUnreachableProjectKeyspaceInManagedMode(t *testing.T) {
 	platform := &fakeCache{Client: keyspace.Unavailable()}
 	original := openKeyspace
-	openKeyspace = func(addr string) (keyspace.Client, error) {
+	openKeyspace = func(addr string, _ keyspace.Auth) (keyspace.Client, error) {
 		if addr == "postgres-platform:6379" {
 			return platform, nil
 		}
@@ -389,7 +389,7 @@ func TestOpenSurvivesAnUnreachableProjectKeyspaceInManagedMode(t *testing.T) {
 // route manifest lives in it, so a managed pod that cannot read it cannot serve.
 func TestOpenStillFailsOnAnUnreachablePlatformKeyspaceInManagedMode(t *testing.T) {
 	original := openKeyspace
-	openKeyspace = func(string) (keyspace.Client, error) { return nil, errors.New("connection refused") }
+	openKeyspace = func(string, keyspace.Auth) (keyspace.Client, error) { return nil, errors.New("connection refused") }
 	t.Cleanup(func() { openKeyspace = original })
 
 	_, err := Open(context.Background(), &config.Config{
@@ -419,7 +419,7 @@ func TestZeroResourcesYieldsTheUnavailablePlatformCache(t *testing.T) {
 func TestCloseResetsBothKeyspaces(t *testing.T) {
 	cache := &fakeCache{Client: keyspace.Unavailable()}
 	original := openKeyspace
-	openKeyspace = func(string) (keyspace.Client, error) { return cache, nil }
+	openKeyspace = func(string, keyspace.Auth) (keyspace.Client, error) { return cache, nil }
 	t.Cleanup(func() { openKeyspace = original })
 
 	r, err := Open(context.Background(), &config.Config{KeyspaceAddr: "db:6379"})

@@ -49,36 +49,38 @@ type Client interface {
 //
 // Reads report ErrUnavailable rather than a cache miss. A miss would be a lie:
 // it invites the caller to write the value back, and the write would fail too.
-func Unavailable() Client { return unavailableClient{} }
+func Unavailable() Client { return unavailableClient{err: ErrUnavailable} }
 
-type unavailableClient struct{}
+// unavailableClient answers every operation with err: ErrUnavailable for no keyspace configured,
+// ErrNotConnected for one whose redial has not yet connected (redial.go).
+type unavailableClient struct{ err error }
 
 func (unavailableClient) Available() bool { return false }
 
-func (unavailableClient) GetTenantConfig(context.Context, string) (*TenantConfig, error) {
-	return nil, ErrUnavailable
+func (u unavailableClient) GetTenantConfig(context.Context, string) (*TenantConfig, error) {
+	return nil, u.err
 }
 
-func (unavailableClient) GetBytes(context.Context, string) ([]byte, error) {
-	return nil, ErrUnavailable
+func (u unavailableClient) GetBytes(context.Context, string) ([]byte, error) {
+	return nil, u.err
 }
 
-func (unavailableClient) SetBytes(context.Context, string, []byte, int) error {
-	return ErrUnavailable
+func (u unavailableClient) SetBytes(context.Context, string, []byte, int) error {
+	return u.err
 }
 
-func (unavailableClient) Del(context.Context, ...string) error { return ErrUnavailable }
+func (u unavailableClient) Del(context.Context, ...string) error { return u.err }
 
-func (unavailableClient) ScanPage(context.Context, uint64, string, int) ([]string, uint64, error) {
-	return nil, 0, ErrUnavailable
+func (u unavailableClient) ScanPage(context.Context, uint64, string, int) ([]string, uint64, error) {
+	return nil, 0, u.err
 }
 
-func (unavailableClient) TTLSeconds(context.Context, string) (int, error) {
-	return 0, ErrUnavailable
+func (u unavailableClient) TTLSeconds(context.Context, string) (int, error) {
+	return 0, u.err
 }
 
-func (unavailableClient) AddToExpiringSet(context.Context, string, string, time.Time) error {
-	return ErrUnavailable
+func (u unavailableClient) AddToExpiringSet(context.Context, string, string, time.Time) error {
+	return u.err
 }
 
 func (unavailableClient) Close() {}

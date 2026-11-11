@@ -63,11 +63,10 @@ func routeScenarios() []routeScenario {
 				AppStaticDir:       "/tmp/supatype-routes-test",
 			},
 			manifest: &proxy.RouteManifest{
-				Schema:           "public",
-				RealtimeEnabled:  true,
-				FunctionsEnabled: true,
-				AppMode:          "static",
-				AppStaticDir:     "/tmp/supatype-routes-test",
+				Schema:       "public",
+				Services:     proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: true, proxy.ServiceRealtime: true}),
+				AppMode:      "static",
+				AppStaticDir: "/tmp/supatype-routes-test",
 			},
 		},
 	}

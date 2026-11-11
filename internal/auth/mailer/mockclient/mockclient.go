@@ -24,6 +24,7 @@ type MockMailer struct {
 	IdentityUnlinkedMailCalls    []IdentityUnlinkedMailCall
 	MFAFactorEnrolledMailCalls   []MFAFactorEnrolledMailCall
 	MFAFactorUnenrolledMailCalls []MFAFactorUnenrolledMailCall
+	SSOLinkedMailCalls           []SSOLinkedMailCall
 }
 
 type InviteMailCall struct {
@@ -108,6 +109,11 @@ type MFAFactorEnrolledMailCall struct {
 type MFAFactorUnenrolledMailCall struct {
 	User       *models.User
 	FactorType string
+}
+
+type SSOLinkedMailCall struct {
+	User     *models.User
+	Provider string
 }
 
 func (m *MockMailer) InviteMail(r *http.Request, user *models.User, otp, referrerURL string, externalURL *url.URL) error {
@@ -237,6 +243,14 @@ func (m *MockMailer) MFAFactorUnenrolledNotificationMail(r *http.Request, user *
 	return nil
 }
 
+func (m *MockMailer) SSOLinkedNotificationMail(r *http.Request, user *models.User, provider string) error {
+	m.SSOLinkedMailCalls = append(m.SSOLinkedMailCalls, SSOLinkedMailCall{
+		User:     user,
+		Provider: provider,
+	})
+	return nil
+}
+
 func (m *MockMailer) Reset() {
 	m.InviteMailCalls = nil
 	m.ConfirmationMailCalls = nil
@@ -253,4 +267,5 @@ func (m *MockMailer) Reset() {
 	m.IdentityUnlinkedMailCalls = nil
 	m.MFAFactorEnrolledMailCalls = nil
 	m.MFAFactorUnenrolledMailCalls = nil
+	m.SSOLinkedMailCalls = nil
 }

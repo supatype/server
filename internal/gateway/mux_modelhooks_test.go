@@ -47,7 +47,7 @@ func muxWithHooks(
 	manifest := &proxy.RouteManifest{
 		Schema:             "public",
 		PostgRESTURL:       postgrest.URL,
-		FunctionsEnabled:   true,
+		Services:           proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: true}),
 		FunctionsWorkerURL: worker.URL,
 		Hooks:              hooks,
 	}
@@ -134,7 +134,7 @@ func TestRestMountLeavesReadsAndUnhookedTablesAlone(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), post)
 
 	if got := upstreamBody(); got != `{"body":"hi"}` {
-		t.Fatalf("upstream body = %q — an unhooked write must pass through untouched", got)
+		t.Fatalf("upstream body = %q: an unhooked write must pass through untouched", got)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestRestMountWithNoHooksInManifest(t *testing.T) {
 }
 
 func TestHooksNamespaceIsNotPubliclyInvocable(t *testing.T) {
-	// A hook is procedural — the server calls it around a write. If a caller holding the anon key
+	// A hook is procedural: the server calls it around a write. If a caller holding the anon key
 	// could POST to it directly, they would choose the payload: a made-up "row about to be deleted",
 	// or an afterChange that fires side effects for a write that never happened.
 	var called bool
@@ -171,7 +171,7 @@ func TestHooksNamespaceIsNotPubliclyInvocable(t *testing.T) {
 	}
 	manifest := &proxy.RouteManifest{
 		Schema:             "public",
-		FunctionsEnabled:   true,
+		Services:           proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: true}),
 		FunctionsWorkerURL: worker.URL,
 	}
 	h := buildOuterMux(cfg, func(*http.Request) *proxy.RouteManifest { return manifest },
@@ -202,7 +202,7 @@ func TestPublicFunctionsStillInvocable(t *testing.T) {
 	cfg := &config.Config{Mode: "dev", FunctionsWorkerURL: worker.URL}
 	manifest := &proxy.RouteManifest{
 		Schema:             "public",
-		FunctionsEnabled:   true,
+		Services:           proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: true}),
 		FunctionsWorkerURL: worker.URL,
 	}
 	h := buildOuterMux(cfg, func(*http.Request) *proxy.RouteManifest { return manifest },

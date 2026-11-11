@@ -131,7 +131,9 @@ func serve(ctx context.Context) {
 	}()
 
 	lc := reusePortListenConfig()
-	listener, err := lc.Listen(ctx, "tcp", addr)
+	listener, err := listenAPI(ctx, lc, authCfg.API.Host, authCfg.API.Port, func(err error) {
+		log.WithError(err).Warn("serve: not every loopback address of the API host is available, so it is served on the rest (localhost on 127.0.0.1 only)")
+	})
 	if err != nil {
 		log.WithError(err).Fatal("http server listen failed")
 	}

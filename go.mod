@@ -191,7 +191,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-go 1.26.10
+go 1.26.11
 
 // pop imports gobuffalo/envy, whose init loads ./.env over the process
 // environment before main runs. third_party/envy keeps the API pop calls and

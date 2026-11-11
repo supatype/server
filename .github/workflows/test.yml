@@ -110,6 +110,20 @@ jobs:
         run: psql -f hack/init_postgres.sql postgresql://postgres:root@localhost:5432/postgres
       - name: Run migrations
         run: make migrate_dev
+      # A second Valkey that refuses anyone but the supatype user with its
+      # password, as pg_keyspace does. It is a step rather than a service
+      # because a service cannot be given server arguments. Without it the
+      # tests that log in to a keyspace skip, and nothing proves a password
+      # reaches the server or that a wrong one is reported.
+      - name: Start a keyspace that requires a password
+        run: |
+          docker run -d --name keyspace-auth -p 6380:6379 valkey/valkey:8-alpine \
+            valkey-server --user default off --user supatype on '>ci-keyspace-password' '~*' '&*' '+@all'
+          for _ in $(seq 1 30); do
+            if docker exec keyspace-auth valkey-cli --user supatype --pass ci-keyspace-password --no-auth-warning ping 2>/dev/null | grep -q PONG; then exit 0; fi
+            sleep 1
+          done
+          exit 1
       - name: Lint and test
         env:
           # Without a DSN the Studio membership and bootstrap tests skip
@@ -121,6 +135,8 @@ jobs:
           # Same reason: without an address the keyspace client's own tests skip
           # and the package cannot reach its floor.
           SUPATYPE_TEST_KEYSPACE_ADDR: 127.0.0.1:6379
+          SUPATYPE_TEST_KEYSPACE_AUTH_ADDR: 127.0.0.1:6380
+          SUPATYPE_TEST_KEYSPACE_AUTH_PASSWORD: ci-keyspace-password
           # The image's superuser, as the gateway's admin connection is.
           SUPATYPE_SECSQL_DSN: postgresql://supatype_admin:root@localhost:5433/supatype
         run: make test

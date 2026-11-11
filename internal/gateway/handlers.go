@@ -22,6 +22,7 @@ import (
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/publicenv"
 	"github.com/supatype/server/internal/restcache"
+	"github.com/supatype/server/internal/serviceswitch"
 	"github.com/supatype/server/internal/sqlrunner"
 	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/studioauth"
@@ -34,14 +35,25 @@ import (
 // itoa keeps the header-building code free of strconv noise.
 func itoa(n int) string { return strconv.Itoa(n) }
 
-// upstreamProxy is the proxy every mount uses, with the shared round-trip cap
-// that stops a wedged upstream hanging requests indefinitely.
-func upstreamProxy(u *url.URL, opts ...func(*proxy.ProxyOpts)) http.Handler {
+// upstreamOpts are the proxy options every mount uses, with the shared
+// round-trip cap that stops a wedged upstream hanging requests indefinitely.
+func upstreamOpts(opts ...func(*proxy.ProxyOpts)) proxy.ProxyOpts {
 	o := proxy.ProxyOpts{RequestTimeout: defaultUpstreamHTTPTimeout}
 	for _, apply := range opts {
 		apply(&o)
 	}
-	return proxy.New(u, o)
+	return o
+}
+
+// upstreamProxy is the proxy for this server's own services.
+func upstreamProxy(u *url.URL, opts ...func(*proxy.ProxyOpts)) http.Handler {
+	return proxy.New(u, upstreamOpts(opts...))
+}
+
+// devServerProxy is the proxy for a developer's app server, which also
+// carries its WebSocket upgrades and names the server localhost.
+func devServerProxy(u *url.URL) http.Handler {
+	return proxy.DevServerProxy(u, upstreamOpts())
 }
 
 // withHeaders adds request headers to an upstream proxy.
@@ -218,11 +230,20 @@ func buildGraphQL(d *Deps) http.Handler {
 // find the function graphql_public.graphql", which read like a fault in the
 // stack or the caller's query rather than a stack without GraphQL.
 func graphQLUnavailable(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	utilities.WriteJSON(w, http.StatusNotImplemented, map[string]string{
 		"code":    "graphql_unavailable",
 		"message": "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1.",
+	})
+}
+
+// storageUnavailable answers /storage/v1 on a native `supatype dev` stack whose
+// storage service could not start. Falling back to the built-in object store
+// there served every object with no read rules applied, so the gateway refuses
+// instead and points at the dev log that says why storage is down.
+func storageUnavailable(w http.ResponseWriter, _ *http.Request) {
+	utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"code":    "storage_unavailable",
+		"message": "The storage service is not running. Its log says why: the storage pane of supatype dev, or supatype self-host compose logs --service storage.",
 	})
 }
 
@@ -238,16 +259,41 @@ func rewriteToGraphQLRPC(req *http.Request) *http.Request {
 }
 
 // buildStorage serves objects from disk when a local store is configured, and
-// otherwise proxies to the storage service.
+// otherwise proxies to the storage service. Switched off, it answers every
+// request itself, ahead of both.
+//
+// Whether it is switched off is asked per request: the route manifest's
+// services.storage, when it says, else SUPATYPE_STORAGE_DISABLED (serviceswitch). Read once at
+// start, `supatype dev` had to stop a storage service that had not answered by
+// its deadline, as nothing could switch it on later (0.9.2 release test N-FF2).
 func buildStorage(d *Deps) http.Handler {
+	if !serviceswitch.Start(d.Config, proxy.ServiceStorage) {
+		logrus.Info("mux: storage switched off at start; /storage/v1 answers 503 storage_unavailable until the route manifest switches it on")
+	}
+	serve := storageServer(d)
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		m := d.ManifestFor(req)
+		if !serviceswitch.On(m, d.Config, proxy.ServiceStorage) {
+			storageUnavailable(w, req)
+			return
+		}
+		serve(w, req, m)
+	})
+}
+
+// storageServer is what serves /storage/v1 while storage is switched on, given the request's
+// manifest, which buildStorage has already looked up (a lock and a copy per tenant lookup).
+func storageServer(d *Deps) func(http.ResponseWriter, *http.Request, *proxy.RouteManifest) {
 	if d.Config.StorageProvider == "local" && d.Config.StoragePath != "" {
 		logrus.WithField("path", d.Config.StoragePath).
 			Info("mux: local storage handler mounted at /storage/v1")
-		return objstore.Handler(d.Config.StoragePath, d.Config.JWTSecret)
+		local := objstore.Handler(d.Config.StoragePath, d.Config.JWTSecret)
+		return func(w http.ResponseWriter, req *http.Request, _ *proxy.RouteManifest) { local.ServeHTTP(w, req) }
 	}
 	logrus.Info("mux: Storage proxy mounted at /storage/v1")
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		storageURL := StorageUpstream(d.ManifestFor(req), d.Config)
+	unreachable := whenUnreachable(storageUnavailable)
+	return func(w http.ResponseWriter, req *http.Request, m *proxy.RouteManifest) {
+		storageURL := StorageUpstream(m, d.Config)
 		if storageURL == "" {
 			badGateway(w, "storage not configured")
 			return
@@ -257,8 +303,16 @@ func buildStorage(d *Deps) http.Handler {
 			badGateway(w, "bad gateway")
 			return
 		}
-		upstreamProxy(u).ServeHTTP(safeStorageWriter(w, req), req)
-	})
+		upstreamProxy(u, unreachable).ServeHTTP(safeStorageWriter(w, req), req)
+	}
+}
+
+// whenUnreachable answers a request whose upstream is not listening with unavailable. A storage
+// service that crashed while `supatype dev` ran answered a bare 502 for as long as its supervisor
+// kept retrying, where storage switched off says 503 storage_unavailable; down is down either way
+// (0.9.2 release test round 2, R2-S1).
+func whenUnreachable(unavailable http.HandlerFunc) func(*proxy.ProxyOpts) {
+	return func(o *proxy.ProxyOpts) { o.Unreachable = unavailable }
 }
 
 func buildFunctionsAdmin(d *Deps) http.Handler {
@@ -289,7 +343,9 @@ func buildPlatform(d *Deps) http.Handler {
 
 // buildVite proxies Vite's HMR socket in dev mode. With no Vite URL configured
 // it falls back to the app upstream, but only when that upstream is not already
-// serving the catch-all, since proxying it twice would be pointless.
+// serving the catch-all, since proxying it twice would be pointless. Like the
+// app proxy it names the dev server as localhost, since Vite 6.0.9 and later
+// refuse any other Host, host.docker.internal included.
 func buildVite(d *Deps) http.Handler {
 	target := ViteDevURL(d.Baseline, d.Config)
 	if target == "" && AppMode(d.Baseline, d.Config) != "proxy" {
@@ -303,7 +359,7 @@ func buildVite(d *Deps) http.Handler {
 		return nil
 	}
 	logrus.WithField("vite_dev_url", target).Info("mux: Vite HMR proxy mounted at /_vite")
-	return proxy.WebSocketProxy(u, upstreamProxy(u))
+	return devServerProxy(u)
 }
 
 // buildApp answers everything not claimed by a service above: nothing, a
@@ -328,7 +384,7 @@ func buildApp(d *Deps) http.Handler {
 			return nil
 		}
 		logrus.WithField("upstream", upstream).Info("mux: app proxy mounted")
-		return proxy.WebSocketProxy(u, upstreamProxy(u))
+		return devServerProxy(u)
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
 // Package mailer defines the auth service mail abstraction. Delivery is wired through
 // internal/auth/mailer/templatemailer.FromConfig, which selects a mailer.Client by
-// SUPATYPE_MAILER_MAILER_PROVIDER—implementing the Phase 10.6 email provider surface
+// SUPATYPE_MAILER_MAILER_PROVIDER. That implements the Phase 10.6 email provider surface
 // (console, SMTP, Resend, SES) as Go packages, driven from supatype.config.ts `email`.
 package mailer
 
@@ -31,6 +31,7 @@ const (
 	IdentityUnlinkedNotification    = "identity_unlinked_notification"
 	MFAFactorEnrolledNotification   = "mfa_factor_enrolled_notification"
 	MFAFactorUnenrolledNotification = "mfa_factor_unenrolled_notification"
+	SSOLinkedNotification           = "sso_linked_notification"
 )
 
 // Mailer defines the interface a mailer must implement.
@@ -51,6 +52,7 @@ type Mailer interface {
 	IdentityUnlinkedNotificationMail(r *http.Request, user *models.User, provider string) error
 	MFAFactorEnrolledNotificationMail(r *http.Request, user *models.User, factorType string) error
 	MFAFactorUnenrolledNotificationMail(r *http.Request, user *models.User, factorType string) error
+	SSOLinkedNotificationMail(r *http.Request, user *models.User, provider string) error
 }
 
 // TODO(cstockton): Mail(...) -> Mail(Email{...}) ?

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -117,15 +118,62 @@ type conn struct {
 	probeInFlight atomic.Bool
 }
 
+// ErrAuthFailed is wrapped into the error New returns when the keyspace
+// refused the credentials, or wanted some and was sent none. It is told apart
+// from an unreachable address because the remedy is a setting, not a network.
+var ErrAuthFailed = errors.New("keyspace: authentication failed")
+
+// Auth is the credential pair sent on every connection. The zero value sends
+// no AUTH, which is what a keyspace without a password expects.
+type Auth struct {
+	Username string
+	Password string
+}
+
 // New creates a Client connected to addr (e.g. "127.0.0.1:6379").
-func New(addr string) (Client, error) {
-	vc, err := vkgo.NewClient(vkgo.ClientOption{
-		InitAddress: []string{addr},
-	})
+//
+// It dials eagerly, so wrong credentials are reported here, once, at startup,
+// rather than as a failure on every request.
+func New(addr string, auth Auth) (Client, error) {
+	vc, err := vkgo.NewClient(clientOption(addr, auth))
 	if err != nil {
-		return nil, fmt.Errorf("keyspace: connect %s: %w", addr, err)
+		return nil, connectError(addr, err)
 	}
 	return &conn{vc: vc}, nil
+}
+
+// clientOption builds the valkey-go options for addr.
+//
+// The credentials go in the options rather than through a one-off AUTH because
+// valkey-go applies its options on every connection it opens: the first, each
+// reconnect, and the dedicated connections it keeps for blocking commands. It
+// sends them as HELLO 3 AUTH, falling back to AUTH on a RESP2 server.
+func clientOption(addr string, auth Auth) vkgo.ClientOption {
+	opt := vkgo.ClientOption{InitAddress: []string{addr}}
+	if auth.Password != "" {
+		opt.Username = auth.Username
+		opt.Password = auth.Password
+	}
+	return opt
+}
+
+// authReplies are the error prefixes a RESP server answers a refused login
+// with: WRONGPASS for credentials it does not accept, NOAUTH for a connection
+// that sent none to a server that requires them.
+var authReplies = []string{"WRONGPASS", "NOAUTH"}
+
+// connectError names the address and, when the server refused the login, says
+// so. The server's reply is kept for detail; it never echoes the password. It
+// names no variable, since the platform and project keyspaces are set by
+// different ones and the caller's log line says which keyspace this was.
+func connectError(addr string, err error) error {
+	for _, prefix := range authReplies {
+		if strings.HasPrefix(err.Error(), prefix) {
+			return fmt.Errorf("%w at %s (check the keyspace username and password): %w",
+				ErrAuthFailed, addr, err)
+		}
+	}
+	return fmt.Errorf("keyspace: connect %s: %w", addr, err)
 }
 
 // Available reports that this client talks to a real keyspace.

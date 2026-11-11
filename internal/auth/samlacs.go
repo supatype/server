@@ -48,9 +48,16 @@ func IsSAMLMetadataStale(idpMetadata *saml.EntityDescriptor, samlProvider models
 	return hasValidityExpired || hasCacheDurationExceeded || needsForceUpdate
 }
 
+// SamlAcs answers the identity provider. A refusal goes to the Site URL, or back to Studio when
+// Studio started the sign-in (N-FF3), as a refused Studio OAuth sign-in does.
 func (a *API) SamlAcs(w http.ResponseWriter, r *http.Request) error {
-	if err := a.handleSamlAcs(w, r); err != nil {
-		u, uerr := url.Parse(a.config.SiteURL)
+	var studio bool
+	if err := a.handleSamlAcs(w, r, &studio); err != nil {
+		failTo := a.config.SiteURL
+		if studio {
+			failTo = a.studioReturn()
+		}
+		u, uerr := url.Parse(failTo)
 		if uerr != nil {
 			return apierrors.NewInternalServerError("site url is improperly formattted").WithInternalError(err)
 		}
@@ -62,8 +69,9 @@ func (a *API) SamlAcs(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// handleSamlAcs implements the main Assertion Consumer Service endpoint behavior.
-func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
+// handleSamlAcs implements the main Assertion Consumer Service endpoint behavior. It sets *studio
+// once it knows Studio started the sign-in, so a refusal after that point can return there.
+func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request, studio *bool) error {
 	ctx := r.Context()
 
 	db := a.db.WithContext(ctx)
@@ -118,6 +126,7 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 		requestIds = append(requestIds, relayState.RequestID)
 		if relayState.FlowState != nil {
 			flowState = relayState.FlowState
+			*studio = flowState.Studio
 		}
 
 		if err := a.samlDestroyRelayState(ctx, relayState); err != nil {
@@ -357,6 +366,10 @@ func (a *API) handleSamlAcs(w http.ResponseWriter, r *http.Request) error {
 
 	if !utilities.IsRedirectURLValid(config, redirectTo) {
 		redirectTo = config.SiteURL
+	}
+	if *studio {
+		// A sign-in Studio started (N-FF3) returns to Studio, whatever the relay state holds.
+		redirectTo = a.studioReturn()
 	}
 	if flowState != nil && flowState.IsPKCE() {
 		// PKCE flow: redirect with auth code

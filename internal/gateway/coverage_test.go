@@ -840,19 +840,24 @@ func TestTheFunctionsInvocationProxy(t *testing.T) {
 		want     int
 	}{
 		"a function is forwarded": {
-			served, &proxy.RouteManifest{FunctionsEnabled: true}, "/send", http.StatusOK,
+			served, functionsSwitched(true), "/send", http.StatusOK,
 		},
 		"a hook is not invocable from outside": {
-			served, &proxy.RouteManifest{FunctionsEnabled: true}, "/hooks/audit", http.StatusNotFound,
+			served, functionsSwitched(true), "/hooks/audit", http.StatusNotFound,
 		},
 		"functions off and none configured": {
-			&config.Config{}, &proxy.RouteManifest{FunctionsEnabled: false}, "/send", http.StatusNotFound,
+			&config.Config{}, functionsSwitched(false), "/send", http.StatusNotFound,
 		},
-		"functions off but one configured is still served": {
-			served, &proxy.RouteManifest{FunctionsEnabled: false}, "/send", http.StatusOK,
+		// One rule for every switch (0.9.2): a configured worker is where functions start, and the
+		// manifest switching them off wins, as it does for storage and realtime.
+		"functions switched off with one configured": {
+			served, functionsSwitched(false), "/send", http.StatusNotFound,
+		},
+		"a configured worker with nothing said is served": {
+			served, &proxy.RouteManifest{}, "/send", http.StatusOK,
 		},
 		"no upstream to resolve": {
-			&config.Config{}, nil, "/send", http.StatusBadGateway,
+			&config.Config{}, functionsSwitched(true), "/send", http.StatusBadGateway,
 		},
 	} {
 		manifest := tc.manifest
@@ -879,10 +884,11 @@ func TestTheRealtimeInvocationProxy(t *testing.T) {
 		manifest *proxy.RouteManifest
 		want     int
 	}{
-		"enabled and configured":   {&config.Config{RealtimeURL: service.URL}, &proxy.RouteManifest{RealtimeEnabled: true}, http.StatusOK},
+		"enabled and configured":   {&config.Config{RealtimeURL: service.URL}, &proxy.RouteManifest{Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceRealtime: true})}, http.StatusOK},
 		"not enabled":              {&config.Config{RealtimeURL: service.URL}, &proxy.RouteManifest{}, http.StatusNotFound},
-		"enabled with no upstream": {&config.Config{}, &proxy.RouteManifest{RealtimeEnabled: true}, http.StatusBadGateway},
-		"no manifest at all":       {&config.Config{RealtimeURL: service.URL}, nil, http.StatusOK},
+		"enabled with no upstream": {&config.Config{}, &proxy.RouteManifest{Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceRealtime: true})}, http.StatusBadGateway},
+		// A nil manifest says nothing, so realtime keeps its start value, off, as every switch does (0.9.2).
+		"no manifest at all": {&config.Config{RealtimeURL: service.URL}, nil, http.StatusNotFound},
 	} {
 		manifest := tc.manifest
 		h := realtimeInvocationProxy(tc.cfg, func(*http.Request) *proxy.RouteManifest { return manifest })
@@ -1189,4 +1195,9 @@ func TestDeclaredCacheSurvivesAMissingManifest(t *testing.T) {
 	if got := d.DeclaredCache(httptest.NewRequest(http.MethodGet, "/", nil)); got != nil {
 		t.Errorf("nil manifest = %+v", got)
 	}
+}
+
+// functionsSwitched is a manifest that switches functions on or off.
+func functionsSwitched(on bool) *proxy.RouteManifest {
+	return &proxy.RouteManifest{Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: on})}
 }

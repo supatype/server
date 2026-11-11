@@ -21,6 +21,12 @@ import (
 // the connection, dials target directly, and splices the two TCP connections
 // bidirectionally. Non-WebSocket requests are passed to fallback.
 func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
+	return webSocketProxy(target, "", fallback)
+}
+
+// webSocketProxy is WebSocketProxy sending upstreamHost as the upgrade's Host,
+// or the target's own host when upstreamHost is empty.
+func webSocketProxy(target *url.URL, upstreamHost string, fallback http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isWebSocketUpgrade(r) {
 			fallback.ServeHTTP(w, r)
@@ -39,7 +45,7 @@ func WebSocketProxy(target *url.URL, fallback http.Handler) http.Handler {
 			return
 		}
 
-		prepareUpstreamWebSocketRequest(r, target, r.Host)
+		prepareUpstreamWebSocketRequest(r, target, upstreamHost, r.Host)
 		if err := forwardUpgrade(backendConn, r, buffered); err != nil {
 			_ = clientConn.Close()
 			_ = backendConn.Close()
@@ -187,14 +193,15 @@ func closeWrite(conn net.Conn) {
 // prepareUpstreamWebSocketRequest rewrites r for forwarding over a raw TCP dial,
 // mirroring rewriteForUpstream. http.Request.Write prefers RequestURI when set;
 // chi StripPrefix only updates URL.Path, so we must clear RequestURI here.
-func prepareUpstreamWebSocketRequest(r *http.Request, target *url.URL, clientFacingHost string) {
+// upstreamHost is the Host to send, or empty for the target's own.
+func prepareUpstreamWebSocketRequest(r *http.Request, target *url.URL, upstreamHost, clientFacingHost string) {
 	r.RequestURI = ""
 	r.URL.Scheme = target.Scheme
 	r.URL.Host = target.Host
 	if r.URL.Path == "" {
 		r.URL.Path = "/"
 	}
-	r.Host = target.Host
+	r.Host = upstreamHostFor(target, upstreamHost)
 	augmentForwardedHeaders(r, clientFacingHost)
 }
 

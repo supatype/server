@@ -30,7 +30,9 @@ func connectedClient(t *testing.T) *conn {
 		t.Skip("SUPATYPE_TEST_KEYSPACE_ADDR is not set")
 	}
 
-	client, err := New(addr)
+	// pg_keyspace requires a password, so the compatibility run against it
+	// passes one; the Valkey in the Test workflow has none.
+	client, err := New(addr, credentialsFromEnv("SUPATYPE_TEST_KEYSPACE"))
 	if err != nil {
 		t.Fatalf("connecting to %s: %v", addr, err)
 	}
@@ -54,7 +56,7 @@ func key(t *testing.T, suffix string) string {
 // An address nothing answers on is a failure to report at startup, not a client
 // that fails later on every request.
 func TestNewReportsAnAddressItCannotReach(t *testing.T) {
-	if _, err := New("127.0.0.1:1"); err == nil {
+	if _, err := New("127.0.0.1:1", Auth{}); err == nil {
 		t.Error("want an error")
 	}
 }

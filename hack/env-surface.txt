@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 577 names
+# total: 578 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -674,6 +674,8 @@ SUPATYPE_JWT_SECRET
 SUPATYPE_JWT_VALID_METHODS
     struct internal/conf.GlobalConfiguration
 SUPATYPE_KEYSPACE_ADDR
+    struct internal/config.Config
+SUPATYPE_KEYSPACE_KEY_LAYOUT
     struct internal/config.Config
 SUPATYPE_KEYSPACE_PASSWORD
     struct internal/config.Config

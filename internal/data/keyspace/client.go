@@ -109,6 +109,9 @@ const (
 type conn struct {
 	vc vkgo.Client
 
+	// keys is the layout the login this client sent implies; see KeyLayout.
+	keys KeyLayout
+
 	mu          sync.Mutex
 	failures    int
 	circuitOpen bool
@@ -128,6 +131,10 @@ var ErrAuthFailed = errors.New("keyspace: authentication failed")
 type Auth struct {
 	Username string
 	Password string
+
+	// Keys is how this login names its keys. A tenant-scoped login sends them
+	// relative, since the keyspace prefixes its tenant; see KeyLayout.
+	Keys KeyLayout
 }
 
 // New creates a Client connected to addr (e.g. "127.0.0.1:6379").
@@ -139,7 +146,7 @@ func New(addr string, auth Auth) (Client, error) {
 	if err != nil {
 		return nil, connectError(addr, err)
 	}
-	return &conn{vc: vc}, nil
+	return &conn{vc: vc, keys: auth.Keys}, nil
 }
 
 // clientOption builds the valkey-go options for addr.
@@ -179,8 +186,11 @@ func connectError(addr string, err error) error {
 // Available reports that this client talks to a real keyspace.
 func (c *conn) Available() bool { return true }
 
+// Layout reports the layout this client names its keys in.
+func (c *conn) Layout() KeyLayout { return c.keys }
+
 // GetTenantConfig fetches the TenantConfig for ref from the keyspace.
-// Key pattern: tenant:{ref}:config
+// The key is KeyConfig in this client's layout.
 //
 // Returns ErrCircuitOpen if the circuit breaker is open.
 // Returns (nil, nil) when the key is absent (cache miss).
@@ -193,7 +203,7 @@ func (c *conn) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, 
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 
-	key := TenantConfigKey(ref)
+	key := c.keys.Tenant(ref, KeyConfig)
 	data, err := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build()).AsBytes()
 	if err != nil {
 		if vkgo.IsValkeyNil(err) {

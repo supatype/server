@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 // KeyspaceStore persists the API configuration in the platform keyspace.
@@ -12,7 +11,7 @@ import (
 // # Why this exists
 //
 // FileStore writes `.supatype/api-config.json`. On a managed pod that path is on the container's
-// own filesystem — the tenant-gateway manifest mounts no volume for it — so every restart brings
+// own filesystem (the tenant-gateway manifest mounts no volume for it), so every restart brings
 // the process back with `DefaultApiConfig()`. The REST response cache is configured here, which
 // means **an ordinary pod restart silently turned server-side caching off for the whole project**,
 // and nothing anywhere reported it. A developer who enabled caching on a table found it off again
@@ -20,7 +19,7 @@ import (
 //
 // # Why the keyspace and not a volume or a table
 //
-// A PVC would work today — the gateway runs one replica — and would stop working the moment it
+// A PVC would work today, while the gateway runs one replica, and would stop working the moment it
 // runs two, because a ReadWriteOnce volume cannot be shared. The failure would arrive as two pods
 // disagreeing about what is cached.
 //
@@ -30,7 +29,7 @@ import (
 //
 // The platform keyspace needs neither. It already holds `tenant:{ref}:config` and
 // `tenant:{ref}:manifest`, it is reachable from every replica, and everything under the `tenant:`
-// prefix is durable by construction — that is the whole point of plan decision D4, which moved the
+// prefix is durable by construction; that is the whole point of plan decision D4, which moved the
 // response cache keys *out* from under `tenant:` precisely so `tenant:=durable` could be written as
 // one rule and be correct.
 type KeyspaceStore struct {
@@ -48,9 +47,11 @@ type KV interface {
 	SetBytes(ctx context.Context, key string, value []byte, ttlSeconds int) error
 }
 
-// NewKeyspaceStore returns a store writing to `tenant:{ref}:api_config`.
-func NewKeyspaceStore(kv KV, ref string) *KeyspaceStore {
-	return &KeyspaceStore{kv: kv, key: fmt.Sprintf("tenant:%s:api_config", ref)}
+// NewKeyspaceStore returns a store writing to key. The caller names it, in its
+// keyspace client's layout, because only the client knows how its login's
+// keys are named.
+func NewKeyspaceStore(kv KV, key string) *KeyspaceStore {
+	return &KeyspaceStore{kv: kv, key: key}
 }
 
 // ErrUnavailable means the keyspace this store was built on is not reachable.
@@ -65,7 +66,7 @@ func (s *KeyspaceStore) Get(ctx context.Context) (ApiConfig, error) {
 		return DefaultApiConfig(), err
 	}
 	// A project that has never been configured has no key, which is the default rather than an
-	// error — exactly as an absent file is to FileStore.
+	// error, exactly as an absent file is to FileStore.
 	if len(raw) == 0 {
 		return DefaultApiConfig(), nil
 	}

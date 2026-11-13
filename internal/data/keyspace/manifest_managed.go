@@ -2,32 +2,13 @@ package keyspace
 
 import (
 	"context"
-	"fmt"
-
 	"github.com/supatype/server/internal/proxy"
 )
 
-// TenantConfigKey returns the keyspace key holding a tenant's configuration,
-// as the control plane writes it.
-//
-// Exported alongside RouteManifestKey so the key families this service uses are
-// named in one place: their head decides their durability tier, which is a
-// deployment's decision about what survives a restart rather than a detail of
-// the function that happens to read one.
-func TenantConfigKey(ref string) string {
-	return fmt.Sprintf("tenant:%s:config", ref)
-}
-
-// RouteManifestKey returns the keyspace key for a full route manifest override
-// (same JSON shape as .supatype/manifest.json).
-func RouteManifestKey(ref string) string {
-	return fmt.Sprintf("tenant:%s:manifest", ref)
-}
-
 // LoadMergedManagedManifest builds the effective route manifest for a managed
 // pod: start from fileManifest (typically SUPATYPE_MANIFEST_PATH), overlay
-// routing fields from tenant:{ref}:config, then overlay tenant:{ref}:manifest
-// when present.
+// routing fields from the tenant's KeyConfig, then overlay its KeyManifest
+// when present, both named in the client's layout.
 func LoadMergedManagedManifest(ctx context.Context, c Client, ref string, fileManifest *proxy.RouteManifest) (*proxy.RouteManifest, error) {
 	out := proxy.CloneRouteManifest(fileManifest)
 
@@ -39,7 +20,7 @@ func LoadMergedManagedManifest(ctx context.Context, c Client, ref string, fileMa
 		tc.mergeRoutingInto(out)
 	}
 
-	raw, err := c.GetBytes(ctx, RouteManifestKey(ref))
+	raw, err := c.GetBytes(ctx, c.Layout().Tenant(ref, KeyManifest))
 	if err != nil {
 		return nil, err
 	}

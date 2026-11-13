@@ -45,6 +45,9 @@ type Client struct {
 	TenantErr error
 	SetAddErr error
 
+	// KeyLayout is what Layout reports: how the code under test names its keys.
+	KeyLayout keyspace.KeyLayout
+
 	// Unavailable makes Available report false, as a deployment with no cache
 	// configured does.
 	Unavailable bool
@@ -159,6 +162,8 @@ func (c *Client) SetMembers(key string) []string {
 }
 
 func (c *Client) Available() bool { return !c.Unavailable }
+
+func (c *Client) Layout() keyspace.KeyLayout { return c.KeyLayout }
 
 func (c *Client) GetTenantConfig(_ context.Context, ref string) (*keyspace.TenantConfig, error) {
 	c.mu.Lock()

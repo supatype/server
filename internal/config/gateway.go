@@ -168,6 +168,13 @@ type Config struct {
 	KeyspacePasswordFile        string `envconfig:"SUPATYPE_KEYSPACE_PASSWORD_FILE"`
 	ProjectKeyspacePasswordFile string `envconfig:"SUPATYPE_PROJECT_KEYSPACE_PASSWORD_FILE"`
 
+	// KeyspaceKeyLayout is how this process names keys in the platform keyspace:
+	// empty or "legacy" (`tenant:{ref}:...`, self-host and dev), "scoped" (a login
+	// the keyspace scopes to one tenant, which sends keys relative to it), or
+	// "prefixed" (an exempt login reading `{ref}:...` beside scoped gateways).
+	// Parsed by keyspace.ParseKeyLayout when the keyspace is opened.
+	KeyspaceKeyLayout string `envconfig:"SUPATYPE_KEYSPACE_KEY_LAYOUT"`
+
 	// ManagedProjectRef is the cloud project ref (slug) for a single-tenant managed pod.
 	// When set with Mode=managed and a keyspace address, the route manifest is merged
 	// from keyspace keys tenant:{ref}:config and tenant:{ref}:manifest.

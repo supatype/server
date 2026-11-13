@@ -736,11 +736,11 @@ func TestTenantRef(t *testing.T) {
 		t.Errorf("with a header: %q", got)
 	}
 
-	if metaKey("proj-1") != "tenant:proj-1:dbcred:meta" {
-		t.Errorf("meta key = %q", metaKey("proj-1"))
+	if metaKey(keyspace.LayoutLegacy, "proj-1") != "tenant:proj-1:dbcred:meta" {
+		t.Errorf("meta key = %q", metaKey(keyspace.LayoutLegacy, "proj-1"))
 	}
-	if secretKey("proj-1", 2) != "tenant:proj-1:dbcred:secret:v2" {
-		t.Errorf("secret key = %q", secretKey("proj-1", 2))
+	if secretKey(keyspace.LayoutLegacy, "proj-1", 2) != "tenant:proj-1:dbcred:secret:v2" {
+		t.Errorf("secret key = %q", secretKey(keyspace.LayoutLegacy, "proj-1", 2))
 	}
 }
 
@@ -1340,7 +1340,7 @@ func TestAFirstViewWhoseSecretIsGone(t *testing.T) {
 	if rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, ""); rec.Code != http.StatusOK {
 		t.Fatalf("rotate: %d %s", rec.Code, rec.Body.String())
 	}
-	if err := cache.Del(context.Background(), secretKey("default", 2)); err != nil {
+	if err := cache.Del(context.Background(), secretKey(keyspace.LayoutLegacy, "default", 2)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1591,5 +1591,23 @@ func TestCacheRoutesAreNotRefusedWhenTheConfigIsOnlyInThePlatformKeyspace(t *tes
 	rec := call(t, handler, http.MethodPatch, "/config/rest", serviceKey, `{"cache_max_ttl":60}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch: %d %s: the tenant is entitled, so this must not be refused", rec.Code, rec.Body.String())
+	}
+}
+
+// A gateway logged in scoped writes its credential keys by their relative names,
+// which the keyspace files under its own tenant. A legacy name would be refused
+// by its ACL, and the X-Supatype-Tenant header could no longer pick the tenant.
+func TestARotationUnderAScopedLoginWritesRelativeKeys(t *testing.T) {
+	cache := keyspacetest.New()
+	cache.KeyLayout = keyspace.LayoutScoped
+	handler, _ := api(t, &config.Config{Mode: "managed", DBCredentialsKEK: kek(t)}, cache)
+
+	if rec := call(t, handler, http.MethodPost, "/database/credentials/rotate", serviceKey, ""); rec.Code != http.StatusOK {
+		t.Fatalf("rotate: %d %s", rec.Code, rec.Body.String())
+	}
+	got := cache.Keys()
+	want := []string{"dbcred:meta", "dbcred:secret:v2"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("keys = %v, want %v", got, want)
 	}
 }

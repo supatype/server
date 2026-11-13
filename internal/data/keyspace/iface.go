@@ -33,6 +33,10 @@ type Client interface {
 	// branch on when a cache is optional.
 	Available() bool
 
+	// Layout is the layout this client names a tenant's keys in. Every key a
+	// caller builds for the platform keyspace goes through it.
+	Layout() KeyLayout
+
 	GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, error)
 	GetBytes(ctx context.Context, key string) ([]byte, error)
 	SetBytes(ctx context.Context, key string, value []byte, ttlSeconds int) error
@@ -56,6 +60,8 @@ func Unavailable() Client { return unavailableClient{err: ErrUnavailable} }
 type unavailableClient struct{ err error }
 
 func (unavailableClient) Available() bool { return false }
+
+func (unavailableClient) Layout() KeyLayout { return LayoutLegacy }
 
 func (u unavailableClient) GetTenantConfig(context.Context, string) (*TenantConfig, error) {
 	return nil, u.err

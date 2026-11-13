@@ -9,7 +9,7 @@ import (
 // The bug this type fixes is a silent forget: `.supatype/api-config.json` lives on a managed pod's
 // own filesystem with no volume mounted, so a restart brought the process back with
 // DefaultApiConfig() and turned the REST response cache off for the whole project, with no event
-// anywhere. So the test that matters is not "Set then Get on the same object" — it is "a brand new
+// anywhere. So the test that matters is not "Set then Get on the same object"; it is "a brand new
 // store, as a restarted process would build, still sees what was written".
 
 type fakeKV struct {
@@ -51,12 +51,12 @@ func configWithCachedTable(table string) ApiConfig {
 
 func TestTheConfigSurvivesARestart(t *testing.T) {
 	kv := newKV()
-	if err := NewKeyspaceStore(kv, "abc").Set(context.Background(), configWithCachedTable("posts")); err != nil {
+	if err := NewKeyspaceStore(kv, tenantKey("abc")).Set(context.Background(), configWithCachedTable("posts")); err != nil {
 		t.Fatal(err)
 	}
 
 	// A new store over the same keyspace: what a restarted pod builds.
-	restarted := NewKeyspaceStore(kv, "abc")
+	restarted := NewKeyspaceStore(kv, tenantKey("abc"))
 	got, err := restarted.Get(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -72,10 +72,10 @@ func TestTheConfigSurvivesARestart(t *testing.T) {
 func TestEachProjectGetsItsOwnKey(t *testing.T) {
 	// One shared key would hand every tenant the last one's settings.
 	kv := newKV()
-	if err := NewKeyspaceStore(kv, "aaa").Set(context.Background(), configWithCachedTable("posts")); err != nil {
+	if err := NewKeyspaceStore(kv, tenantKey("aaa")).Set(context.Background(), configWithCachedTable("posts")); err != nil {
 		t.Fatal(err)
 	}
-	other, err := NewKeyspaceStore(kv, "bbb").Get(context.Background())
+	other, err := NewKeyspaceStore(kv, tenantKey("bbb")).Get(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func keysOf(kv *fakeKV) []string {
 
 func TestAProjectNeverConfiguredReadsTheDefault(t *testing.T) {
 	// An absent key is the same thing to this store as an absent file is to FileStore: not an error.
-	got, err := NewKeyspaceStore(newKV(), "fresh").Get(context.Background())
+	got, err := NewKeyspaceStore(newKV(), tenantKey("fresh")).Get(context.Background())
 	if err != nil {
 		t.Fatalf("an unconfigured project should not error: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestItIsWrittenWithNoTTL(t *testing.T) {
 	// Configuration, not cache. An expiring API config would turn caching off on a timer, which is
 	// this very bug wearing a different hat.
 	kv := newKV()
-	if err := NewKeyspaceStore(kv, "abc").Set(context.Background(), DefaultApiConfig()); err != nil {
+	if err := NewKeyspaceStore(kv, tenantKey("abc")).Set(context.Background(), DefaultApiConfig()); err != nil {
 		t.Fatal(err)
 	}
 	if kv.lastTTL != 0 {
@@ -124,7 +124,7 @@ func TestAnUnavailableKeyspaceIsReportedRatherThanSilentlyDefaulting(t *testing.
 	// looked like a project that had never configured anything.
 	kv := newKV()
 	kv.available = false
-	s := NewKeyspaceStore(kv, "abc")
+	s := NewKeyspaceStore(kv, tenantKey("abc"))
 
 	if _, err := s.Get(context.Background()); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("Get err = %v, want ErrUnavailable", err)
@@ -140,7 +140,7 @@ func TestAnUnavailableKeyspaceIsReportedRatherThanSilentlyDefaulting(t *testing.
 func TestAReadFailureIsNotMistakenForAnEmptyConfig(t *testing.T) {
 	kv := newKV()
 	kv.getErr = errors.New("connection reset")
-	if _, err := NewKeyspaceStore(kv, "abc").Get(context.Background()); err == nil {
+	if _, err := NewKeyspaceStore(kv, tenantKey("abc")).Get(context.Background()); err == nil {
 		t.Fatal("a failed read reported success")
 	}
 }
@@ -148,7 +148,7 @@ func TestAReadFailureIsNotMistakenForAnEmptyConfig(t *testing.T) {
 func TestAWriteFailureIsReported(t *testing.T) {
 	kv := newKV()
 	kv.setErr = errors.New("connection reset")
-	if err := NewKeyspaceStore(kv, "abc").Set(context.Background(), DefaultApiConfig()); err == nil {
+	if err := NewKeyspaceStore(kv, tenantKey("abc")).Set(context.Background(), DefaultApiConfig()); err == nil {
 		t.Fatal("a failed write reported success")
 	}
 }
@@ -156,7 +156,7 @@ func TestAWriteFailureIsReported(t *testing.T) {
 func TestCorruptStoredJSONIsReported(t *testing.T) {
 	kv := newKV()
 	kv.data["tenant:abc:api_config"] = []byte("{not json")
-	if _, err := NewKeyspaceStore(kv, "abc").Get(context.Background()); err == nil {
+	if _, err := NewKeyspaceStore(kv, tenantKey("abc")).Get(context.Background()); err == nil {
 		t.Fatal("unparseable config reported success")
 	}
 }
@@ -171,7 +171,7 @@ func TestANilStoreOrClientDoesNotPanic(t *testing.T) {
 	if err := nilStore.Set(context.Background(), DefaultApiConfig()); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("nil store Set = %v", err)
 	}
-	if _, err := NewKeyspaceStore(nil, "abc").Get(context.Background()); !errors.Is(err, ErrUnavailable) {
+	if _, err := NewKeyspaceStore(nil, tenantKey("abc")).Get(context.Background()); !errors.Is(err, ErrUnavailable) {
 		t.Error("nil client Get should report unavailable")
 	}
 }
@@ -184,16 +184,19 @@ func TestItSatisfiesTheStoreInterface(t *testing.T) {
 func TestAnUnmarshallableConfigIsReportedRatherThanWrittenTruncated(t *testing.T) {
 	// The same seam FileStore's test uses. ApiConfig is plain data so this cannot fail in
 	// production, but a store that reports success having written nothing is the failure mode this
-	// whole type exists to remove — it should not be reachable by any path, including this one.
+	// whole type exists to remove; it should not be reachable by any path, including this one.
 	original := marshalConfig
 	t.Cleanup(func() { marshalConfig = original })
 	marshalConfig = func(ApiConfig) ([]byte, error) { return nil, errors.New("nope") }
 
 	kv := newKV()
-	if err := NewKeyspaceStore(kv, "abc").Set(context.Background(), DefaultApiConfig()); err == nil {
+	if err := NewKeyspaceStore(kv, tenantKey("abc")).Set(context.Background(), DefaultApiConfig()); err == nil {
 		t.Fatal("a failed marshal reported success")
 	}
 	if kv.sets != 0 {
 		t.Error("wrote despite the marshal failing")
 	}
 }
+
+// tenantKey is where the legacy layout files a tenant's API config.
+func tenantKey(ref string) string { return "tenant:" + ref + ":api_config" }

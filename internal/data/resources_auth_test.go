@@ -221,3 +221,42 @@ func TestAProjectKeyspaceLogsInWithItsOwnPairOnly(t *testing.T) {
 		t.Error("the project keyspace logged in with the platform pair")
 	}
 }
+
+// The platform keyspace is opened with the layout its login implies, and the
+// project keyspace never with it: a response cache has no tenant keys to name.
+func TestOpenGivesThePlatformLoginItsKeyLayout(t *testing.T) {
+	platform, project := openSplit(t, &config.Config{KeyspacePassword: "platform", KeyspaceKeyLayout: "scoped"})
+	if platform.Keys != keyspace.LayoutScoped {
+		t.Errorf("platform layout = %q, want scoped", platform.Keys)
+	}
+	if project.Keys != keyspace.LayoutLegacy {
+		t.Errorf("project layout = %q, want legacy", project.Keys)
+	}
+}
+
+// Self-host sets nothing and keeps the layout it always had.
+func TestOpenWithNoLayoutKeepsTheLegacyKeys(t *testing.T) {
+	platform, _ := openSplit(t, &config.Config{})
+	if platform.Keys != keyspace.LayoutLegacy {
+		t.Errorf("platform layout = %q, want legacy", platform.Keys)
+	}
+}
+
+// A scoped layout without a login, or a layout nobody knows, is refused before
+// anything is dialled.
+func TestOpenRefusesALayoutItCannotHonour(t *testing.T) {
+	for name, cfg := range map[string]*config.Config{
+		"scoped, no password": {KeyspaceAddr: "db:6379", KeyspaceKeyLayout: "scoped"},
+		"unknown layout":      {KeyspaceAddr: "db:6379", KeyspacePassword: "pw", KeyspaceKeyLayout: "tenant"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			seen := stubKeyspace(t)
+			if _, err := Open(context.Background(), cfg); err == nil {
+				t.Fatal("want an error")
+			}
+			if len(seen) != 0 {
+				t.Errorf("dialled %v before refusing", seen)
+			}
+		})
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
 // A refresh is deliberately not counted: a background token rotation is not a
@@ -142,10 +144,13 @@ func TestDayKey(t *testing.T) {
 
 type recordingStore struct {
 	key, member string
+	layout      keyspace.KeyLayout
 	expireAt    time.Time
 	err         error
 	calls       int
 }
+
+func (s *recordingStore) Layout() keyspace.KeyLayout { return s.layout }
 
 func (s *recordingStore) AddToExpiringSet(_ context.Context, key, member string, expireAt time.Time) error {
 	s.calls++
@@ -214,5 +219,26 @@ func TestFederatedKeyRejectsUnusableIdentities(t *testing.T) {
 		if got := DedupeKey("", "proj", user); got != "local:proj:u" {
 			t.Errorf("%s: got %q, want the local fallback", name, got)
 		}
+	}
+}
+
+// A gateway logged in scoped records its day-set by the relative name; the keyspace files it under
+// the environment's tenant, so the org's day-sets are one per environment and the rollup unions them.
+func TestRecordUnderAScopedLoginUsesTheRelativeName(t *testing.T) {
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	store := &recordingStore{layout: keyspace.LayoutScoped}
+	r := Recorder{Store: store, Salt: "pepper", Now: func() time.Time { return now }}
+	if err := r.Record(context.Background(), "org-1", "proj", map[string]any{"id": "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.key != "mau:org:org-1:d:2026-08-28" {
+		t.Errorf("key = %q", store.key)
+	}
+	store.layout = keyspace.LayoutPrefixed
+	if err := r.Record(context.Background(), "org-1", "proj", map[string]any{"id": "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.key != "proj:mau:org:org-1:d:2026-08-28" {
+		t.Errorf("prefixed key = %q", store.key)
 	}
 }

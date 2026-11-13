@@ -52,6 +52,15 @@ type LimiterOptions struct {
 	OAuthClientRegister *limiter.Limiter
 }
 
+// WithEmailRate returns a copy of the options with a fresh email limiter for r.
+// Every other limiter is shared with the original, so their counts carry over,
+// and a request still holding the original keeps the email limiter it started with.
+func (lo *LimiterOptions) WithEmailRate(r conf.Rate) *LimiterOptions {
+	copied := *lo
+	copied.Email = ratelimit.New(r)
+	return &copied
+}
+
 func (lo *LimiterOptions) apply(a *API) { a.limiterOpts = lo }
 
 func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {

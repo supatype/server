@@ -41,7 +41,8 @@ type Defaults struct {
 // Policy answers which origins are in force, reading the saved list through a short cache.
 type Policy struct {
 	store    Store
-	defaults Defaults
+	dmu      sync.RWMutex
+	defaults Defaults // guarded by dmu
 	ttl      time.Duration
 	now      func() time.Time
 
@@ -70,20 +71,34 @@ func lenient(list []string) []string {
 	return out
 }
 
+// SetSiteURL changes the site URL the default is built from, for a configuration reload.
+func (p *Policy) SetSiteURL(siteURL string) {
+	p.dmu.Lock()
+	defer p.dmu.Unlock()
+	p.defaults.SiteURL = siteURL
+}
+
+// defaultsNow is a copy of the defaults as they stand.
+func (p *Policy) defaultsNow() Defaults {
+	p.dmu.RLock()
+	defer p.dmu.RUnlock()
+	return p.defaults
+}
+
 // DefaultOrigins is the default for a request whose host configuration adds `extra` (Cloud's
 // tenant manifest): the site URL, then configuration, then extra.
 func (p *Policy) DefaultOrigins(extra []string) []string {
-	return Union(lenient([]string{p.defaults.SiteURL}), lenient(p.defaults.Configured), lenient(extra))
+	return Union(lenient([]string{p.defaultsNow().SiteURL}), lenient(p.defaultsNow().Configured), lenient(extra))
 }
 
 // PlatformOrigins are allowed whatever is saved.
-func (p *Policy) PlatformOrigins() []string { return lenient(p.defaults.Platform) }
+func (p *Policy) PlatformOrigins() []string { return lenient(p.defaultsNow().Platform) }
 
 // SiteOrigin is the origin of the site URL, or "".
-func (p *Policy) SiteOrigin() string { return OriginOf(p.defaults.SiteURL) }
+func (p *Policy) SiteOrigin() string { return OriginOf(p.defaultsNow().SiteURL) }
 
 // ConfiguredOrigins is the configured part of the default, as read.
-func (p *Policy) ConfiguredOrigins() []string { return lenient(p.defaults.Configured) }
+func (p *Policy) ConfiguredOrigins() []string { return lenient(p.defaultsNow().Configured) }
 
 // savedList returns the saved list, re-reading it when the cached copy is older than the TTL. A
 // read that fails keeps the last known answer rather than falling back to the default: a database
@@ -128,7 +143,7 @@ func (p *Policy) InForce(ctx context.Context, extra []string) Snapshot {
 	}
 	// The site URL is always allowed, like the platform's origins (SHc): the project's own app must
 	// not be locked out by a list saved without it.
-	snap.Origins = Union(p.PlatformOrigins(), lenient([]string{p.defaults.SiteURL}), chosen)
+	snap.Origins = Union(p.PlatformOrigins(), lenient([]string{p.defaultsNow().SiteURL}), chosen)
 	return snap
 }
 

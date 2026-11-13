@@ -308,6 +308,8 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 				db:        db,
 				templates: mrCache,
 				limiters:  limiterOpts,
+				emailRate: authCfg.RateLimitEmailSent,
+				cors:      corsPolicy,
 			}
 
 			rl := reloader.NewReloader(rc, WatchDir)

@@ -882,20 +882,6 @@ func (c *SecurityConfiguration) Validate() error {
 	return nil
 }
 
-func loadEnvironment(filename string) error {
-	var err error
-	if filename != "" {
-		err = godotenv.Overload(filename)
-	} else {
-		err = godotenv.Load()
-		// handle if .env file does not exist, this is OK
-		if os.IsNotExist(err) {
-			return nil
-		}
-	}
-	return err
-}
-
 // Moving away from the existing HookConfig so we can get a fresh start.
 type HookConfiguration struct {
 	MFAVerificationAttempt      ExtensibilityPointConfiguration `json:"mfa_verification_attempt" split_words:"true"`
@@ -1097,8 +1083,22 @@ func LoadGlobalFromEnv() (*GlobalConfiguration, error) {
 	return config, nil
 }
 
+// LoadGlobal loads the base config file and then decodes the environment. It
+// does not read a config directory; use LoadGlobalWithDir when one was given.
 func LoadGlobal(filename string) (*GlobalConfiguration, error) {
-	if err := loadEnvironment(filename); err != nil {
+	return LoadGlobalWithDir(filename, "")
+}
+
+// LoadGlobalWithDir loads the base config file, then the config directory (the
+// --config-dir flag), then decodes the environment. The order matches the
+// server's startup, so a setting that lives only in the directory is visible to
+// every command that loads config, not just serve. An empty configDir loads no
+// directory.
+func LoadGlobalWithDir(filename, configDir string) (*GlobalConfiguration, error) {
+	if err := LoadFile(filename); err != nil {
+		return nil, err
+	}
+	if err := LoadDirectory(configDir); err != nil {
 		return nil, err
 	}
 

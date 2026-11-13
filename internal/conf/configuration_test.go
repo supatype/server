@@ -1200,26 +1200,20 @@ func TestLoading(t *testing.T) {
 
 	{
 		os.Clearenv()
-		err := LoadFile("abc")
-		require.Error(t, err)
-	}
-
-	{
-		os.Clearenv()
 		err := LoadFile("")
 		require.NoError(t, err)
 	}
 
 	{
 		os.Clearenv()
-		err := loadEnvironment("abc")
+		err := LoadFile("abc")
 		require.Error(t, err)
 	}
 
 	{
 		os.Clearenv()
-		err := loadEnvironment("")
-		require.NoError(t, err)
+		err := LoadFile("abc")
+		require.Error(t, err)
 	}
 
 	{

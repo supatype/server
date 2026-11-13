@@ -6,6 +6,7 @@ package gateway
 // picks the worker from the calling tenant's manifest.
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/serviceswitch"
+	"github.com/supatype/server/internal/utilities"
 )
 
 func functionsInvocationProxy(
@@ -39,6 +41,10 @@ func functionsInvocationProxy(
 		}
 		fnName := firstURLSegment(req.URL.Path)
 		u, err := resolveFunctionsUpstreamURL(cfg, m, fnName, inProcessDeno)
+		if errors.Is(err, errUnknownFunction) {
+			utilities.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "function not found"})
+			return
+		}
 		if err != nil {
 			logrus.WithError(err).Error("mux: functions upstream resolve failed")
 			http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -127,6 +133,9 @@ func hookUpstreamURL(
 	return strings.TrimRight(base.String(), "/") + "/" + modelhooks.HooksRoutePrefix + function, nil
 }
 
+// errUnknownFunction means the tenant routes per function and the requested name is not one of them.
+var errUnknownFunction = errors.New("function not registered for this tenant")
+
 func resolveFunctionsUpstreamURL(
 	cfg *config.Config,
 	m *proxy.RouteManifest,
@@ -148,6 +157,11 @@ func resolveFunctionsUpstreamURL(
 	}
 	if inProcessDeno {
 		return functionsUpstreamURL(cfg)
+	}
+	// A tenant with one pod per function and no shared worker has nowhere to send a name it did not
+	// register. That is the caller asking for something that does not exist, not a gateway fault.
+	if m != nil && fnName != "" && len(m.FunctionWorkerURLs) > 0 {
+		return nil, errUnknownFunction
 	}
 	return nil, fmt.Errorf("no functions worker configured")
 }

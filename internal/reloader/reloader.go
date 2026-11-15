@@ -299,15 +299,7 @@ func defaultAddDirFn(ctx context.Context, wr watcher, dir string) error {
 }
 
 func defaultReloadFn(dir string) (*conf.GlobalConfiguration, error) {
-	if err := conf.LoadDirectory(dir); err != nil {
-		return nil, err
-	}
-
-	cfg, err := conf.LoadGlobalFromEnv()
-	if err != nil {
-		return nil, err
-	}
-	return cfg, nil
+	return conf.LoadGlobalFromDirectory(dir)
 }
 
 type watcher interface {

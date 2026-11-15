@@ -63,11 +63,11 @@ var getwd = os.Getwd
 // returned handler however it likes (stock binary: cmd/serve_cmd.go; cloud:
 // the metering gateway on :9999).
 func New(ctx context.Context) (http.Handler, func(), error) {
-	if err := conf.LoadFile(ConfigFile); err != nil {
-		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
-	}
-
-	if err := conf.LoadDirectory(WatchDir); err != nil {
+	if err := conf.LoadEnvFiles(ConfigFile, WatchDir); err != nil {
+		var dirErr *conf.DirectoryError
+		if !errors.As(err, &dirErr) {
+			return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
+		}
 		logrus.WithError(err).Error("unable to load authCfg from watch dir")
 	}
 

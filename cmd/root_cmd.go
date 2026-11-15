@@ -69,11 +69,5 @@ func execWithConfigAndArgs(cmd *cobra.Command, fn func(config *conf.GlobalConfig
 // reloader, so a key that only the directory holds is present when the
 // required-key check runs and a reload cannot change the result.
 func loadConfigFromFlags(file, dir string) (*conf.GlobalConfiguration, error) {
-	if err := conf.LoadFile(file); err != nil {
-		return nil, err
-	}
-	if err := conf.LoadDirectory(dir); err != nil {
-		return nil, err
-	}
-	return conf.LoadGlobalFromEnv()
+	return conf.LoadGlobalWithDir(file, dir)
 }

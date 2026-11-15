@@ -55,7 +55,7 @@ func (l *liveManifests) refreshOnChange(ctx context.Context, src routeChangeSour
 		case <-wake:
 		case <-tick.C:
 		}
-		l.Reapply(l.File())
+		l.refresh()
 	}
 }
 

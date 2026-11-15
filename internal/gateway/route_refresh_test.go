@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,5 +112,53 @@ func TestAFailedMergeKeepsTheRoutesItHas(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if got := f.live.For(nil).PostgRESTURL; got != "http://rest-v1" {
 		t.Fatalf("routes after a failed merge = %q, want the previous ones", got)
+	}
+}
+
+// countingTenants records how often the tenant cache is flushed, which Reapply does every time it
+// installs a manifest: an unchanged keyspace must not cause one.
+type countingTenants struct{ flushes atomic.Int32 }
+
+func (*countingTenants) Get(context.Context, string) (*proxy.RouteManifest, error) { return nil, nil }
+func (c *countingTenants) Flush()                                                  { c.flushes.Add(1) }
+
+func TestAnUnchangedKeyspaceIsNotReappliedAndAChangedOneIs(t *testing.T) {
+	f := newRefreshFixture(t)
+	tenants := &countingTenants{}
+	f.live.tenant = tenants
+	var reads atomic.Int32
+	read := f.live.merge
+	f.live.merge = func(ctx context.Context, m *proxy.RouteManifest) (*proxy.RouteManifest, error) {
+		reads.Add(1)
+		return read(ctx, m)
+	}
+	f.start(t, refreshTiming{Every: 5 * time.Millisecond, RetryFirst: time.Hour, RetryMax: time.Hour})
+
+	// The fixture applied the starting config before the counter was attached. The keyspace is read on
+	// every tick, and none of those reads is applied while it still holds that config.
+	testutil.Eventually(t, "several unchanged ticks", func() bool { return reads.Load() >= 5 })
+	if got := tenants.flushes.Load(); got != 0 {
+		t.Fatalf("applied %d times over unchanged ticks, want none", got)
+	}
+
+	f.writeV2()
+	testutil.Eventually(t, "the changed keyspace to be applied", f.servesV2)
+	if got := tenants.flushes.Load(); got != 1 {
+		t.Fatalf("applied %d times after one change, want once", got)
+	}
+}
+
+func TestARefreshAfterAFailedReadAppliesEvenIfNothingChanged(t *testing.T) {
+	f := newRefreshFixture(t)
+	tenants := &countingTenants{}
+	f.live.tenant = tenants
+	f.live.refresh()
+	f.ks.TenantErr = errors.New("keyspace away")
+	f.live.refresh()
+	f.ks.TenantErr = nil
+	before := tenants.flushes.Load()
+	f.live.refresh()
+	if got := tenants.flushes.Load(); got != before+1 {
+		t.Fatalf("flushes after recovery = %d, want %d: the first good read after an error must apply", got, before+1)
 	}
 }

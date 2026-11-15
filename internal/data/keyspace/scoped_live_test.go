@@ -5,8 +5,11 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	vkgo "github.com/valkey-io/valkey-go"
 )
 
 // A keeps its wrapped credentials and adds to its MAU day-set, by relative
@@ -41,6 +44,9 @@ func TestScopedGatewayKeepsItsOwnKeys(t *testing.T) {
 //	SUPATYPE_TEST_SCOPED_REST_URL   the postgrest_url written in A's config
 //	SUPATYPE_TEST_SCOPED_OTHER      gateway B's tenant id, whose config and
 //	                                dbcred:secret:v1 the control plane wrote
+//	SUPATYPE_TEST_SCOPED_ADMIN_USER / _ADMIN_PASSWORD
+//	                                the control plane's exempt login, which
+//	                                publishes the stored channel names
 
 type scopedFixture struct {
 	addr, user, password, restURL, other string
@@ -123,5 +129,49 @@ func TestTheScopedKeyspaceRefusesAClientWithoutALogin(t *testing.T) {
 		if !errors.Is(err, ErrAuthFailed) {
 			t.Errorf("%s: err = %v, want ErrAuthFailed", name, err)
 		}
+	}
+}
+
+// A hears the control plane's config-changed message for its own tenant, and none for B's: its
+// SUBSCRIBE needs no ACL rule, and the keyspace scopes the channel to the tenant as it does keys.
+func TestScopedGatewayHearsOnlyItsOwnConfigChanges(t *testing.T) {
+	f := scopedEnv(t)
+	adminUser, adminPass := os.Getenv("SUPATYPE_TEST_SCOPED_ADMIN_USER"), os.Getenv("SUPATYPE_TEST_SCOPED_ADMIN_PASSWORD")
+	if adminUser == "" {
+		t.Skip("SUPATYPE_TEST_SCOPED_ADMIN_USER is not set")
+	}
+	a := gatewayA(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var subscribed, heard atomic.Int32
+	ended := make(chan error, 1)
+	go func() {
+		ended <- a.Subscribe(ctx, ChannelConfigChanged, func() { subscribed.Add(1) }, func() { heard.Add(1) })
+	}()
+	waitFor(t, "the scoped login to be subscribed", func() bool { return subscribed.Load() == 1 })
+
+	cp, err := vkgo.NewClient(vkgo.ClientOption{InitAddress: []string{f.addr}, Username: adminUser, Password: adminPass})
+	if err != nil {
+		t.Fatalf("control plane cannot log in: %v", err)
+	}
+	defer cp.Close()
+	publish := func(tenant string) {
+		t.Helper()
+		if err := cp.Do(ctx, cp.B().Publish().Channel(tenant+":"+ChannelConfigChanged).Message("config").Build()).Error(); err != nil {
+			t.Fatalf("PUBLISH for %s: %v", tenant, err)
+		}
+	}
+	publish(f.other)
+	publish(f.user)
+	waitFor(t, "A to hear its own tenant's message", func() bool { return heard.Load() >= 1 })
+	time.Sleep(200 * time.Millisecond)
+	if got := heard.Load(); got != 1 {
+		t.Errorf("A heard %d messages, want 1: B's must not reach it", got)
+	}
+
+	cancel()
+	if err := <-ended; !errors.Is(err, context.Canceled) {
+		t.Errorf("Subscribe after cancel = %v, want context.Canceled", err)
 	}
 }

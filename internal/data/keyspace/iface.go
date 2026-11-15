@@ -46,6 +46,14 @@ type Client interface {
 	// AddToExpiringSet refuses an expireAt that CheckExpireAt refuses, before
 	// writing anything.
 	AddToExpiringSet(ctx context.Context, key, member string, expireAt time.Time) error
+	// Subscribe listens on channel until ctx is done or the connection drops.
+	//
+	// channel is named relative to the login, like a key: a tenant-scoped login's channels are
+	// prefixed with its tenant by the keyspace, so it hears only its own. onSubscribed runs each time
+	// the keyspace confirms the subscription, and anything published before it was missed. onMessage
+	// runs for every message and must not block. Returns the error that ended the subscription; a
+	// cancelled ctx returns ctx.Err().
+	Subscribe(ctx context.Context, channel string, onSubscribed, onMessage func()) error
 	Close()
 }
 
@@ -86,6 +94,10 @@ func (u unavailableClient) TTLSeconds(context.Context, string) (int, error) {
 }
 
 func (u unavailableClient) AddToExpiringSet(context.Context, string, string, time.Time) error {
+	return u.err
+}
+
+func (u unavailableClient) Subscribe(context.Context, string, func(), func()) error {
 	return u.err
 }
 

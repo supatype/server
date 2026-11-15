@@ -200,6 +200,9 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		}
 		live.Reapply(manifest)
 		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from the keyspace")
+		// A project gateway has no manifest file to watch, so what the control plane writes after this
+		// point (a function deploy, a tier change) reaches it only through the keyspace.
+		go live.refreshOnChange(ctx, ksPlatform, ksPlatform.Layout().Tenant(ref, keyspace.ChannelConfigChanged), defaultRefreshTiming)
 	}
 
 	if watchErr := proxy.Watch(srvCfg.ManifestPath, manifestStamp, live.ReloadFrom); watchErr != nil {

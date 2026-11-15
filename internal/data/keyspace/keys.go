@@ -43,6 +43,10 @@ const (
 	keyDBCredShelf = "dbcred:secret:v"
 )
 
+// ChannelConfigChanged is the pub/sub channel the control plane publishes to after it writes a
+// tenant's config or manifest. It is named like a key, so a scoped login hears only its own tenant's.
+const ChannelConfigChanged = "config-changed"
+
 // KeyDBCredSecret names the wrapped database password of one generation.
 func KeyDBCredSecret(generation int) string {
 	return keyDBCredShelf + strconv.Itoa(generation)

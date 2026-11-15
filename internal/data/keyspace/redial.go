@@ -133,6 +133,10 @@ func (r *redialing) AddToExpiringSet(ctx context.Context, key, member string, ex
 	return r.client().AddToExpiringSet(ctx, key, member, expireAt)
 }
 
+func (r *redialing) Subscribe(ctx context.Context, channel string, onSubscribed, onMessage func()) error {
+	return r.client().Subscribe(ctx, channel, onSubscribed, onMessage)
+}
+
 // Close stops the redial, waits for a dial in progress to finish, and closes what it connected.
 func (r *redialing) Close() {
 	r.stopped.Do(func() {

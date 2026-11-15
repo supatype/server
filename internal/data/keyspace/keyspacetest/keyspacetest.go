@@ -69,6 +69,12 @@ type Client struct {
 	// Counts, for asserting that a cache was consulted rather than bypassed.
 	Gets, Sets, Dels int
 
+	// subscribers are the live Subscribe calls, so a test can publish to them and drop them.
+	subscribers []*subscriber
+
+	// SubscribeErr is returned by Subscribe instead of subscribing.
+	SubscribeErr error
+
 	// cursors maps a scan cursor to the last key that page returned.
 	cursors    map[uint64]string
 	nextCursor uint64
@@ -287,6 +293,88 @@ func (c *Client) AddToExpiringSet(_ context.Context, key, member string, expireA
 	}
 	c.sets[key][member] = expireAt
 	return nil
+}
+
+// subscriber is one Subscribe call that has not returned.
+type subscriber struct {
+	channel   string
+	onMessage func()
+	dropped   chan error
+}
+
+// Subscribe registers a listener on channel and blocks until ctx is done or Drop ends it.
+func (c *Client) Subscribe(ctx context.Context, channel string, onSubscribed, onMessage func()) error {
+	c.mu.Lock()
+	if c.SubscribeErr != nil {
+		err := c.SubscribeErr
+		c.mu.Unlock()
+		return err
+	}
+	sub := &subscriber{channel: channel, onMessage: onMessage, dropped: make(chan error, 1)}
+	c.subscribers = append(c.subscribers, sub)
+	c.mu.Unlock()
+	defer c.remove(sub)
+
+	onSubscribed()
+	select {
+	case err := <-sub.dropped:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) remove(sub *subscriber) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, s := range c.subscribers {
+		if s == sub {
+			c.subscribers = append(c.subscribers[:i], c.subscribers[i+1:]...)
+			return
+		}
+	}
+}
+
+// Publish delivers a message to every subscriber of channel and reports how many heard it.
+func (c *Client) Publish(channel string) int {
+	c.mu.Lock()
+	var heard []func()
+	for _, s := range c.subscribers {
+		if s.channel == channel {
+			heard = append(heard, s.onMessage)
+		}
+	}
+	c.mu.Unlock()
+	for _, fn := range heard {
+		fn()
+	}
+	return len(heard)
+}
+
+// Subscribers is how many Subscribe calls on channel are live.
+func (c *Client) Subscribers(channel string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, s := range c.subscribers {
+		if s.channel == channel {
+			n++
+		}
+	}
+	return n
+}
+
+// Drop ends every live subscription with err, as a lost connection does. Anything published
+// before they are made again is not delivered.
+func (c *Client) Drop(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range c.subscribers {
+		select {
+		case s.dropped <- err:
+		default:
+		}
+	}
 }
 
 func (c *Client) Close() {}

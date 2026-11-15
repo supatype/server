@@ -29,7 +29,7 @@ import (
 // gateway trusts it only because the tenant HMAC middleware ran first.
 const tenantHeader = "X-Supatype-Tenant"
 
-// tenantManifests is the per-tenant lookup — *keyspace.TenantManifestCache in a
+// tenantManifests is the per-tenant lookup, a *keyspace.TenantManifestCache in a
 // running server, and an interface here so the rules above can be tested
 // without one.
 type tenantManifests interface {

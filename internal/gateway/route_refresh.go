@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"math/rand/v2"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,24 @@ type refreshTiming struct {
 	Every time.Duration
 	// RetryFirst and RetryMax bound the wait before subscribing again, which doubles up to RetryMax.
 	RetryFirst, RetryMax time.Duration
+	// Rand returns a value in [0,1) used to spread the wait, so project gateways that lost the same
+	// keyspace do not all subscribe again at the same instant. Nil means math/rand.
+	Rand func() float64
+}
+
+// maxJitter is the most a wait grows by, as a fraction of the wait.
+const maxJitter = 0.5
+
+// jittered lengthens wait by up to maxJitter of itself, by r in [0,1).
+func jittered(wait time.Duration, r float64) time.Duration {
+	return wait + time.Duration(float64(wait)*maxJitter*r)
+}
+
+func (t refreshTiming) random() float64 {
+	if t.Rand != nil {
+		return t.Rand()
+	}
+	return rand.Float64()
 }
 
 // refreshOnChange re-merges the routes from the keyspace until ctx is done.
@@ -72,11 +91,12 @@ func subscribeUntilDone(ctx context.Context, src routeChangeSource, channel stri
 		if confirmed.Load() {
 			wait = t.RetryFirst
 		}
-		logrus.WithError(err).WithField("retry_in", wait).Warn("serve: route change subscription lost, the periodic refresh still applies")
+		sleep := jittered(wait, t.random())
+		logrus.WithError(err).WithField("retry_in", sleep).Warn("serve: route change subscription lost, the periodic refresh still applies")
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(wait):
+		case <-time.After(sleep):
 		}
 		wait = min(wait*2, t.RetryMax)
 	}

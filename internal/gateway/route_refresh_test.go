@@ -162,3 +162,26 @@ func TestARefreshAfterAFailedReadAppliesEvenIfNothingChanged(t *testing.T) {
 		t.Fatalf("flushes after recovery = %d, want %d: the first good read after an error must apply", got, before+1)
 	}
 }
+
+func TestRetryWaitIsSpreadByJitterButNeverShortened(t *testing.T) {
+	const wait = 10 * time.Second
+	if got := jittered(wait, 0); got != wait {
+		t.Fatalf("jittered(wait, 0) = %v, want the wait itself", got)
+	}
+	if got := jittered(wait, 0.5); got != 12500*time.Millisecond {
+		t.Fatalf("jittered(wait, 0.5) = %v, want 12.5s", got)
+	}
+	if got := jittered(wait, 0.999999); got >= 15*time.Second {
+		t.Fatalf("jittered(wait, ~1) = %v, want under 1.5x the wait", got)
+	}
+}
+
+func TestSubscribeRetryUsesTheInjectedRandomSource(t *testing.T) {
+	f := newRefreshFixture(t)
+	f.ks.SubscribeErr = errors.New("pub/sub unavailable")
+	var draws atomic.Int32
+	timing := refreshTiming{Every: time.Hour, RetryFirst: time.Millisecond, RetryMax: 2 * time.Millisecond,
+		Rand: func() float64 { draws.Add(1); return 0 }}
+	f.start(t, timing)
+	testutil.Eventually(t, "the failed subscription to be retried with a drawn wait", func() bool { return draws.Load() >= 2 })
+}

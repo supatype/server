@@ -2,6 +2,7 @@ package security
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,6 +14,10 @@ import (
 	"github.com/pkg/errors"
 	"github.com/supatype/server/internal/utilities"
 )
+
+// ErrMissingToken is returned when the request carries no captcha token. It is a
+// client mistake, unlike a failure to reach the provider.
+var ErrMissingToken = stderrors.New("no captcha response (captcha_token) found in request")
 
 type AuthRequest struct {
 	// Security carries the captcha token a client attaches to an auth request.
@@ -51,7 +56,7 @@ func VerifyRequest(requestBody *AuthRequest, clientIP, secretKey, captchaProvide
 	captchaResponse := strings.TrimSpace(requestBody.Security.Token)
 
 	if captchaResponse == "" {
-		return VerificationResponse{}, errors.New("no captcha response (captcha_token) found in request")
+		return VerificationResponse{}, ErrMissingToken
 	}
 
 	captchaURL, err := GetCaptchaURL(captchaProvider)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -224,6 +225,9 @@ func (a *API) verifyCaptcha(w http.ResponseWriter, req *http.Request) (context.C
 
 	verificationResult, err := security.VerifyRequest(body, utilities.GetIPAddress(req), strings.TrimSpace(config.Security.Captcha.Secret), config.Security.Captcha.Provider)
 	if err != nil {
+		if errors.Is(err, security.ErrMissingToken) {
+			return nil, apierrors.NewBadRequestError(apierrors.ErrorCodeCaptchaFailed, "captcha protection: request disallowed (no captcha_token found)")
+		}
 		return nil, apierrors.NewInternalServerError("captcha verification process failed").WithInternalError(err)
 	}
 

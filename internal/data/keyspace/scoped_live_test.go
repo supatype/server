@@ -10,6 +10,8 @@ import (
 	"time"
 
 	vkgo "github.com/valkey-io/valkey-go"
+
+	"github.com/supatype/server/internal/testutil"
 )
 
 // A keeps its wrapped credentials and adds to its MAU day-set, by relative
@@ -149,7 +151,7 @@ func TestScopedGatewayHearsOnlyItsOwnConfigChanges(t *testing.T) {
 	go func() {
 		ended <- a.Subscribe(ctx, ChannelConfigChanged, func() { subscribed.Add(1) }, func() { heard.Add(1) })
 	}()
-	waitFor(t, "the scoped login to be subscribed", func() bool { return subscribed.Load() == 1 })
+	testutil.Eventually(t, "the scoped login to be subscribed", func() bool { return subscribed.Load() == 1 })
 
 	cp, err := vkgo.NewClient(vkgo.ClientOption{InitAddress: []string{f.addr}, Username: adminUser, Password: adminPass})
 	if err != nil {
@@ -164,7 +166,7 @@ func TestScopedGatewayHearsOnlyItsOwnConfigChanges(t *testing.T) {
 	}
 	publish(f.other)
 	publish(f.user)
-	waitFor(t, "A to hear its own tenant's message", func() bool { return heard.Load() >= 1 })
+	testutil.Eventually(t, "A to hear its own tenant's message", func() bool { return heard.Load() >= 1 })
 	time.Sleep(200 * time.Millisecond)
 	if got := heard.Load(); got != 1 {
 		t.Errorf("A heard %d messages, want 1: B's must not reach it", got)

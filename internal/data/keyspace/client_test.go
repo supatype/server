@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/supatype/server/internal/testutil"
 )
 
 // The client is a wrapper around a real protocol, with a circuit breaker that
@@ -545,13 +547,13 @@ func TestSubscribeHearsAPublishAndStopsWhenCancelled(t *testing.T) {
 	go func() {
 		ended <- c.Subscribe(ctx, "test-config-changed", func() { subscribed.Add(1) }, func() { heard.Add(1) })
 	}()
-	waitFor(t, "the subscription to be confirmed", func() bool { return subscribed.Load() == 1 })
+	testutil.Eventually(t, "the subscription to be confirmed", func() bool { return subscribed.Load() == 1 })
 
 	got, err := c.vc.Do(ctx, c.vc.B().Publish().Channel("test-config-changed").Message("config").Build()).AsInt64()
 	if err != nil || got != 1 {
 		t.Fatalf("PUBLISH reached %d subscribers, err %v; want 1", got, err)
 	}
-	waitFor(t, "the message to be heard", func() bool { return heard.Load() == 1 })
+	testutil.Eventually(t, "the message to be heard", func() bool { return heard.Load() == 1 })
 
 	cancel()
 	if err := <-ended; !errors.Is(err, context.Canceled) {

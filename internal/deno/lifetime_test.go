@@ -13,6 +13,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
+	"github.com/supatype/server/internal/testutil"
 )
 
 // 0.9.1 release test (FF12): after `supatype dev` stopped, the Deno worker the
@@ -49,7 +50,7 @@ func TestTheWorkerDoesNotOutliveTheServer(t *testing.T) {
 	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
 
 	var worker int
-	waitFor(t, "the worker to start", func() bool {
+	testutil.Eventually(t, "the worker to start", func() bool {
 		worker = readPID(pidFile)
 		return worker > 0
 	})

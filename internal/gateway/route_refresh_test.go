@@ -9,6 +9,7 @@ import (
 	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 	"github.com/supatype/server/internal/proxy"
+	"github.com/supatype/server/internal/testutil"
 )
 
 const refreshRef = "proj"
@@ -60,19 +61,7 @@ func (f *refreshFixture) start(t *testing.T, timing refreshTiming) {
 
 func (f *refreshFixture) waitSubscribed(t *testing.T) {
 	t.Helper()
-	eventually(t, "the gateway to subscribe", func() bool { return f.ks.Subscribers(keyspace.ChannelConfigChanged) == 1 })
-}
-
-func eventually(t *testing.T, what string, ok func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if ok() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	testutil.Eventually(t, "the gateway to subscribe", func() bool { return f.ks.Subscribers(keyspace.ChannelConfigChanged) == 1 })
 }
 
 func (f *refreshFixture) servesV2() bool { return f.live.For(nil).PostgRESTURL == "http://rest-v2" }
@@ -89,7 +78,7 @@ func TestRoutesFollowAChangeMessage(t *testing.T) {
 		t.Fatal("the gateway saw the change with no message and no tick: the test proves nothing")
 	}
 	f.ks.Publish(keyspace.ChannelConfigChanged)
-	eventually(t, "the routes to follow the message", f.servesV2)
+	testutil.Eventually(t, "the routes to follow the message", f.servesV2)
 }
 
 func TestRoutesFollowThePeriodicTickWhenNoMessageArrives(t *testing.T) {
@@ -98,7 +87,7 @@ func TestRoutesFollowThePeriodicTickWhenNoMessageArrives(t *testing.T) {
 	f.start(t, refreshTiming{Every: 20 * time.Millisecond, RetryFirst: time.Hour, RetryMax: time.Hour})
 
 	f.writeV2()
-	eventually(t, "the routes to follow the tick", f.servesV2)
+	testutil.Eventually(t, "the routes to follow the tick", f.servesV2)
 }
 
 func TestRoutesFollowAReconnectThatLostTheMessage(t *testing.T) {
@@ -108,8 +97,8 @@ func TestRoutesFollowAReconnectThatLostTheMessage(t *testing.T) {
 
 	f.writeV2()
 	f.ks.Drop(errors.New("connection reset"))
-	eventually(t, "the routes to be re-read on resubscribe", f.servesV2)
-	eventually(t, "the gateway to be subscribed again", func() bool { return f.ks.Subscribers(keyspace.ChannelConfigChanged) == 1 })
+	testutil.Eventually(t, "the routes to be re-read on resubscribe", f.servesV2)
+	testutil.Eventually(t, "the gateway to be subscribed again", func() bool { return f.ks.Subscribers(keyspace.ChannelConfigChanged) == 1 })
 }
 
 func TestAFailedMergeKeepsTheRoutesItHas(t *testing.T) {

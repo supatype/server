@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/supatype/server/internal/testutil"
 )
 
 // connectedFake is a Client that is there: available, every read a miss, and it counts its closes.
@@ -34,17 +36,6 @@ func (g *gatedDialer) dial() (Client, error) {
 	return g.live, nil
 }
 
-func waitFor(t *testing.T, what string, done func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !done() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
 // Until a dial succeeds the client answers as not connected, which callers tell apart from no
 // keyspace configured, and keeps dialling; once one does, it is that connection, and says so once.
 func TestRedialingConnectsOnceADialSucceeds(t *testing.T) {
@@ -53,7 +44,7 @@ func TestRedialingConnectsOnceADialSucceeds(t *testing.T) {
 	r := newRedialing(g.dial, time.Millisecond, 4*time.Millisecond, func() { announced.Add(1) })
 	t.Cleanup(r.Close)
 
-	waitFor(t, "a few refused dials", func() bool { return g.calls.Load() >= 3 })
+	testutil.Eventually(t, "a few refused dials", func() bool { return g.calls.Load() >= 3 })
 	if r.Available() {
 		t.Error("available before any dial succeeded")
 	}
@@ -62,7 +53,7 @@ func TestRedialingConnectsOnceADialSucceeds(t *testing.T) {
 	}
 
 	g.open.Store(true)
-	waitFor(t, "the redial to connect", r.Available)
+	testutil.Eventually(t, "the redial to connect", r.Available)
 	if got, err := r.GetBytes(context.Background(), "k"); err != nil || got != nil {
 		t.Errorf("GetBytes once connected = %q, %v; want the live client's miss", got, err)
 	}
@@ -75,7 +66,7 @@ func TestRedialingConnectsOnceADialSucceeds(t *testing.T) {
 func TestRedialingCloseStopsDialling(t *testing.T) {
 	g := &gatedDialer{}
 	r := newRedialing(g.dial, time.Millisecond, time.Millisecond, func() {})
-	waitFor(t, "a few dials", func() bool { return g.calls.Load() >= 3 })
+	testutil.Eventually(t, "a few dials", func() bool { return g.calls.Load() >= 3 })
 	r.Close()
 	after := g.calls.Load()
 	time.Sleep(20 * time.Millisecond)
@@ -90,7 +81,7 @@ func TestRedialingCloseClosesTheConnectionOnce(t *testing.T) {
 	g := &gatedDialer{live: live}
 	g.open.Store(true)
 	r := newRedialing(g.dial, time.Millisecond, time.Millisecond, func() {})
-	waitFor(t, "the redial to connect", r.Available)
+	testutil.Eventually(t, "the redial to connect", r.Available)
 	r.Close()
 	r.Close()
 	if live.closed.Load() != 1 {

@@ -177,14 +177,26 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 // resolved from the catalogue rather than assumed, because it is `postgres`
 // on self-host but need not be anywhere else.
 //
+// Postgres 16 and later refuse REASSIGN OWNED unless the caller can SET ROLE
+// to the new owner, and the editor is a member WITH SET FALSE so that
+// submitted SQL can never become the owner. So the handover goes through
+// supatype_editor.hand_over(), a SECURITY DEFINER function the stack's start-up
+// creates, whose whole body is that one REASSIGN. A stack that has not made
+// the function yet (an older CLI) keeps the inline REASSIGN, which works where
+// the editor is allowed to SET ROLE.
+//
 // It only runs when this session is the editor. A deployment that has not
 // configured SUPATYPE_SQL_EDITOR_DATABASE_URL falls back to the SQL DSN, whose
 // cluster may have no editor role to reassign from at all.
 const reassignToOwner = `DO $reassign$
 BEGIN
   IF session_user = 'supatype_sql_editor' THEN
-    EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I',
-      (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()));
+    IF pg_catalog.to_regprocedure('supatype_editor.hand_over()') IS NOT NULL THEN
+      PERFORM supatype_editor.hand_over();
+    ELSE
+      EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I',
+        (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()));
+    END IF;
   END IF;
 END
 $reassign$`

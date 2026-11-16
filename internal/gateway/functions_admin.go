@@ -13,7 +13,7 @@ import (
 // workers that run them (functionsLister).
 func functionsAdminAPI(d *Deps) http.Handler {
 	list := functionsLister(d.Config, d.ManifestFor, workerListClient())
-	return functions.HandlerListing(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs(), list)
+	return functions.HandlerListing(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs(), list, functionsLogWorker(d.Config, d.ManifestFor))
 }
 
 // buildLegacyFunctionsAdmin serves /functions/v1/admin while callers move to /admin/v1/functions.

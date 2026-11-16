@@ -4,7 +4,7 @@
 //
 //	GET    /list             list deployed functions (from the Lister: the workers calls go to)
 //	GET    /{name}/logs      recent log lines for a function (?since=1h)
-//	GET    /logs/tail        live log tail, relayed from the functions worker
+//	GET    /logs/tail        live log tail, relayed from the worker that runs ?function=name
 //	GET    /env              list shared env var key names from .env.local
 //	POST   /env              set a shared env var in .env.local
 //	DELETE /env/{key}        remove a shared env var from .env.local
@@ -49,19 +49,21 @@ type LogSource interface {
 // manager may be nil when edge functions are disabled; the log route is then
 // empty rather than absent.
 func Handler(cfg *config.Config, functionsDir string, manager LogSource) http.Handler {
-	return HandlerListing(cfg, functionsDir, manager, DirLister(functionsDir))
+	return HandlerListing(cfg, functionsDir, manager, DirLister(functionsDir), nil)
 }
 
 // HandlerListing is Handler with the list taken from list rather than from functionsDir: the env
 // routes still read and write functionsDir, but where functions run in workers the directory the
 // server holds is not where they are.
-func HandlerListing(cfg *config.Config, functionsDir string, manager LogSource, list Lister) http.Handler {
-	return newRouter(cfg, functionsDir, manager, list)
+// workers names the worker the live tail relays from, per request; nil means the one worker in
+// cfg.FunctionsWorkerURL, if any.
+func HandlerListing(cfg *config.Config, functionsDir string, manager LogSource, list Lister, workers WorkerResolver) http.Handler {
+	return newRouter(cfg, functionsDir, manager, list, workers)
 }
 
 // routeTable is the admin API's routes over no directory, for asking whether a request is one of
 // them. It is built by the same newRouter that serves the API, so the two cannot disagree.
-var routeTable = newRouter(&config.Config{}, "", nil, DirLister(""))
+var routeTable = newRouter(&config.Config{}, "", nil, DirLister(""), nil)
 
 // IsAdminRoute reports whether method and path, below the mount that serves the admin API, name one
 // of its routes. The gateway's old admin address dispatches on it, and the Studio proxy judges on
@@ -83,7 +85,10 @@ func ServesAdminAPI(serviceRole bool, method, path string) bool {
 }
 
 // newRouter is the admin API: its routes, behind the service-role check.
-func newRouter(cfg *config.Config, functionsDir string, manager LogSource, list Lister) chi.Router {
+func newRouter(cfg *config.Config, functionsDir string, manager LogSource, list Lister, workers WorkerResolver) chi.Router {
+	if workers == nil {
+		workers = staticWorker(cfg.FunctionsWorkerURL)
+	}
 	r := chi.NewRouter()
 
 	r.Use(RequireServiceRoleMiddleware(cfg))
@@ -93,7 +98,7 @@ func newRouter(cfg *config.Config, functionsDir string, manager LogSource, list 
 	// The live tail, relayed from the external worker. `FunctionLogs` above only answers when this
 	// server supervises Deno itself, which it does not in Compose or on cloud: the read API was
 	// there and nothing wrote to it.
-	r.Get("/logs/tail", tailFunctionLogs(newLogStream(cfg.FunctionsWorkerURL)))
+	r.Get("/logs/tail", tailFunctionLogs(workers))
 	addEnvRoutes(r, functionsDir)
 
 	return r

@@ -39,6 +39,9 @@ type Settings struct {
 	SmsProvider       string           `json:"sms_provider"`
 	SAMLEnabled       bool             `json:"saml_enabled"`
 	PasskeysEnabled   bool             `json:"passkeys_enabled"`
+	// SettingsVersion is the stamp the platform wrote with the settings this server runs.
+	// Left out where none is set, so a server nothing stamps keeps the body it always had.
+	SettingsVersion int64 `json:"settings_version,omitempty"`
 }
 
 func (a *API) Settings(w http.ResponseWriter, r *http.Request) error {
@@ -79,5 +82,6 @@ func (a *API) Settings(w http.ResponseWriter, r *http.Request) error {
 		SmsProvider:       config.Sms.Provider,
 		SAMLEnabled:       config.SAML.Enabled,
 		PasskeysEnabled:   config.Passkey.Enabled,
+		SettingsVersion:   config.AuthSettingsVersion,
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,10 @@ const (
 
 	// tickerInterval is the maximum latency between configuration reloads.
 	tickerInterval = time.Second
+
+	// kubeletDataLink is the symlink a Kubernetes Secret or ConfigMap volume
+	// points its files through. The kubelet updates the volume by replacing it.
+	kubeletDataLink = "..data"
 )
 
 type ConfigFunc func(*conf.GlobalConfiguration)
@@ -257,8 +262,10 @@ func (rl *Reloader) watchNotify(
 				return err
 			}
 
-			// We only read files ending in .env
-			if !strings.HasSuffix(evt.Name, ".env") {
+			// We only read files ending in .env, but a Kubernetes Secret volume
+			// never touches them: the kubelet swaps the ..data symlink they point
+			// through, so that swap is the event that means the files changed.
+			if !strings.HasSuffix(evt.Name, ".env") && filepath.Base(evt.Name) != kubeletDataLink {
 				continue
 			}
 

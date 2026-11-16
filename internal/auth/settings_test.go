@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/supatype/server/internal/conf"
 )
 
 func TestSettings_DefaultProviders(t *testing.T) {
@@ -71,4 +72,26 @@ func TestSettings_EmailDisabled(t *testing.T) {
 
 	p := resp.ExternalProviders
 	require.False(t, p.Email)
+}
+
+// settingsBody is what GET /settings answers for a server running cfg. It calls the handler
+// directly: the endpoint reads nothing but the configuration, so no database is needed.
+func settingsBody(t *testing.T, cfg *conf.GlobalConfiguration) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/settings", nil)
+	w := httptest.NewRecorder()
+	require.NoError(t, (&API{config: cfg}).Settings(w, req))
+	require.Equal(t, http.StatusOK, w.Code)
+	body := map[string]any{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	return body
+}
+
+func TestSettings_ReportsTheSettingsVersionItRuns(t *testing.T) {
+	require.EqualValues(t, 7, settingsBody(t, &conf.GlobalConfiguration{AuthSettingsVersion: 7})["settings_version"])
+}
+
+func TestSettings_OmitsTheVersionWhenNothingStampsOne(t *testing.T) {
+	_, present := settingsBody(t, &conf.GlobalConfiguration{})["settings_version"]
+	require.False(t, present)
 }

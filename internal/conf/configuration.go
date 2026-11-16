@@ -454,6 +454,11 @@ type GlobalConfiguration struct {
 
 	Experimental ExperimentalConfiguration `json:"experimental"`
 	Reloading    ReloadingConfiguration    `json:"reloading"`
+
+	// AuthSettingsVersion is the version of the settings the platform rendered into this
+	// configuration (SUPATYPE_AUTH_SETTINGS_VERSION). Zero where nothing stamps one. The
+	// settings endpoint reports it so a caller can tell a reload picked the new file up.
+	AuthSettingsVersion int64 `json:"auth_settings_version" split_words:"true"`
 }
 
 type CORSConfiguration struct {

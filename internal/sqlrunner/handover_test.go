@@ -57,27 +57,34 @@ DECLARE
   target text;
   acl record;
 BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supatype_sql_editor') THEN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'supatype_sql_editor') THEN
     RETURN;
   END IF;
-  SELECT pg_get_userbyid(datdba) INTO target FROM pg_database WHERE datname = current_database();
+  SELECT pg_catalog.pg_get_userbyid(datdba) INTO target FROM pg_catalog.pg_database
+   WHERE datname = pg_catalog.current_database();
   DROP SCHEMA IF EXISTS supatype_editor CASCADE;
+  IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = target AND rolsuper)
+     OR NOT pg_catalog.pg_has_role('supatype_sql_editor', target, 'USAGE') THEN
+    RAISE WARNING 'supatype: SQL editor handover disabled: the database owner is a superuser or not a role the editor inherits';
+    RETURN;
+  END IF;
   CREATE SCHEMA supatype_editor;
   REVOKE ALL ON SCHEMA supatype_editor FROM PUBLIC;
-  EXECUTE format('CREATE FUNCTION supatype_editor.hand_over() RETURNS void
+  EXECUTE pg_catalog.format('CREATE FUNCTION supatype_editor.hand_over() RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''''
     AS $handover$ BEGIN REASSIGN OWNED BY supatype_sql_editor TO %I; END $handover$', target);
   REVOKE ALL ON FUNCTION supatype_editor.hand_over() FROM PUBLIC;
   FOR acl IN
-    SELECT DISTINCT a.grantee FROM pg_namespace n, aclexplode(n.nspacl) a
-     WHERE n.nspname = 'supatype_editor' AND a.grantee <> 0
+    SELECT DISTINCT a.grantee FROM pg_catalog.pg_namespace n, pg_catalog.aclexplode(n.nspacl) a
+     WHERE n.nspname = 'supatype_editor' AND a.grantee OPERATOR(pg_catalog.<>) 0::pg_catalog.oid
     UNION
-    SELECT DISTINCT a.grantee FROM pg_proc p, aclexplode(p.proacl) a
-     WHERE p.oid = 'supatype_editor.hand_over()'::regprocedure AND a.grantee <> 0
+    SELECT DISTINCT a.grantee FROM pg_catalog.pg_proc p, pg_catalog.aclexplode(p.proacl) a
+     WHERE p.oid OPERATOR(pg_catalog.=) 'supatype_editor.hand_over()'::pg_catalog.regprocedure
+       AND a.grantee OPERATOR(pg_catalog.<>) 0::pg_catalog.oid
   LOOP
-    CONTINUE WHEN acl.grantee = (SELECT nspowner FROM pg_namespace WHERE nspname = 'supatype_editor');
-    EXECUTE format('REVOKE ALL ON FUNCTION supatype_editor.hand_over() FROM %I', pg_get_userbyid(acl.grantee));
-    EXECUTE format('REVOKE ALL ON SCHEMA supatype_editor FROM %I', pg_get_userbyid(acl.grantee));
+    CONTINUE WHEN acl.grantee OPERATOR(pg_catalog.=) (SELECT nspowner FROM pg_catalog.pg_namespace WHERE nspname = 'supatype_editor');
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION supatype_editor.hand_over() FROM %I', pg_catalog.pg_get_userbyid(acl.grantee));
+    EXECUTE pg_catalog.format('REVOKE ALL ON SCHEMA supatype_editor FROM %I', pg_catalog.pg_get_userbyid(acl.grantee));
   END LOOP;
   GRANT USAGE ON SCHEMA supatype_editor TO supatype_sql_editor;
   GRANT EXECUTE ON FUNCTION supatype_editor.hand_over() TO supatype_sql_editor;
@@ -322,5 +329,47 @@ func TestTheStepDoesNothingWithoutTheEditorRole(t *testing.T) {
 	}
 	if made {
 		t.Error("the step made the schema although the editor role is missing")
+	}
+}
+
+// The inline fallback refuses a database owned by a superuser, even where the
+// editor could SET ROLE to it and the REASSIGN would otherwise go through.
+func TestTheFallbackRefusesASuperuserOwner(t *testing.T) {
+	stack := editorStack(t)
+	ctx := context.Background()
+	const super = "sqlrunner_test_super"
+
+	var database string
+	if err := stack.admin.QueryRow(ctx, `SELECT current_database()`).Scan(&database); err != nil {
+		t.Fatalf("read the database: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = stack.admin.Exec(ctx, `ALTER DATABASE `+database+` OWNER TO `+stack.owner)
+		_, _ = stack.admin.Exec(ctx, `REVOKE `+super+` FROM `+editorRole)
+		_, _ = stack.admin.Exec(ctx, `DROP ROLE IF EXISTS `+super)
+	})
+	for _, stmt := range []string{
+		`DROP ROLE IF EXISTS ` + super,
+		`CREATE ROLE ` + super + ` SUPERUSER NOLOGIN`,
+		`GRANT ` + super + ` TO ` + editorRole + ` WITH INHERIT TRUE, SET TRUE`,
+		`ALTER DATABASE ` + database + ` OWNER TO ` + super,
+	} {
+		if _, err := stack.admin.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+
+	_, err := stack.editor.Exec(ctx, reassignToOwner)
+	if err == nil || !strings.Contains(err.Error(), "a superuser") {
+		t.Fatalf("the handover to a superuser owner = %v, want a refusal naming it", err)
+	}
+}
+
+// The refusal sits in the fallback branch, before the REASSIGN it guards.
+func TestTheFallbackChecksTheOwnerBeforeReassigning(t *testing.T) {
+	check := strings.Index(reassignToOwner, "rolsuper")
+	reassign := strings.Index(reassignToOwner, "REASSIGN OWNED BY")
+	if check < 0 || reassign < 0 || check > reassign {
+		t.Errorf("the superuser check does not come before the REASSIGN:\n%s", reassignToOwner)
 	}
 }

@@ -174,8 +174,10 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 // The editor logs in as supatype_sql_editor, a non-superuser member of the
 // database owner, so an object it creates would otherwise belong to a login
 // role no migration or Studio view expects to find as an owner. The owner is
-// resolved from the catalogue rather than assumed, because it is `postgres`
-// on self-host but need not be anywhere else.
+// resolved from the catalogue rather than assumed: the image's migration makes
+// it `supatype_owner` on self-host, and it can be another role elsewhere.
+// It must not be a superuser: objects handed to one would let a function the
+// editor wrote run with a superuser's rights.
 //
 // Postgres 16 and later refuse REASSIGN OWNED unless the caller can SET ROLE
 // to the new owner, and the editor is a member WITH SET FALSE so that
@@ -183,19 +185,27 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 // supatype_editor.hand_over(), a SECURITY DEFINER function the stack's start-up
 // creates, whose whole body is that one REASSIGN. A stack that has not made
 // the function yet (an older CLI) keeps the inline REASSIGN, which works where
-// the editor is allowed to SET ROLE.
+// the editor is allowed to SET ROLE. The fallback refuses a superuser owner as
+// the start-up step does; on Postgres 16 and later it would fail there anyway,
+// and this says why.
 //
 // It only runs when this session is the editor. A deployment that has not
 // configured SUPATYPE_SQL_EDITOR_DATABASE_URL falls back to the SQL DSN, whose
 // cluster may have no editor role to reassign from at all.
 const reassignToOwner = `DO $reassign$
+DECLARE
+  target text;
 BEGIN
   IF session_user = 'supatype_sql_editor' THEN
     IF pg_catalog.to_regprocedure('supatype_editor.hand_over()') IS NOT NULL THEN
       PERFORM supatype_editor.hand_over();
     ELSE
-      EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I',
-        (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()));
+      SELECT pg_catalog.pg_get_userbyid(datdba) INTO target FROM pg_catalog.pg_database
+        WHERE datname = pg_catalog.current_database();
+      IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = target AND rolsuper) THEN
+        RAISE EXCEPTION 'refusing to hand the SQL editor''s objects to %, a superuser', target;
+      END IF;
+      EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I', target);
     END IF;
   END IF;
 END

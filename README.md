@@ -139,9 +139,29 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_DENO_PATH`
 - `SUPATYPE_DENO_FUNCTIONS_DIR`
 - `SUPATYPE_DENO_PORT`
-- `SUPATYPE_TENANT_HMAC_SECRET`
+- `SUPATYPE_TENANT_HMAC_SECRET` (the platform-wide secret the tenant signature used to be made with directly. Transition fallback only: while it is set, a signature made with it is accepted for any tenant. Removing it turns the fallback off. See Tenant signing keys below)
+- `SUPATYPE_TENANT_SIGNING_KEY` (a tenant gateway's own key, `tenantKey(master, tenantId)`. Needs `SUPATYPE_MANAGED_PROJECT_REF`, and verifies only requests signed for that ref)
+- `SUPATYPE_TENANT_MASTER_SECRET` (the platform server's master, which derives each tenant's key per request from the tenant ID the request claims. Never set it on a tenant gateway)
 - `SUPATYPE_TLS_DOMAIN`
 - `SUPATYPE_PUBLIC_ENV` (default `true`). `GET /supatype-env.json` answers `{"url":...,"anonKey":...}` for `supatype build`, and `GET /supatype-env.js` sets `window.__SUPATYPE_ENV__` for a static app's script tag, whatever `SUPATYPE_APP_MODE` is and ahead of a file of the same name in the app. `url` is `SUPATYPE_URL`, else `SUPATYPE_API_EXTERNAL_URL` without a trailing `/auth/v1`; the key is `SUPATYPE_ANON_KEY`. The service role key is never served. A misconfigured deployment names every setting to fix, one per line, key before URL: no anon key, an anon key whose JWT role is `service_role` (refused, never echoed), or neither URL set. `/supatype-env.json` answers that text as a 503 with `no-store`. `/supatype-env.js` answers 200 with `no-store` and `window.__SUPATYPE_ENV__ = {"error":"..."};` carrying the same text and no key, because a browser neither runs a script answered with an error status nor tells the page why, and the client throws that reason on its first call. Set `false` for an API-only project: both paths then answer 404.
+
+Tenant signing keys (managed mode):
+
+Kong signs `X-Supatype-Tenant` as `X-Supatype-Tenant-Sig`, the lowercase hex of `HMAC-SHA256(key = signingKey, msg = tenantId)`.
+`signingKey` is per tenant: `tenantKey(master, tenantId)` is the lowercase hex of
+`HMAC-SHA256(key = master, msg = "supatype-tenant-signing-v1|" + tenantId)`, used as the key text as written. A tenant
+gateway holds only its own key (`SUPATYPE_TENANT_SIGNING_KEY`) and refuses any tenant other than its
+`SUPATYPE_MANAGED_PROJECT_REF`, so a key leaked from one project namespace signs for no other tenant. The platform
+server (empty managed ref) holds `SUPATYPE_TENANT_MASTER_SECRET` and derives the key from the claimed tenant ID.
+Test vector: master `test-master`, tenant `abc` gives key `8c1a2dea9dc060d76b030ce410a8f28a0bab31af0e15635e8d097d257d8794ee`
+and signature `ba6930d6e6facfc1f29c1587659566f0316baf365aef0ffe37ddb0a43eb9b088`.
+
+Moving off the old shared secret takes stepped releases, none of which drops a request:
+
+1. Release this server everywhere with `SUPATYPE_TENANT_HMAC_SECRET` still set. Nothing changes: the old signature is accepted.
+2. Set `SUPATYPE_TENANT_MASTER_SECRET` on the platform server and `SUPATYPE_TENANT_SIGNING_KEY` (with the ref) on each tenant gateway.
+3. Move Kong to sign with each tenant's derived key. Both signatures are accepted meanwhile.
+4. Once Kong and every namespace are on per-tenant keys, remove `SUPATYPE_TENANT_HMAC_SECRET` from every deployment. The fallback is off, and a request signed with the shared secret is refused.
 
 SAML single sign-on (the service provider side of `/auth/v1/sso`):
 

@@ -160,8 +160,10 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	provider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	smsprovider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	security.SetHTTPTimeout(authCfg.Security.Captcha.Timeout)
-	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
-		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
+	if strings.TrimSpace(srvCfg.Mode) == "managed" {
+		if err := validateTenantSigning(srvCfg); err != nil {
+			return fail(fmt.Errorf("serve: %w", err))
+		}
 	}
 	if strings.TrimSpace(srvCfg.Mode) != "dev" && strings.TrimSpace(srvCfg.ServiceRoleKey) == "" {
 		return fail(errors.New("serve: SUPATYPE_SERVICE_ROLE_KEY must be set when SUPATYPE_MODE is not dev"))

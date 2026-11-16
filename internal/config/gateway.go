@@ -108,8 +108,19 @@ type Config struct {
 	// ApiConfigPath is the path to the .supatype/api-config.json file managed by the admin API.
 	ApiConfigPath string `envconfig:"SUPATYPE_API_CONFIG_PATH" default:".supatype/api-config.json"`
 
-	// TenantHMACSecret is the shared HMAC secret for verifying X-Supatype-Tenant-Sig (Mode=managed).
+	// TenantHMACSecret is the platform-wide HMAC secret the tenant signature used to be made with
+	// directly (Mode=managed). It is the transition fallback: accepted for as long as it is set, and
+	// removing it turns it off. See the README, "Tenant signing keys".
 	TenantHMACSecret string `envconfig:"SUPATYPE_TENANT_HMAC_SECRET"`
+
+	// TenantSigningKey is this gateway's own tenant key, derived as modes.TenantKey(master, tenant).
+	// A tenant gateway (ManagedProjectRef set) holds this and nothing else, and accepts only requests
+	// signed for its own ref.
+	TenantSigningKey string `envconfig:"SUPATYPE_TENANT_SIGNING_KEY"`
+
+	// TenantMasterSecret is the master the platform server (ManagedProjectRef empty) derives each
+	// tenant's key from, per request. Never set on a tenant gateway.
+	TenantMasterSecret string `envconfig:"SUPATYPE_TENANT_MASTER_SECRET"`
 
 	// KeyspaceAddr is the RESP address of the keyspace holding the tenant config
 	// cache (Mode=managed) and the REST response cache. It is pg_keyspace inside

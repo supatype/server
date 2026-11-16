@@ -47,7 +47,7 @@ func expectAdminAPI(t *testing.T, r *rig, target string) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"data"`) {
 		t.Fatalf("GET %s: status = %d, body %s, want the admin API's function list", target, rec.Code, rec.Body.String())
 	}
-	if _, reached := r.lastHit(); reached {
+	if _, reached := r.reachedBeyondTheList(); reached {
 		t.Fatalf("GET %s reached an upstream; the admin API answers it itself", target)
 	}
 }
@@ -109,7 +109,7 @@ func TestStudioReachesTheAdminAPIAndTheFunctionNamedAdmin(t *testing.T) {
 	for _, target := range []string{"/studio/proxy/admin/v1/functions/list", "/studio/proxy/functions/v1/admin/list"} {
 		r := functionsRig(t)
 		rec := r.do(http.MethodGet, target, asStudioAdmin(t))
-		if _, reached := r.lastHit(); rec.Code != http.StatusOK || reached || !strings.Contains(rec.Body.String(), `"data"`) {
+		if _, reached := r.reachedBeyondTheList(); rec.Code != http.StatusOK || reached || !strings.Contains(rec.Body.String(), `"data"`) {
 			t.Fatalf("GET %s: status %d, body %s, reached an upstream %v; want the admin API", target, rec.Code, rec.Body.String(), reached)
 		}
 	}
@@ -135,7 +135,18 @@ func TestWithoutAFunctionsDirStudioReachesTheAdminAPI(t *testing.T) {
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"data":[]}` {
 		t.Fatalf("status = %d, body %s, want the admin API's empty list", rec.Code, rec.Body.String())
 	}
-	if got, reached := r.lastHit(); reached {
+	if got, reached := r.reachedBeyondTheList(); reached {
 		t.Fatalf("the request reached %s; the admin API answers it itself", got.upstream)
 	}
+}
+
+// reachedBeyondTheList is the last request the rig saw at an upstream, unless it was the worker's own
+// list: the admin API answers the list itself by asking the worker for it, so that request is the
+// admin API answering and not a call the router sent on.
+func (r *rig) reachedBeyondTheList() (hit, bool) {
+	got, ok := r.lastHit()
+	if ok && got.path == workerListPath {
+		return hit{}, false
+	}
+	return got, ok
 }

@@ -15,7 +15,7 @@ import (
 // runtime, and `_shared/` for code several functions import. None of it is a route.
 //
 // Listing one anyway is not a cosmetic fault: it puts a name in Studio's sidebar that can be
-// selected and invoked, and the worker — which discovers routes by its own rules — answers 404. The
+// selected and invoked, and the worker, which discovers routes by its own rules, answers 404. The
 // person is told the function they just clicked does not exist. `deno.d.ts` was listed as a function
 // called "deno.d" and did exactly that.
 //
@@ -24,7 +24,7 @@ import (
 func listedNames(t *testing.T, dir string) []string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	listFunctions(dir)(rec, httptest.NewRequest(http.MethodGet, "/list", nil))
+	listFunctions(DirLister(dir))(rec, httptest.NewRequest(http.MethodGet, "/list", nil))
 
 	var body struct {
 		Data []functionMeta `json:"data"`

@@ -2,7 +2,7 @@
 //
 // Routes (all require the service-role Bearer token, in every mode):
 //
-//	GET    /list             list deployed functions (scanned from functionsDir; none without one)
+//	GET    /list             list deployed functions (from the Lister: the workers calls go to)
 //	GET    /{name}/logs      recent log lines for a function (?since=1h)
 //	GET    /logs/tail        live log tail, relayed from the functions worker
 //	GET    /env              list shared env var key names from .env.local
@@ -49,12 +49,19 @@ type LogSource interface {
 // manager may be nil when edge functions are disabled; the log route is then
 // empty rather than absent.
 func Handler(cfg *config.Config, functionsDir string, manager LogSource) http.Handler {
-	return newRouter(cfg, functionsDir, manager)
+	return HandlerListing(cfg, functionsDir, manager, DirLister(functionsDir))
+}
+
+// HandlerListing is Handler with the list taken from list rather than from functionsDir: the env
+// routes still read and write functionsDir, but where functions run in workers the directory the
+// server holds is not where they are.
+func HandlerListing(cfg *config.Config, functionsDir string, manager LogSource, list Lister) http.Handler {
+	return newRouter(cfg, functionsDir, manager, list)
 }
 
 // routeTable is the admin API's routes over no directory, for asking whether a request is one of
 // them. It is built by the same newRouter that serves the API, so the two cannot disagree.
-var routeTable = newRouter(&config.Config{}, "", nil)
+var routeTable = newRouter(&config.Config{}, "", nil, DirLister(""))
 
 // IsAdminRoute reports whether method and path, below the mount that serves the admin API, name one
 // of its routes. The gateway's old admin address dispatches on it, and the Studio proxy judges on
@@ -76,12 +83,12 @@ func ServesAdminAPI(serviceRole bool, method, path string) bool {
 }
 
 // newRouter is the admin API: its routes, behind the service-role check.
-func newRouter(cfg *config.Config, functionsDir string, manager LogSource) chi.Router {
+func newRouter(cfg *config.Config, functionsDir string, manager LogSource, list Lister) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(RequireServiceRoleMiddleware(cfg))
 
-	r.Get("/list", listFunctions(functionsDir))
+	r.Get("/list", listFunctions(list))
 	r.Get("/{name}/logs", functionLogs(manager))
 	// The live tail, relayed from the external worker. `FunctionLogs` above only answers when this
 	// server supervises Deno itself, which it does not in Compose or on cloud: the read API was
@@ -171,13 +178,6 @@ func requireServiceRole(cfg *config.Config, next http.Handler) http.Handler {
 
 // ─── List functions ───────────────────────────────────────────────────────────
 
-// writeNoFunctions answers an empty list, in the same shape as the success path. This answered a
-// bare array, so a caller reading `data` got one thing when the project had functions and another
-// when it had none, which is the case least likely to be exercised before release.
-func writeNoFunctions(w http.ResponseWriter) {
-	utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": []functionMeta{}})
-}
-
 type functionMeta struct {
 	Name        string `json:"name"`
 	DeployedAt  string `json:"deployedAt,omitempty"`
@@ -185,59 +185,84 @@ type functionMeta struct {
 	AvgDuration int    `json:"avgDurationMs"`
 }
 
-func listFunctions(dir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// No directory configured lists none, as an empty or missing one does: Studio reads an
-		// empty list as "no functions", where a 404 read as a failure.
-		if dir == "" {
-			writeNoFunctions(w)
-			return
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				writeNoFunctions(w)
-				return
-			}
-			utilities.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
+// FunctionMeta is one function in the list, in the shape Studio reads.
+type FunctionMeta = functionMeta
 
-		funcs := make([]functionMeta, 0)
-		for _, e := range entries {
-			name := e.Name()
-			// The same rules the worker discovers routes by, because a name listed here that the
-			// worker will not serve is a function somebody can select and invoke and only then be
-			// told does not exist. `deno.d.ts`, the ambient types the CLI writes beside the
-			// functions, was listed as a function called "deno.d" for exactly that reason.
-			//
-			// An underscore prefix is the convention for code that is shared rather than served:
-			// `_shared/` holds helpers, and the worker reserves the prefix for its own routes.
-			if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+// Lister is where the list of functions comes from. The gateway supplies one that asks the workers
+// calls are sent to; DirLister reads a directory.
+type Lister func(*http.Request) ([]FunctionMeta, error)
+
+// ErrWorkerUnavailable marks a list that could not be had because a functions worker could not be
+// reached or answered badly. The API answers it 502, never an empty list: an empty list reads as
+// "no functions deployed", which is false.
+var ErrWorkerUnavailable = errors.New("functions worker unavailable")
+
+// DirLister lists the functions in dir. No directory, or one that does not exist, lists none, as
+// Studio reads an empty list as "no functions" where a 404 read as a failure.
+func DirLister(dir string) Lister {
+	return func(*http.Request) ([]FunctionMeta, error) { return ScanDir(dir) }
+}
+
+// ScanDir is the functions in dir, by the rules the worker discovers routes by.
+func ScanDir(dir string) ([]FunctionMeta, error) {
+	funcs := make([]FunctionMeta, 0)
+	if dir == "" {
+		return funcs, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return funcs, nil
+		}
+		return nil, err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		// The same rules the worker discovers routes by, because a name listed here that the
+		// worker will not serve is a function somebody can select and invoke and only then be
+		// told does not exist. `deno.d.ts`, the ambient types the CLI writes beside the
+		// functions, was listed as a function called "deno.d" for exactly that reason.
+		//
+		// An underscore prefix is the convention for code that is shared rather than served:
+		// `_shared/` holds helpers, and the worker reserves the prefix for its own routes.
+		if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+			continue
+		}
+		if e.IsDir() {
+			// A directory is a function when it has an entrypoint, and something else when it
+			// does not.
+			if _, err := os.Stat(filepath.Join(dir, name, "index.ts")); err != nil {
 				continue
 			}
-			if e.IsDir() {
-				// A directory is a function when it has an entrypoint, and something else when it
-				// does not.
-				if _, err := os.Stat(filepath.Join(dir, name, "index.ts")); err != nil {
-					continue
-				}
-			} else {
-				// `.d.ts` declares types for an editor and defines no handler at all.
-				if !strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".d.ts") {
-					continue
-				}
-				name = strings.TrimSuffix(name, ".ts")
+		} else {
+			// `.d.ts` declares types for an editor and defines no handler at all.
+			if !strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".d.ts") {
+				continue
 			}
-
-			meta := functionMeta{Name: name}
-			// Use file mod time as a proxy for deployed-at.
-			if info, err := e.Info(); err == nil {
-				meta.DeployedAt = info.ModTime().UTC().Format(time.RFC3339)
-			}
-			funcs = append(funcs, meta)
+			name = strings.TrimSuffix(name, ".ts")
 		}
 
+		meta := FunctionMeta{Name: name}
+		// Use file mod time as a proxy for deployed-at.
+		if info, err := e.Info(); err == nil {
+			meta.DeployedAt = info.ModTime().UTC().Format(time.RFC3339)
+		}
+		funcs = append(funcs, meta)
+	}
+	return funcs, nil
+}
+
+func listFunctions(list Lister) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		funcs, err := list(r)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, ErrWorkerUnavailable) {
+				status = http.StatusBadGateway
+			}
+			utilities.WriteJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
 		utilities.WriteJSON(w, http.StatusOK, map[string]any{"data": funcs})
 	}
 }

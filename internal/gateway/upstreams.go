@@ -30,10 +30,19 @@ func functionsInvocationProxy(
 			http.Error(w, "functions disabled", http.StatusNotFound)
 			return
 		}
+		// A dot segment is refused outright. The worker resolves "." and ".." in the URL it receives, so
+		// "x/../_logs" is a call to x as far as the check below can tell and `_logs` by the time the
+		// worker has parsed it. 400 rather than 404: the path is malformed, not merely absent, and the
+		// distinction keeps a probe from reading a refusal as "no such function".
+		if hasDotSegment(req.URL) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		// Hooks are procedural: the API server calls them around a write. They live under a `hooks/`
 		// route on the same worker, and that route is not a public endpoint, so a caller holding the anon
-		// key must not be able to invoke one directly with a payload of their own choosing.
-		if seg := firstURLSegment(req.URL.Path); seg == "hooks" {
+		// key must not be able to invoke one directly with a payload of their own choosing. The same goes
+		// for the routes the worker answers itself (`_logs`, `_functions`): see reservedFunctionRoute.
+		if reservedFunctionRoute(req.URL.Path) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -83,6 +92,22 @@ func resolveRealtimeUpstreamURL(
 		return url.Parse(u)
 	}
 	return nil, fmt.Errorf("no realtime upstream configured")
+}
+
+// reservedFunctionRoute reports whether path names a route of the worker that is not a function:
+// `hooks/`, or any first segment starting with an underscore. No function can have such a name (the
+// worker skips them), the worker answers its own `_logs` and `_functions` there, and the server
+// reaches those directly, never through this public path.
+//
+// The segment is read as the worker reads it, which drops one leading `/functions/v1` first. A
+// caller sending `/functions/v1/functions/v1/_logs` is otherwise judged by the segment `functions`
+// and reaches `_logs` all the same.
+func reservedFunctionRoute(path string) bool {
+	if rest, ok := strings.CutPrefix(path, "/functions/v1"); ok {
+		path = strings.TrimPrefix(rest, "/")
+	}
+	seg := firstURLSegment(path)
+	return seg == "hooks" || strings.HasPrefix(seg, "_")
 }
 
 func firstURLSegment(path string) string {
@@ -168,4 +193,26 @@ func functionsUpstreamURL(cfg *config.Config) (*url.URL, error) {
 		Scheme: "http",
 		Host:   denoAddr(cfg),
 	}, nil
+}
+
+// hasDotSegment reports whether u carries a "." or ".." path segment in any spelling a downstream
+// URL parser would resolve. The decoded path catches "%2e%2e" and "x%2f..%2f_logs" (Go decodes both
+// into Path), the raw path catches the encoded forms as sent, and each segment is unescaped once
+// more so "%252e%252e" is refused too, though only a parser that decodes twice would act on it.
+func hasDotSegment(u *url.URL) bool {
+	for _, p := range []string{u.Path, u.RawPath} {
+		for _, seg := range strings.Split(p, "/") {
+			if isDotSegment(seg) {
+				return true
+			}
+			if dec, err := url.PathUnescape(seg); err == nil && isDotSegment(dec) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isDotSegment(seg string) bool {
+	return seg == "." || seg == ".."
 }

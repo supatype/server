@@ -20,7 +20,7 @@ var apiKeyProtectedPrefixes = []string{
 
 // apiKeyRequired reports whether this request must carry a project API key.
 //
-// The exemptions are not conveniences — each one is a caller that physically
+// The exemptions are not conveniences: each one is a caller that physically
 // cannot send a header:
 //   - CORS preflight (OPTIONS) carries no custom headers, so gating it breaks
 //     every browser request;
@@ -55,7 +55,19 @@ func extractAPIKey(r *http.Request) string {
 			}
 		}
 	}
-	return strings.TrimSpace(r.URL.Query().Get("apikey"))
+	if key := strings.TrimSpace(r.URL.Query().Get("apikey")); key != "" {
+		return key
+	}
+	// @supatype/client opens `/realtime/v1?token=<jwt>`. Accepted on the realtime
+	// path only, so no other route reads a credential from a URL it never used.
+	if isRealtimePath(r.URL.Path) {
+		return strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	return ""
+}
+
+func isRealtimePath(path string) bool {
+	return path == "/realtime/v1" || strings.HasPrefix(path, "/realtime/v1/")
 }
 
 // APIKeyRoleFromToken verifies a key against the project's JWT secret and
@@ -76,7 +88,7 @@ func APIKeyRoleFromToken(token, jwtSecret string) string {
 	}
 
 	// The top-level `role` claim is the PostgREST role. Application roles live in
-	// app_metadata and are irrelevant here — this gate only proves the caller
+	// app_metadata and are irrelevant here; this gate only proves the caller
 	// holds a key issued for this project.
 	role, _ := claims["role"].(string)
 	switch role {
@@ -90,7 +102,7 @@ func APIKeyRoleFromToken(token, jwtSecret string) string {
 // APIKeyMiddleware rejects data-plane requests that do not carry a valid project
 // API key. Without it, an unkeyed request reaches PostgREST and is executed as
 // the anon role, leaving the whole API surface reachable by anyone who knows the
-// project ref — unattributable and impossible to rate limit or revoke.
+// project ref, unattributable and impossible to rate limit or revoke.
 func APIKeyMiddleware(jwtSecret string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !apiKeyRequired(r) {

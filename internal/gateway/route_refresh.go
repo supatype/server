@@ -50,7 +50,7 @@ func (t refreshTiming) random() float64 {
 	if t.Rand != nil {
 		return t.Rand()
 	}
-	return rand.Float64() // #nosec G404 -- retry jitter, not a secret
+	return rand.Float64() // #nosec G404 -- retry jitter, not security-sensitive
 }
 
 // refreshOnChange re-merges the routes from the keyspace until ctx is done.

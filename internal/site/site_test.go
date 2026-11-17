@@ -248,12 +248,12 @@ func TestACompleteVersionFolderIsReused(t *testing.T) {
 	cp := newControlPlane(t)
 	cp.add("d1", map[string]string{"index.html": "one"})
 	cp.add("d2", map[string]string{"index.html": "two"})
-	s := newSyncer(t, cp, nil)
+	s := newSyncer(t, cp, func(c *Config) { c.RetireAfter = time.Hour })
 	mustSync(t, s, cp.ref("d1"))
 	mustSync(t, s, cp.ref("d2"))
 
+	// A rollback within RetireAfter finds d1 still on disk and complete, so nothing is fetched.
 	m0, b0 := cp.counts()
-	// Rolling back: d1 is still on disk and complete, so nothing is fetched.
 	mustSync(t, s, cp.ref("d1"))
 	if m1, b1 := cp.counts(); m1 != m0 || b1 != b0 {
 		t.Fatalf("rollback fetched (manifests %d to %d, blobs %d to %d)", m0, m1, b0, b1)
@@ -334,7 +334,7 @@ func listVersions(t *testing.T, s *Syncer) []string {
 	return out
 }
 
-func TestPrunesToTheServedVersionPlusOne(t *testing.T) {
+func TestOnlyTheServedVersionStaysOnDisk(t *testing.T) {
 	cp := newControlPlane(t)
 	for _, id := range []string{"d1", "d2", "d3"} {
 		cp.add(id, map[string]string{"index.html": "page-" + id, "only-" + id + ".txt": id})
@@ -343,14 +343,94 @@ func TestPrunesToTheServedVersionPlusOne(t *testing.T) {
 	for _, id := range []string{"d1", "d2", "d3"} {
 		mustSync(t, s, cp.ref(id))
 	}
-	if got := listVersions(t, s); len(got) != 2 || got[0] != "d2" || got[1] != "d3" {
-		t.Fatalf("versions on disk = %v, want [d2 d3]", got)
+	if got := listVersions(t, s); len(got) != 1 || got[0] != "d3" {
+		t.Fatalf("versions on disk = %v, want [d3]", got)
 	}
-	if _, err := os.Stat(filepath.Join(s.cfg.Dir, "blobs", sum("d1"))); err == nil {
-		t.Fatal("a blob no kept version uses was not deleted")
+	if _, err := os.Stat(filepath.Join(s.cfg.Dir, "blobs", sum("d2"))); err == nil {
+		t.Fatal("a blob the served version does not use was not deleted")
 	}
-	if _, err := os.Stat(filepath.Join(s.cfg.Dir, "blobs", sum("d2"))); err != nil {
-		t.Fatalf("a blob a kept version uses was deleted: %v", err)
+	if _, err := os.Stat(filepath.Join(s.cfg.Dir, "blobs", sum("d3"))); err != nil {
+		t.Fatalf("a blob the served version uses was deleted: %v", err)
+	}
+}
+
+func TestTheOldFolderGoesAfterRetireAfter(t *testing.T) {
+	cp := newControlPlane(t)
+	cp.add("d1", map[string]string{"index.html": "one"})
+	cp.add("d2", map[string]string{"index.html": "two"})
+	s := newSyncer(t, cp, func(c *Config) { c.RetireAfter = 50 * time.Millisecond })
+	mustSync(t, s, cp.ref("d1"))
+	mustSync(t, s, cp.ref("d2"))
+	if got := listVersions(t, s); len(got) != 2 {
+		t.Fatalf("versions right after the swap = %v, the old one must outlive in-flight requests", got)
+	}
+	waitFor(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(listVersions(t, s)) == 1
+	})
+	if got := listVersions(t, s); got[0] != "d2" {
+		t.Fatalf("versions on disk = %v, want [d2]", got)
+	}
+}
+
+func TestARollbackFetchesOnlyTheBlobsItLacks(t *testing.T) {
+	cp := newControlPlane(t)
+	cp.add("d1", map[string]string{"index.html": "one", "shared.js": "same", "old.css": "old"})
+	cp.add("d2", map[string]string{"index.html": "two", "shared.js": "same"})
+	s := newSyncer(t, cp, nil)
+	mustSync(t, s, cp.ref("d1"))
+	mustSync(t, s, cp.ref("d2"))
+
+	_, before := cp.counts()
+	mustSync(t, s, cp.ref("d1"))
+	if _, after := cp.counts(); after-before != 2 {
+		t.Fatalf("rollback fetched %d blobs, want 2 (index.html and old.css; shared.js is held)", after-before)
+	}
+	if rec := get(s.Handler(), "/"); rec.Body.String() != "one" {
+		t.Fatalf("after rollback / = %q", rec.Body.String())
+	}
+	if got := listVersions(t, s); len(got) != 1 || got[0] != "d1" {
+		t.Fatalf("versions on disk = %v, want [d1]", got)
+	}
+}
+
+func TestTheBudgetFollowsTheSitePointer(t *testing.T) {
+	cp := newControlPlane(t)
+	cp.add("big", map[string]string{"index.html": strings.Repeat("a", 600)})
+	s := newSyncer(t, cp, func(c *Config) { c.MaxBytes = 100 })
+
+	ref := cp.ref("big")
+	ref.MaxBytes = 500
+	s.Want(ref)
+	if err := s.Reconcile(context.Background()); err == nil {
+		t.Fatal("a deployment over the pointer's max_bytes was accepted")
+	}
+
+	// A plan change arrives on the next Want, with no restart, and now the same deployment fits.
+	ref.MaxBytes = 1000
+	mustSync(t, s, ref)
+	if st := s.Status(); st.Serving != "big" {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestThePointerBudgetBeatsTheEnvFallback(t *testing.T) {
+	cp := newControlPlane(t)
+	cp.add("d1", map[string]string{"index.html": strings.Repeat("a", 600)})
+	s := newSyncer(t, cp, func(c *Config) { c.MaxBytes = 100 })
+	ref := cp.ref("d1")
+	ref.MaxBytes = 1000
+	mustSync(t, s, ref)
+}
+
+func TestTheEnvBudgetIsTheFallbackWhenThePointerHasNone(t *testing.T) {
+	cp := newControlPlane(t)
+	cp.add("d1", map[string]string{"index.html": strings.Repeat("a", 600)})
+	s := newSyncer(t, cp, func(c *Config) { c.MaxBytes = 500 })
+	s.Want(cp.ref("d1"))
+	if err := s.Reconcile(context.Background()); err == nil {
+		t.Fatal("the fallback budget was not applied")
 	}
 }
 

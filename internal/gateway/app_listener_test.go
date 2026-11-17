@@ -36,15 +36,16 @@ func TestValidateAppListener(t *testing.T) {
 		mutate  func(*config.Config)
 		wantErr bool
 	}{
-		"a managed tenant gateway":    {func(*config.Config) {}, false},
-		"no app address, no listener": {func(c *config.Config) { *c = config.Config{Mode: "dev"} }, false},
-		"standalone mode":             {func(c *config.Config) { c.Mode = "standalone" }, true},
-		"dev mode":                    {func(c *config.Config) { c.Mode = "dev" }, true},
-		"the platform server":         {func(c *config.Config) { c.ManagedProjectRef = "" }, true},
-		"a blank project":             {func(c *config.Config) { c.ManagedProjectRef = " " }, true},
-		"no site dir":                 {func(c *config.Config) { c.SiteDir = "" }, true},
-		"no source url":               {func(c *config.Config) { c.SiteSourceURL = " " }, true},
-		"no byte budget":              {func(c *config.Config) { c.SiteMaxBytes = 0 }, true},
+		"a managed tenant gateway":               {func(*config.Config) {}, false},
+		"no app address, no listener":            {func(c *config.Config) { *c = config.Config{Mode: "dev"} }, false},
+		"standalone mode":                        {func(c *config.Config) { c.Mode = "standalone" }, true},
+		"dev mode":                               {func(c *config.Config) { c.Mode = "dev" }, true},
+		"the platform server":                    {func(c *config.Config) { c.ManagedProjectRef = "" }, true},
+		"a blank project":                        {func(c *config.Config) { c.ManagedProjectRef = " " }, true},
+		"no site dir":                            {func(c *config.Config) { c.SiteDir = "" }, true},
+		"no source url":                          {func(c *config.Config) { c.SiteSourceURL = " " }, true},
+		"no byte budget, the pointer carries it": {func(c *config.Config) { c.SiteMaxBytes = 0 }, false},
+		"a negative byte budget":                 {func(c *config.Config) { c.SiteMaxBytes = -1 }, true},
 	} {
 		cfg := managedAppConfig()
 		c.mutate(&cfg)

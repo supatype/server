@@ -116,6 +116,9 @@ type SiteRef struct {
 	SPA          bool   `json:"spa"`
 	FilesSHA256  string `json:"files_sha256"`
 	Token        string `json:"token"`
+	// MaxBytes is the plan's byte cap for the site, which the syncer refuses a deployment over. Zero
+	// means the pointer carries none and the syncer's own fallback applies.
+	MaxBytes int64 `json:"max_bytes,omitempty"`
 }
 
 // TableCache is what one table's schema permits. See RouteManifest.Cache.

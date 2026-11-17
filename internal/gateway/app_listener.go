@@ -17,7 +17,8 @@ import (
 
 // ValidateAppListener is the startup check on SUPATYPE_APP_ADDR. The app listener serves one
 // project's public site, so it exists only on a managed tenant gateway that knows its project, and
-// needs somewhere to keep the site and somewhere to download it from. Anywhere else the server
+// needs somewhere to keep the site and somewhere to download it from. The byte budget comes from
+// the site pointer, so SUPATYPE_SITE_MAX_BYTES is optional and only a fallback. Anywhere else the server
 // refuses to start rather than run with a listener that would do nothing or serve the wrong thing.
 func ValidateAppListener(cfg *config.Config) error {
 	if strings.TrimSpace(cfg.AppAddr) == "" {
@@ -35,8 +36,8 @@ func ValidateAppListener(cfg *config.Config) error {
 	if strings.TrimSpace(cfg.SiteSourceURL) == "" {
 		return errors.New("SUPATYPE_APP_ADDR needs SUPATYPE_SITE_SOURCE_URL, where the site is downloaded from")
 	}
-	if cfg.SiteMaxBytes <= 0 {
-		return errors.New("SUPATYPE_APP_ADDR needs SUPATYPE_SITE_MAX_BYTES above zero")
+	if cfg.SiteMaxBytes < 0 {
+		return errors.New("SUPATYPE_SITE_MAX_BYTES must not be negative")
 	}
 	return nil
 }

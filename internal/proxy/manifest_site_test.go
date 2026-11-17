@@ -1,6 +1,10 @@
 package proxy
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 // A clone must not share the site pointer's target: the per-tenant cache folds overrides onto a
 // clone, and one tenant's pointer must never become another's.
@@ -25,5 +29,21 @@ func TestMergeRouteManifestTakesTheOverlaysSite(t *testing.T) {
 	MergeRouteManifest(base, &RouteManifest{Schema: "app"})
 	if base.Site == nil {
 		t.Fatal("an overlay with no site dropped the base's")
+	}
+}
+
+func TestSiteMaxBytesSurvivesMergeAndClone(t *testing.T) {
+	m := &RouteManifest{Schema: "public", Site: &SiteRef{DeploymentID: "d1", MaxBytes: 4096}}
+	if got := CloneRouteManifest(m).Site.MaxBytes; got != 4096 {
+		t.Fatalf("clone max_bytes = %d", got)
+	}
+	base := &RouteManifest{Schema: "public"}
+	MergeRouteManifest(base, m)
+	if base.Site == nil || base.Site.MaxBytes != 4096 {
+		t.Fatalf("merge dropped max_bytes: %+v", base.Site)
+	}
+	raw, err := json.Marshal(m.Site)
+	if err != nil || !strings.Contains(string(raw), `"max_bytes":4096`) {
+		t.Fatalf("json = %s, %v", raw, err)
 	}
 }

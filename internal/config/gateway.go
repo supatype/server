@@ -211,8 +211,9 @@ type Config struct {
 	// environment, never taken from the keyspace.
 	SiteSourceURL string `envconfig:"SUPATYPE_SITE_SOURCE_URL"`
 
-	// SiteMaxBytes refuses a deployment whose declared files total more than this, so the emptyDir
-	// cannot fill and get the pod evicted.
+	// SiteMaxBytes is the fallback byte budget for the site, used only when the site pointer in the
+	// tenant config carries no max_bytes. Optional: the pointer's value is the plan's cap and follows a
+	// plan change without a restart.
 	SiteMaxBytes int64 `envconfig:"SUPATYPE_SITE_MAX_BYTES"`
 
 	// DenoPath is the path to the deno binary.

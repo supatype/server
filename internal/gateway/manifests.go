@@ -133,7 +133,13 @@ func (l *liveManifests) installLocked(merged *proxy.RouteManifest, sum []byte) {
 // manifestHash identifies a manifest by its content. A manifest that cannot be encoded has no hash,
 // which makes every read of it count as changed.
 func manifestHash(m *proxy.RouteManifest) []byte {
-	raw, err := json.Marshal(m)
+	return manifestHashWith(m, func(m *proxy.RouteManifest) ([]byte, error) { return json.Marshal(m) })
+}
+
+// manifestHashWith is manifestHash with the encoding passed in, so the one failure it handles can be
+// provoked: a RouteManifest is strings, bools and string-keyed maps, which always encode.
+func manifestHashWith(m *proxy.RouteManifest, encode func(*proxy.RouteManifest) ([]byte, error)) []byte {
+	raw, err := encode(m)
 	if err != nil {
 		return nil
 	}

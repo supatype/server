@@ -109,3 +109,15 @@ func TestAMissingDirectoryIsAnEmptyListRatherThanAnError(t *testing.T) {
 		t.Fatalf("names = %v, want none", names)
 	}
 }
+
+// With no directory configured there are no functions, and the list says so as an empty list, not
+// as nil, which would encode as null where Studio expects an array.
+func TestScanDirWithNoDirectoryListsNone(t *testing.T) {
+	got, err := ScanDir("")
+	if err != nil {
+		t.Fatalf("ScanDir(\"\") = %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("ScanDir(\"\") = %#v, want an empty, non-nil list", got)
+	}
+}

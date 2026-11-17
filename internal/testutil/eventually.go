@@ -16,7 +16,14 @@ const (
 // for a goroutine or child process without guessing how long that takes.
 func Eventually(t testing.TB, what string, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(eventuallyTimeout)
+	eventually(t, what, eventuallyTimeout, ok)
+}
+
+// eventually is Eventually with the timeout passed in, so a test can prove the
+// failure path without waiting ten seconds for it.
+func eventually(t testing.TB, what string, timeout time.Duration, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if ok() {
 			return

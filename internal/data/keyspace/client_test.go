@@ -563,3 +563,56 @@ func TestSubscribeHearsAPublishAndStopsWhenCancelled(t *testing.T) {
 		t.Errorf("client unusable after a subscription closed: %v", err)
 	}
 }
+
+// Subscribe reports a SUBSCRIBE the keyspace could not take, and never claims to be subscribed.
+func TestSubscribeReportsASubscribeThatFails(t *testing.T) {
+	c := connectedClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var subscribed atomic.Int32
+	err := c.Subscribe(ctx, "test-config-changed", func() { subscribed.Add(1) }, func() {})
+	if err == nil || !strings.Contains(err.Error(), "SUBSCRIBE test-config-changed") {
+		t.Fatalf("Subscribe with a cancelled context = %v, want a SUBSCRIBE failure naming the channel", err)
+	}
+	if subscribed.Load() != 0 {
+		t.Error("onSubscribed ran for a subscription that was never made")
+	}
+}
+
+// A subscription whose connection the server drops returns an error naming the channel, so the
+// caller knows to subscribe again, and does not wait for a context that nobody will cancel.
+func TestSubscribeReturnsWhenTheServerDropsTheConnection(t *testing.T) {
+	c := connectedClient(t)
+	var subscribed atomic.Int32
+	ended := make(chan error, 1)
+	go func() {
+		ended <- c.Subscribe(context.Background(), "test-config-dropped", func() { subscribed.Add(1) }, func() {})
+	}()
+	testutil.Eventually(t, "the subscription to be confirmed", func() bool { return subscribed.Load() == 1 })
+
+	kill := c.vc.B().Arbitrary("CLIENT", "KILL", "TYPE", "pubsub").Build()
+	if err := c.vc.Do(context.Background(), kill).Error(); err != nil {
+		t.Fatalf("CLIENT KILL TYPE pubsub: %v", err)
+	}
+	select {
+	case err := <-ended:
+		if err == nil || !strings.Contains(err.Error(), "subscription to test-config-dropped ended") {
+			t.Errorf("Subscribe after the connection dropped = %v, want an ended-subscription error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Subscribe did not return after the server dropped its connection")
+	}
+}
+
+// A connection that ends without an error of its own still gives the caller one, and one that
+// ends with an error keeps it.
+func TestSubscriptionEndedAlwaysCarriesAnError(t *testing.T) {
+	err := subscriptionEnded("ch", nil)
+	if err == nil || err.Error() != "keyspace: subscription to ch ended: connection closed" {
+		t.Errorf("no cause = %v", err)
+	}
+	cause := errors.New("EOF")
+	if err := subscriptionEnded("ch", cause); !errors.Is(err, cause) {
+		t.Errorf("with a cause = %v, want it to wrap %v", err, cause)
+	}
+}

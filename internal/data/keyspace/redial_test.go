@@ -129,3 +129,25 @@ func TestRedialingAnswersEveryOperationAsNotConnected(t *testing.T) {
 		}
 	}
 }
+
+// Layout follows from the login, so it is the same before and after the connection, and Subscribe
+// answers ErrNotConnected until the dial succeeds and is the connection's after.
+func TestRedialingSubscribeAndLayout(t *testing.T) {
+	g := &gatedDialer{live: &connectedFake{}}
+	r := newRedialing(g.dial, time.Millisecond, time.Millisecond, func() {})
+	t.Cleanup(r.Close)
+	r.keys = LayoutLegacy
+
+	if r.Layout() != LayoutLegacy {
+		t.Errorf("Layout = %v, want the login's layout", r.Layout())
+	}
+	if err := r.Subscribe(context.Background(), "ch", func() {}, func() {}); !errors.Is(err, ErrNotConnected) {
+		t.Errorf("Subscribe before connecting = %v, want ErrNotConnected", err)
+	}
+
+	g.open.Store(true)
+	testutil.Eventually(t, "the redial to connect", r.Available)
+	if err := r.Subscribe(context.Background(), "ch", func() {}, func() {}); err != nil {
+		t.Errorf("Subscribe once connected = %v, want the live client's answer", err)
+	}
+}

@@ -444,11 +444,17 @@ func (c *conn) Subscribe(ctx context.Context, channel string, onSubscribed, onMe
 	onSubscribed()
 	select {
 	case err := <-ended:
-		if err == nil {
-			err = errors.New("connection closed")
-		}
-		return fmt.Errorf("keyspace: subscription to %s ended: %w", channel, err)
+		return subscriptionEnded(channel, err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// subscriptionEnded is the error for a subscription whose connection ended. The connection reports
+// no error of its own when it is closed deliberately; the caller still needs one to subscribe again.
+func subscriptionEnded(channel string, err error) error {
+	if err == nil {
+		err = errors.New("connection closed")
+	}
+	return fmt.Errorf("keyspace: subscription to %s ended: %w", channel, err)
 }

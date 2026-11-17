@@ -296,3 +296,20 @@ func TestTheWorkerAddressIsNotInAnError(t *testing.T) {
 		t.Errorf("the 502 body carries the worker address: %s", rec.Body.String())
 	}
 }
+
+// With no worker to ask, a functions directory that cannot be read fails the list rather than
+// emptying it: an empty list reads as "no functions deployed".
+func TestAnUnreadableFunctionsDirectoryFailsTheList(t *testing.T) {
+	// A NUL in the path is refused by the operating system on every platform, and is not the
+	// "does not exist" that lists as empty.
+	unreadable := t.TempDir() + "\x00"
+	d := adminDeps(&config.Config{DenoFunctionsDir: unreadable}, &proxy.RouteManifest{})
+
+	rec := adminGet(t, d, "/list")
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"data"`) {
+		t.Errorf("answered a list: %s", rec.Body.String())
+	}
+}

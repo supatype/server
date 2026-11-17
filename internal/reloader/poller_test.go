@@ -364,3 +364,27 @@ func TestWatchPoller(t *testing.T) {
 		}
 	}
 }
+
+// An .env entry that cannot be statted, a symlink whose target is gone as in a Secret volume mid
+// swap, is not a config file: it is skipped, and the poll goes on to the files beside it.
+func TestPollerSkipsADanglingSymlink(t *testing.T) {
+	dir, cleanup := helpTestDir(t)
+	defer cleanup()
+
+	if err := os.Symlink(path.Join(dir, "gone.env"), path.Join(dir, "dangling.env")); err != nil {
+		t.Skipf("cannot create symlinks on this host: %v", err)
+	}
+
+	pr := newPoller(dir)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	changes, err := pr.poll(ctx)
+	require.NoError(t, err)
+	require.False(t, changes, "a dangling link is not a config file")
+
+	helpWriteEnvFile(t, dir, "00_conf.env", map[string]string{"SUPATYPE_SMTP_PORT": "1000"})
+	changes, err = pr.poll(ctx)
+	require.NoError(t, err)
+	require.True(t, changes, "the real file beside the dangling link is still seen")
+}

@@ -94,3 +94,15 @@ func TestThePlatformServerDoesNotTrustAnInternalEntrance(t *testing.T) {
 		t.Errorf("internal entrance on the platform server = %d, want 401", code)
 	}
 }
+
+type baseKey struct{}
+
+// Requests on the entrance inherit the context the server was built with, so they end with the
+// process that serves them rather than outliving it.
+func TestTheInternalEntrancesRequestsInheritTheBaseContext(t *testing.T) {
+	base := context.WithValue(context.Background(), baseKey{}, "the server")
+	srv := NewInternalEntranceServer("", "t1", http.NotFoundHandler(), base)
+	if got := srv.BaseContext(nil); got != base {
+		t.Errorf("BaseContext = %v, want the context the server was built with", got)
+	}
+}

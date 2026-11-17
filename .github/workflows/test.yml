@@ -20,7 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15
+        # 17, as every Supatype database runs: the SQL editor's handover relies on GRANT ... WITH
+        # INHERIT TRUE, SET FALSE, which Postgres added in 16.
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: root

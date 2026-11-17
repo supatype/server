@@ -39,8 +39,8 @@ const (
 	KeyConfig      = "config"
 	KeyManifest    = "manifest"
 	KeyAPIConfig   = "api_config"
-	KeyDBCredMeta  = "dbcred:meta"
-	keyDBCredShelf = "dbcred:secret:v"
+	KeyDBCredMeta  = "dbcred:meta"     // #nosec G101 -- a key name in the keyspace, not a credential
+	keyDBCredShelf = "dbcred:secret:v" // #nosec G101 -- a key name in the keyspace, not a credential
 )
 
 // ChannelConfigChanged is the pub/sub channel the control plane publishes to after it writes a

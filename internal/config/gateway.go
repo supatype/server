@@ -199,6 +199,22 @@ type Config struct {
 	// must keep it reachable from the project's own namespace only.
 	InternalAddr string `envconfig:"SUPATYPE_INTERNAL_ADDR"`
 
+	// AppAddr is the listen address of the app listener (Mode=managed, ManagedProjectRef set), such as
+	// ":9998": it serves the project's static site and the public env, and nothing of the API. Empty,
+	// there is no app listener. Kong routes the project's own host to it.
+	AppAddr string `envconfig:"SUPATYPE_APP_ADDR"`
+
+	// SiteDir is where the app listener keeps the site it serves (an emptyDir): blobs and versions.
+	SiteDir string `envconfig:"SUPATYPE_SITE_DIR"`
+
+	// SiteSourceURL is the control plane's base URL, where the site is downloaded from. Set in the
+	// environment, never taken from the keyspace.
+	SiteSourceURL string `envconfig:"SUPATYPE_SITE_SOURCE_URL"`
+
+	// SiteMaxBytes refuses a deployment whose declared files total more than this, so the emptyDir
+	// cannot fill and get the pod evicted.
+	SiteMaxBytes int64 `envconfig:"SUPATYPE_SITE_MAX_BYTES"`
+
 	// DenoPath is the path to the deno binary.
 	DenoPath string `envconfig:"SUPATYPE_DENO_PATH" default:"deno"`
 

@@ -465,7 +465,7 @@ func waitFor(t *testing.T, cond func() bool) {
 func TestSPAFlagAndCacheOptsReachTheStaticHandler(t *testing.T) {
 	cp := newControlPlane(t)
 	cp.add("d1", map[string]string{"index.html": "shell"})
-	s := newSyncer(t, cp, func(c *Config) { c.Cache = static.CacheOpts{HTML: "no-cache, x"} })
+	s := newSyncer(t, cp, func(c *Config) { c.Cache = func() static.CacheOpts { return static.CacheOpts{HTML: "no-cache, x"} } })
 	ref := cp.ref("d1")
 	ref.SPA = true
 	mustSync(t, s, ref)

@@ -193,6 +193,12 @@ type Config struct {
 	// X-Supatype-Tenant (after HMAC verification) with a short TTL cache.
 	ManagedProjectRef string `envconfig:"SUPATYPE_MANAGED_PROJECT_REF"`
 
+	// InternalAddr is the listen address of the internal entrance (Mode=managed, ManagedProjectRef
+	// set), such as ":9990": the way a project's own functions and hooks call its API from inside
+	// the cluster, without a Kong signature. Empty, there is no internal entrance. The network policy
+	// must keep it reachable from the project's own namespace only.
+	InternalAddr string `envconfig:"SUPATYPE_INTERNAL_ADDR"`
+
 	// DenoPath is the path to the deno binary.
 	DenoPath string `envconfig:"SUPATYPE_DENO_PATH" default:"deno"`
 

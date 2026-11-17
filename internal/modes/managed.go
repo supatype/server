@@ -94,12 +94,12 @@ func signatureMatches(sig, tenantID, key string) bool {
 // against whichever of the keys k holds.
 func TenantMiddlewareKeys(k TenantKeys, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if tenantBypassPaths(r.URL.Path) {
+		if tenantBypassPaths(r.URL.Path) || fromOwnInternalEntrance(r, k.ManagedRef) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		tenantID := r.Header.Get("X-Supatype-Tenant")
-		sig := r.Header.Get("X-Supatype-Tenant-Sig")
+		tenantID := r.Header.Get(TenantHeader)
+		sig := r.Header.Get(TenantSigHeader)
 		if tenantID == "" || sig == "" || !k.verify(tenantID, sig) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

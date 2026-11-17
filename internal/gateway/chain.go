@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -118,6 +119,23 @@ func validateTenantSigning(cfg *config.Config) error {
 	}
 	if modes.IsSet(keys.TenantKey) && keys.ManagedRef == "" {
 		return errors.New("SUPATYPE_TENANT_SIGNING_KEY needs SUPATYPE_MANAGED_PROJECT_REF: a tenant key verifies only its own tenant")
+	}
+	return nil
+}
+
+// ValidateInternalEntrance is the startup check on SUPATYPE_INTERNAL_ADDR. The internal entrance
+// stands in for the tenant signature of one project, so it exists only on a managed tenant gateway
+// that knows its project. Anywhere else it would either do nothing or trust a project it does not
+// serve, so the server refuses to start rather than run with it.
+func ValidateInternalEntrance(cfg *config.Config) error {
+	if strings.TrimSpace(cfg.InternalAddr) == "" {
+		return nil
+	}
+	if cfg.Mode != "managed" {
+		return fmt.Errorf("SUPATYPE_INTERNAL_ADDR is only for managed mode, and the mode is %q", cfg.Mode)
+	}
+	if strings.TrimSpace(cfg.ManagedProjectRef) == "" {
+		return errors.New("SUPATYPE_INTERNAL_ADDR needs SUPATYPE_MANAGED_PROJECT_REF: the internal entrance serves only its own project")
 	}
 	return nil
 }

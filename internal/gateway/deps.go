@@ -250,7 +250,7 @@ func (d *Deps) EditorPool() (sqlrunner.Pool, error) {
 func apiConfigStore(cfg *config.Config, platform keyspace.Client) apiconfig.Store {
 	ref := strings.TrimSpace(cfg.ManagedProjectRef)
 	if ref != "" && strings.TrimSpace(cfg.Mode) == "managed" && platform != nil && platform.Available() {
-		return apiconfig.NewKeyspaceStore(platform, ref)
+		return apiconfig.NewKeyspaceStore(platform, platform.Layout().Tenant(ref, keyspace.KeyAPIConfig))
 	}
 	return apiconfig.NewFileStore(cfg.ApiConfigPath)
 }

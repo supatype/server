@@ -109,6 +109,9 @@ const (
 type conn struct {
 	vc vkgo.Client
 
+	// keys is the layout the login this client sent implies; see KeyLayout.
+	keys KeyLayout
+
 	mu          sync.Mutex
 	failures    int
 	circuitOpen bool
@@ -128,6 +131,10 @@ var ErrAuthFailed = errors.New("keyspace: authentication failed")
 type Auth struct {
 	Username string
 	Password string
+
+	// Keys is how this login names its keys. A tenant-scoped login sends them
+	// relative, since the keyspace prefixes its tenant; see KeyLayout.
+	Keys KeyLayout
 }
 
 // New creates a Client connected to addr (e.g. "127.0.0.1:6379").
@@ -139,7 +146,7 @@ func New(addr string, auth Auth) (Client, error) {
 	if err != nil {
 		return nil, connectError(addr, err)
 	}
-	return &conn{vc: vc}, nil
+	return &conn{vc: vc, keys: auth.Keys}, nil
 }
 
 // clientOption builds the valkey-go options for addr.
@@ -179,8 +186,11 @@ func connectError(addr string, err error) error {
 // Available reports that this client talks to a real keyspace.
 func (c *conn) Available() bool { return true }
 
+// Layout reports the layout this client names its keys in.
+func (c *conn) Layout() KeyLayout { return c.keys }
+
 // GetTenantConfig fetches the TenantConfig for ref from the keyspace.
-// Key pattern: tenant:{ref}:config
+// The key is KeyConfig in this client's layout.
 //
 // Returns ErrCircuitOpen if the circuit breaker is open.
 // Returns (nil, nil) when the key is absent (cache miss).
@@ -193,7 +203,7 @@ func (c *conn) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, 
 	rctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 
-	key := TenantConfigKey(ref)
+	key := c.keys.Tenant(ref, KeyConfig)
 	data, err := c.vc.Do(rctx, c.vc.B().Get().Key(key).Build()).AsBytes()
 	if err != nil {
 		if vkgo.IsValkeyNil(err) {
@@ -410,4 +420,41 @@ func (c *conn) recordSuccess() {
 	c.failures = 0
 	c.circuitOpen = false
 	c.probeInFlight.Store(false)
+}
+
+// Subscribe listens on channel with a dedicated connection until ctx is done or the connection
+// drops. The dedicated connection carries the same login as every other, so a scoped login's
+// channel is prefixed with its tenant by the keyspace, as its keys are.
+//
+// The circuit breaker is not consulted: it sheds request load, and a subscription is one long-lived
+// connection whose failure the caller answers by subscribing again.
+func (c *conn) Subscribe(ctx context.Context, channel string, onSubscribed, onMessage func()) error {
+	dc, release := c.vc.Dedicate()
+	defer release()
+	// Closed before it is released: a connection still subscribed must not go back to the pool.
+	defer dc.Close()
+	ended := dc.SetPubSubHooks(vkgo.PubSubHooks{
+		OnMessage: func(vkgo.PubSubMessage) { onMessage() },
+	})
+	// The reply to SUBSCRIBE is the confirmation. pg_keyspace's never reaches OnSubscription (seen
+	// against a real one), so the hook is not relied on for it.
+	if err := dc.Do(ctx, dc.B().Subscribe().Channel(channel).Build()).Error(); err != nil {
+		return fmt.Errorf("keyspace: SUBSCRIBE %s: %w", channel, err)
+	}
+	onSubscribed()
+	select {
+	case err := <-ended:
+		return subscriptionEnded(channel, err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// subscriptionEnded is the error for a subscription whose connection ended. The connection reports
+// no error of its own when it is closed deliberately; the caller still needs one to subscribe again.
+func subscriptionEnded(channel string, err error) error {
+	if err == nil {
+		err = errors.New("connection closed")
+	}
+	return fmt.Errorf("keyspace: subscription to %s ended: %w", channel, err)
 }

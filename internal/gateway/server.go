@@ -63,11 +63,11 @@ var getwd = os.Getwd
 // returned handler however it likes (stock binary: cmd/serve_cmd.go; cloud:
 // the metering gateway on :9999).
 func New(ctx context.Context) (http.Handler, func(), error) {
-	if err := conf.LoadFile(ConfigFile); err != nil {
-		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
-	}
-
-	if err := conf.LoadDirectory(WatchDir); err != nil {
+	if err := conf.LoadEnvFiles(ConfigFile, WatchDir); err != nil {
+		var dirErr *conf.DirectoryError
+		if !errors.As(err, &dirErr) {
+			return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
+		}
 		logrus.WithError(err).Error("unable to load authCfg from watch dir")
 	}
 
@@ -160,8 +160,10 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	provider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	smsprovider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	security.SetHTTPTimeout(authCfg.Security.Captcha.Timeout)
-	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
-		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
+	if strings.TrimSpace(srvCfg.Mode) == "managed" {
+		if err := validateTenantSigning(srvCfg); err != nil {
+			return fail(fmt.Errorf("serve: %w", err))
+		}
 	}
 	if strings.TrimSpace(srvCfg.Mode) != "dev" && strings.TrimSpace(srvCfg.ServiceRoleKey) == "" {
 		return fail(errors.New("serve: SUPATYPE_SERVICE_ROLE_KEY must be set when SUPATYPE_MODE is not dev"))
@@ -200,6 +202,9 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		}
 		live.Reapply(manifest)
 		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from the keyspace")
+		// A project gateway has no manifest file to watch, so what the control plane writes after this
+		// point (a function deploy, a tier change) reaches it only through the keyspace.
+		go live.refreshOnChange(ctx, ksPlatform, ksPlatform.Layout().Tenant(ref, keyspace.ChannelConfigChanged), defaultRefreshTiming)
 	}
 
 	if watchErr := proxy.Watch(srvCfg.ManifestPath, manifestStamp, live.ReloadFrom); watchErr != nil {

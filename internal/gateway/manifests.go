@@ -12,9 +12,13 @@ package gateway
 // where nothing could reach them without a database and a keyspace.
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
@@ -25,7 +29,7 @@ import (
 // gateway trusts it only because the tenant HMAC middleware ran first.
 const tenantHeader = "X-Supatype-Tenant"
 
-// tenantManifests is the per-tenant lookup — *keyspace.TenantManifestCache in a
+// tenantManifests is the per-tenant lookup, a *keyspace.TenantManifestCache in a
 // running server, and an interface here so the rules above can be tested
 // without one.
 type tenantManifests interface {
@@ -41,6 +45,12 @@ type liveManifests struct {
 	// answered from, which is the same value unless a merge produced another.
 	file atomic.Value
 	live atomic.Value
+
+	// mu serialises installs, which come from the file watcher and the keyspace refresh, and guards
+	// applied: a hash of the merged manifest last installed, nil when the next read must be applied
+	// (before the first one, and after a merge error).
+	mu      sync.Mutex
+	applied []byte
 
 	// Both nil in a standalone deployment.
 	tenant tenantManifests
@@ -70,22 +80,71 @@ func (l *liveManifests) Base() *proxy.RouteManifest {
 // Reapply records a manifest read from the file and recomputes what requests
 // are answered from.
 func (l *liveManifests) Reapply(file *proxy.RouteManifest) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.file.Store(file)
+	merged, sum, ok := l.mergeLocked(file)
+	if ok {
+		l.installLocked(merged, sum)
+	}
+}
+
+// refresh re-reads the keyspace for the file manifest already held and installs the result only when
+// it differs from what was installed last, so a quiet keyspace costs a read and nothing else: no
+// tenant cache flush and no new live manifest. The first read, and the first after a failed one, are
+// always installed.
+func (l *liveManifests) refresh() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	merged, sum, ok := l.mergeLocked(l.File())
+	if !ok {
+		return
+	}
+	if l.applied != nil && bytes.Equal(sum, l.applied) {
+		return
+	}
+	l.installLocked(merged, sum)
+}
+
+// mergeLocked folds the keyspace over file and hashes the result. ok is false when the merge failed,
+// in which case the previous live manifest is kept: a keyspace that is briefly away is not a reason to
+// serve every tenant the file defaults, and the next good read is installed even if it looks the same.
+func (l *liveManifests) mergeLocked(file *proxy.RouteManifest) (merged *proxy.RouteManifest, sum []byte, ok bool) {
+	if l.merge == nil {
+		return file, nil, true
+	}
+	merged, err := l.merge(context.Background(), file)
+	if err != nil {
+		l.applied = nil
+		logrus.WithError(err).Warn("serve: keyspace manifest merge failed, keeping previous live manifest")
+		return nil, nil, false
+	}
+	return merged, manifestHash(merged), true
+}
+
+func (l *liveManifests) installLocked(merged *proxy.RouteManifest, sum []byte) {
 	if l.tenant != nil {
 		l.tenant.Flush()
 	}
-	if l.merge != nil {
-		merged, err := l.merge(context.Background(), file)
-		if err != nil {
-			// The previous live manifest is kept: a keyspace that is briefly away
-			// is not a reason to serve every tenant the file's defaults.
-			logrus.WithError(err).Warn("serve: keyspace manifest merge failed — keeping previous live manifest")
-			return
-		}
-		l.live.Store(merged)
-		return
+	l.live.Store(merged)
+	l.applied = sum
+}
+
+// manifestHash identifies a manifest by its content. A manifest that cannot be encoded has no hash,
+// which makes every read of it count as changed.
+func manifestHash(m *proxy.RouteManifest) []byte {
+	return manifestHashWith(m, func(m *proxy.RouteManifest) ([]byte, error) { return json.Marshal(m) })
+}
+
+// manifestHashWith is manifestHash with the encoding passed in, so the one failure it handles can be
+// provoked: a RouteManifest is strings, bools and string-keyed maps, which always encode.
+func manifestHashWith(m *proxy.RouteManifest, encode func(*proxy.RouteManifest) ([]byte, error)) []byte {
+	raw, err := encode(m)
+	if err != nil {
+		return nil
 	}
-	l.live.Store(file)
+	sum := sha256.Sum256(raw)
+	return sum[:]
 }
 
 // ReloadFrom is what the file watcher calls: the manifest on disk changed, so

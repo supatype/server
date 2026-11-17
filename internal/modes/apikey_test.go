@@ -123,3 +123,44 @@ func TestAPIKeyMiddlewareFailsClosedWithoutSecret(t *testing.T) {
 		t.Fatalf("expected 500 when no secret is configured, got %d", rec.Code)
 	}
 }
+
+// @supatype/client opens `/realtime/v1?token=<jwt>` and a browser cannot set
+// a header on that upgrade, so the realtime path must accept `token` too.
+func TestAPIKeyMiddlewareAcceptsTokenQueryOnRealtime(t *testing.T) {
+	h := APIKeyMiddleware(testSecret, okHandler())
+	key := signKey(t, testSecret, "authenticated")
+	for _, path := range []string{"/realtime/v1", "/realtime/v1/", "/realtime/v1/websocket"} {
+		req := httptest.NewRequest(http.MethodGet, path+"?token="+key, nil)
+		if rec := serve(h, req); rec.Code != http.StatusOK {
+			t.Fatalf("%s?token=: expected 200, got %d", path, rec.Code)
+		}
+	}
+}
+
+func TestAPIKeyMiddlewareIgnoresTokenQueryOffRealtime(t *testing.T) {
+	h := APIKeyMiddleware(testSecret, okHandler())
+	key := signKey(t, testSecret, "anon")
+	for _, path := range []string{"/rest/v1/posts", "/storage/v1/bucket", "/functions/v1/hello"} {
+		req := httptest.NewRequest(http.MethodGet, path+"?token="+key, nil)
+		rec := serve(h, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s?token=: expected 401, got %d", path, rec.Code)
+		}
+	}
+}
+
+func TestAPIKeyMiddlewareRejectsBadTokenQueryOnRealtime(t *testing.T) {
+	h := APIKeyMiddleware(testSecret, okHandler())
+	bad := map[string]string{
+		"garbage":       "not-a-jwt",
+		"other project": signKey(t, "a-different-projects-secret-value-32chars", "anon"),
+		"bad role":      signKey(t, testSecret, "postgres"),
+	}
+	for name, token := range bad {
+		req := httptest.NewRequest(http.MethodGet, "/realtime/v1?token="+token, nil)
+		rec := serve(h, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: expected 401, got %d", name, rec.Code)
+		}
+	}
+}

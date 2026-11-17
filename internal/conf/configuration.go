@@ -454,6 +454,11 @@ type GlobalConfiguration struct {
 
 	Experimental ExperimentalConfiguration `json:"experimental"`
 	Reloading    ReloadingConfiguration    `json:"reloading"`
+
+	// AuthSettingsVersion is the version of the settings the platform rendered into this
+	// configuration (SUPATYPE_AUTH_SETTINGS_VERSION). Zero where nothing stamps one. The
+	// settings endpoint reports it so a caller can tell a reload picked the new file up.
+	AuthSettingsVersion int64 `json:"auth_settings_version" split_words:"true"`
 }
 
 type CORSConfiguration struct {
@@ -1513,4 +1518,45 @@ type IndexWorkerConfiguration struct {
 	// count is at or below this threshold.
 	// A value of 0 means disabled. Has no effect when EnsureUserSearchIndexesExist is true.
 	MaxUsersThreshold int64 `json:"max_users_threshold" split_words:"true" default:"0"`
+}
+
+// DirectoryError is a failure to read the configuration directory, as opposed
+// to the base file. LoadEnvFiles wraps it so a caller that tolerates a missing
+// directory can tell the two apart.
+type DirectoryError struct{ Err error }
+
+func (e *DirectoryError) Error() string { return e.Err.Error() }
+func (e *DirectoryError) Unwrap() error { return e.Err }
+
+// LoadEnvFiles pulls the base file and then the configuration directory into
+// the environment, the directory overriding the file. This is the one place
+// that order lives. A directory failure is returned as a *DirectoryError after
+// the file has loaded, so the caller decides whether it is fatal.
+func LoadEnvFiles(file, dir string) error {
+	if err := LoadFile(file); err != nil {
+		return err
+	}
+	if err := LoadDirectory(dir); err != nil {
+		return &DirectoryError{Err: err}
+	}
+	return nil
+}
+
+// LoadGlobalWithDir is LoadEnvFiles followed by decoding the environment, with
+// any error returned.
+func LoadGlobalWithDir(file, dir string) (*GlobalConfiguration, error) {
+	if err := LoadEnvFiles(file, dir); err != nil {
+		return nil, err
+	}
+	return LoadGlobalFromEnv()
+}
+
+// LoadGlobalFromDirectory re-reads only the configuration directory and then
+// decodes the environment: what a reload does, the base file having been read
+// once at start.
+func LoadGlobalFromDirectory(dir string) (*GlobalConfiguration, error) {
+	if err := LoadDirectory(dir); err != nil {
+		return nil, err
+	}
+	return LoadGlobalFromEnv()
 }

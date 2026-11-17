@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/supatype/server/internal/data/keyspace"
 )
 
 // retention is how long a day's set is kept. Forty days, so a month's rollup can
@@ -114,8 +116,9 @@ func DayKey(orgID string, day time.Time) string {
 	return "mau:org:" + orgID + ":d:" + day.UTC().Format("2006-01-02")
 }
 
-// Store records a member in a set that expires.
+// Store records a member in a set that expires, under a key named in its layout.
 type Store interface {
+	Layout() keyspace.KeyLayout
 	AddToExpiringSet(ctx context.Context, key, member string, expireAt time.Time) error
 }
 
@@ -137,7 +140,7 @@ func (r Recorder) Record(ctx context.Context, orgID, projectRef string, user map
 	at := now().UTC()
 	return r.Store.AddToExpiringSet(
 		ctx,
-		DayKey(orgID, at),
+		r.Store.Layout().Shared(projectRef, DayKey(orgID, at)),
 		DedupeKey(r.Salt, projectRef, user),
 		at.Add(retention),
 	)

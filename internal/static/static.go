@@ -111,6 +111,10 @@ func directoryIndex(dir, urlPath string) (isDir, hasIndex bool) {
 
 // serveMiss answers a path with no file behind it.
 func serveMiss(w http.ResponseWriter, r *http.Request, dir string, spa bool, cache CacheOpts) {
+	if reservedAppPrefix(r.URL.Path) {
+		serveReservedMiss(w)
+		return
+	}
 	if !spa || !wantsSPAFallback(r) {
 		serveNotFound(w, r, dir)
 		return
@@ -415,4 +419,31 @@ func isHashedAssetPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// reservedAppPrefixes are the first segments the platform's services own. A miss under one is that
+// service's miss, so it is never answered with the app shell or the site's 404 page.
+var reservedAppPrefixes = []string{"rest", "auth", "storage", "realtime", "functions", "graphql"}
+
+// reservedAppPrefix reports whether urlPath is under a service prefix, matched on whole segments:
+// /rest/v1/x is, /restaurant is not.
+func reservedAppPrefix(urlPath string) bool {
+	first, _, found := strings.Cut(strings.TrimPrefix(urlPath, "/"), "/")
+	if !found {
+		return false
+	}
+	for _, p := range reservedAppPrefixes {
+		if first == p {
+			return true
+		}
+	}
+	return false
+}
+
+// serveReservedMiss answers a miss under a service prefix with a JSON 404 that no cache keeps.
+func serveReservedMiss(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"error":"not_found"}`))
 }

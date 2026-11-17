@@ -102,6 +102,20 @@ type RouteManifest struct {
 	// of a Hooks entry as an event, so extra keys there fail the whole load, while an unknown
 	// top-level key is ignored.
 	Tables map[string]TableMeta `json:"tables,omitempty"`
+
+	// Site is the live static site deployment, written by the control plane when a deploy goes live
+	// or is rolled back. The site syncer follows it. Nil means no site.
+	Site *SiteRef `json:"site,omitempty"`
+}
+
+// SiteRef names the deployment a project's site is served from. Token is the bearer the gateway
+// presents to the control plane to download exactly this deployment for this tenant.
+type SiteRef struct {
+	DeploymentID string `json:"deployment_id"`
+	Version      string `json:"version"`
+	SPA          bool   `json:"spa"`
+	FilesSHA256  string `json:"files_sha256"`
+	Token        string `json:"token"`
 }
 
 // TableCache is what one table's schema permits. See RouteManifest.Cache.
@@ -231,6 +245,10 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 	if cm.Schema == "" {
 		cm.Schema = "public"
 	}
+	if m.Site != nil {
+		site := *m.Site
+		cm.Site = &site
+	}
 	// Deep-copied like every other map here. A shared hook map would let one tenant's reload mutate
 	// what another tenant's in-flight request is reading.
 	if len(m.Hooks) > 0 {
@@ -323,6 +341,10 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	}
 	if len(overlay.CorsAllowedOrigins) > 0 {
 		base.CorsAllowedOrigins = append([]string(nil), overlay.CorsAllowedOrigins...)
+	}
+	if overlay.Site != nil {
+		site := *overlay.Site
+		base.Site = &site
 	}
 	if overlay.StaticCacheHTML != "" {
 		base.StaticCacheHTML = overlay.StaticCacheHTML

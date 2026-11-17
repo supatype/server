@@ -55,6 +55,10 @@ type liveManifests struct {
 	// Both nil in a standalone deployment.
 	tenant tenantManifests
 	merge  mergeManifest
+
+	// onInstall, when set, is told of every manifest that becomes live, under mu. The site syncer
+	// follows merged.Site through it. Nil when nothing follows installs.
+	onInstall func(merged *proxy.RouteManifest)
 }
 
 func newLiveManifests(file *proxy.RouteManifest) *liveManifests {
@@ -128,6 +132,9 @@ func (l *liveManifests) installLocked(merged *proxy.RouteManifest, sum []byte) {
 	}
 	l.live.Store(merged)
 	l.applied = sum
+	if l.onInstall != nil {
+		l.onInstall(merged)
+	}
 }
 
 // manifestHash identifies a manifest by its content. A manifest that cannot be encoded has no hash,

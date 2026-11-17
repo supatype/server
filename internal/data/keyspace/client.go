@@ -81,6 +81,9 @@ type TenantConfig struct {
 	// CorsAllowedOrigins is merged into the route manifest when present.
 	CorsAllowedOrigins []string `json:"cors_allowed_origins,omitempty"`
 
+	// Site is the live static site deployment (see proxy.SiteRef), merged into the manifest.
+	Site *proxy.SiteRef `json:"site,omitempty"`
+
 	StaticCacheHTML         string            `json:"static_cache_html,omitempty"`
 	StaticCacheHashedAssets string            `json:"static_cache_hashed_assets,omitempty"`
 	StaticCachePrefixes     map[string]string `json:"static_cache_prefixes,omitempty"`

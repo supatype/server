@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 582 names
+# total: 588 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -771,7 +771,13 @@ SUPATYPE_MAILER_SUPATYPE_RESEND_API_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_SUPATYPE_RESEND_FROM
     struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_SES_ACCESS_KEY_ID
+    struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_SUPATYPE_SES_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_SES_REGION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_SES_SECRET_ACCESS_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_TEMPLATES_CONFIRMATION
     struct internal/conf.GlobalConfiguration
@@ -1049,7 +1055,13 @@ SUPATYPE_SESSIONS_TAGS
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SESSIONS_TIMEBOX
     struct internal/conf.GlobalConfiguration
+SUPATYPE_SES_ACCESS_KEY_ID
+    struct internal/conf.GlobalConfiguration
 SUPATYPE_SES_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SES_REGION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SES_SECRET_ACCESS_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SITE_URL
     struct internal/conf.GlobalConfiguration

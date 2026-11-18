@@ -621,9 +621,14 @@ type MailerConfiguration struct {
 	// the environment inside the mailer factory, under unprefixed names that
 	// belonged to nobody, so they were invisible to anything describing this
 	// service's configuration.
-	ResendAPIKey                string `json:"-" envconfig:"SUPATYPE_RESEND_API_KEY"`
-	ResendFrom                  string `json:"-" envconfig:"SUPATYPE_RESEND_FROM"`
-	SESFrom                     string `json:"-" envconfig:"SUPATYPE_SES_FROM"`
+	ResendAPIKey string `json:"-" envconfig:"SUPATYPE_RESEND_API_KEY"`
+	ResendFrom   string `json:"-" envconfig:"SUPATYPE_RESEND_FROM"`
+	SESFrom      string `json:"-" envconfig:"SUPATYPE_SES_FROM"`
+	// A project's own SES key and region, for a host with no ambient AWS credentials (Cloud).
+	// Empty, the standard AWS provider chain applies.
+	SESAccessKeyID              string `json:"-" envconfig:"SUPATYPE_SES_ACCESS_KEY_ID"`
+	SESSecretAccessKey          string `json:"-" envconfig:"SUPATYPE_SES_SECRET_ACCESS_KEY"`
+	SESRegion                   string `json:"-" envconfig:"SUPATYPE_SES_REGION"`
 	AllowUnverifiedEmailSignIns bool   `json:"allow_unverified_email_sign_ins" split_words:"true" default:"false"`
 
 	Subjects      EmailContentConfiguration  `json:"subjects"`

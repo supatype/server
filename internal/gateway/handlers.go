@@ -216,8 +216,10 @@ func buildGraphQL(d *Deps) http.Handler {
 		// Asked per request: the route manifest's services.graphql, when it says, else
 		// SUPATYPE_GRAPHQL_DISABLED (serviceswitch).
 		m := d.ManifestFor(req)
-		if !serviceswitch.On(m, d.Config, proxy.ServiceGraphQL) {
-			graphQLUnavailable(w, !m.ServiceOn(proxy.ServiceGraphQL, true))
+		start := serviceswitch.Start(d.Config, proxy.ServiceGraphQL)
+		if !m.ServiceOn(proxy.ServiceGraphQL, start) {
+			// Started on and off now: the project switched it off.
+			graphQLUnavailable(w, start)
 			return
 		}
 		u, err := url.Parse(GraphQLUpstream(m, d.Config))

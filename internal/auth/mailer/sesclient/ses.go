@@ -7,23 +7,44 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 )
 
 // Client sends transactional email via AWS SES v2.
-// Credentials are loaded from the standard AWS provider chain
-// (env vars, ~/.aws/credentials, EC2/ECS instance role).
 type Client struct {
 	ses  *sesv2.Client
 	from string
 }
 
-// New returns a Client configured with the ambient AWS credentials.
-// fromAddress must be a verified SES identity.
-// region defaults to us-east-1 if AWS_REGION / AWS_DEFAULT_REGION is unset.
-func New(ctx context.Context, fromAddress string) (*Client, error) {
-	cfg, err := config.LoadDefaultConfig(ctx)
+// Credentials are a project's own SES access key and region. Left empty, the standard AWS provider
+// chain applies (env vars, ~/.aws/credentials, an instance role), which is what a self-hosted stack
+// on AWS uses. A hosted project has no ambient credentials of its own and no process environment it
+// controls, so it names them here, through the server's configuration, which is reloaded in place.
+type Credentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	Region          string
+}
+
+// options turns c into AWS config options: a static provider only when both halves of the key are
+// set (half a key is no key, so the provider chain still applies), and the region when one is named.
+func (c Credentials) options() []func(*config.LoadOptions) error {
+	var opts []func(*config.LoadOptions) error
+	if c.AccessKeyID != "" && c.SecretAccessKey != "" {
+		opts = append(opts, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, "")))
+	}
+	if c.Region != "" {
+		opts = append(opts, config.WithRegion(c.Region))
+	}
+	return opts
+}
+
+// New returns a Client sending from fromAddress, which must be a verified SES identity, with creds
+// when they are set and the ambient AWS credentials otherwise.
+func New(ctx context.Context, fromAddress string, creds Credentials) (*Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx, creds.options()...)
 	if err != nil {
 		return nil, fmt.Errorf("ses: load config: %w", err)
 	}

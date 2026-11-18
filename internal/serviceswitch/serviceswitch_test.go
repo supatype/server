@@ -15,6 +15,8 @@ func TestStartValues(t *testing.T) {
 	}{
 		"storage, by default":                {config.Config{}, proxy.ServiceStorage, true},
 		"storage, SUPATYPE_STORAGE_DISABLED": {config.Config{StorageDisabled: true}, proxy.ServiceStorage, false},
+		"graphql, by default":                {config.Config{}, proxy.ServiceGraphQL, true},
+		"graphql, SUPATYPE_GRAPHQL_DISABLED": {config.Config{GraphQLDisabled: true}, proxy.ServiceGraphQL, false},
 		"functions, no worker":               {config.Config{}, proxy.ServiceFunctions, false},
 		"functions, a worker":                {config.Config{FunctionsWorkerURL: "http://worker"}, proxy.ServiceFunctions, true},
 		"functions, a blank worker":          {config.Config{FunctionsWorkerURL: "  "}, proxy.ServiceFunctions, false},

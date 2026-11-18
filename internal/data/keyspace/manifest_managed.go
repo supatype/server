@@ -92,6 +92,12 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.FunctionsEnabled != nil {
 		m.SetService(proxy.ServiceFunctions, *tc.FunctionsEnabled)
 	}
+	if tc.StorageEnabled != nil {
+		m.SetService(proxy.ServiceStorage, *tc.StorageEnabled)
+	}
+	if tc.GraphQLEnabled != nil {
+		m.SetService(proxy.ServiceGraphQL, *tc.GraphQLEnabled)
+	}
 	if tc.FunctionsWorkerURL != "" {
 		m.FunctionsWorkerURL = tc.FunctionsWorkerURL
 	}

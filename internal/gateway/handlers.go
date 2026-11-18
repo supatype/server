@@ -212,11 +212,15 @@ func restProxyHandler(d *Deps) http.Handler {
 // grants apply. The gateway never substitutes its service role key here; doing
 // so ran every GraphQL query with row security bypassed, whoever sent it.
 func buildGraphQL(d *Deps) http.Handler {
-	if d.Config.GraphQLDisabled {
-		return http.HandlerFunc(graphQLUnavailable)
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		u, err := url.Parse(GraphQLUpstream(d.ManifestFor(req), d.Config))
+		// Asked per request: the route manifest's services.graphql, when it says, else
+		// SUPATYPE_GRAPHQL_DISABLED (serviceswitch).
+		m := d.ManifestFor(req)
+		if !serviceswitch.On(m, d.Config, proxy.ServiceGraphQL) {
+			graphQLUnavailable(w, !m.ServiceOn(proxy.ServiceGraphQL, true))
+			return
+		}
+		u, err := url.Parse(GraphQLUpstream(m, d.Config))
 		if err != nil {
 			badGateway(w, "bad gateway")
 			return
@@ -225,14 +229,19 @@ func buildGraphQL(d *Deps) http.Handler {
 	})
 }
 
-// graphQLUnavailable answers /graphql/v1 on a stack whose Postgres has no
-// pg_graphql. Forwarding there got an empty 502 or PostgREST's "could not
-// find the function graphql_public.graphql", which read like a fault in the
-// stack or the caller's query rather than a stack without GraphQL.
-func graphQLUnavailable(w http.ResponseWriter, _ *http.Request) {
+// graphQLUnavailable answers /graphql/v1 where GraphQL is off: switched off by the project
+// (`services.graphql: false`, which a hosted project's manifest carries), or a stack whose Postgres
+// has no pg_graphql (native `supatype dev`). Forwarding there got an empty 502 or PostgREST's "could
+// not find the function graphql_public.graphql", which read like a fault in the stack or the query.
+// The message says which, since telling a hosted project to use the Docker provider is no help.
+func graphQLUnavailable(w http.ResponseWriter, byProject bool) {
+	message := "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1."
+	if byProject {
+		message = "GraphQL is switched off for this project (services.graphql in supatype.config.ts)."
+	}
 	utilities.WriteJSON(w, http.StatusNotImplemented, map[string]string{
 		"code":    "graphql_unavailable",
-		"message": "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1.",
+		"message": message,
 	})
 }
 

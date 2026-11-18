@@ -157,6 +157,8 @@ func TestEveryRoutingFieldIsCarried(t *testing.T) {
 		RealtimeEnabled:         &enabled,
 		RealtimeURL:             "http://realtime",
 		FunctionsEnabled:        &enabled,
+		StorageEnabled:          &enabled,
+		GraphQLEnabled:          &enabled,
 		FunctionsWorkerURL:      "http://worker",
 		FunctionWorkerURLs:      map[string]string{"fn": "http://fn", "blank": ""},
 		StaticCacheHTML:         "no-store",
@@ -184,6 +186,9 @@ func TestEveryRoutingFieldIsCarried(t *testing.T) {
 		if got == "" {
 			t.Errorf("%s was dropped", name)
 		}
+	}
+	if !m.ServiceOn(proxy.ServiceStorage, false) || !m.ServiceOn(proxy.ServiceGraphQL, false) {
+		t.Errorf("a service switch was dropped: %+v", m)
 	}
 	if !m.ServiceOn(proxy.ServiceRealtime, false) || !m.ServiceOn(proxy.ServiceFunctions, false) {
 		t.Errorf("a boolean was dropped: %+v", m)

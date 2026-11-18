@@ -51,3 +51,16 @@ func TestEveryServiceSwitchedOffReadsTheSame(t *testing.T) {
 		}
 	}
 }
+
+// GraphQL switched off by the route manifest reads as disabled on /health, not only by the
+// environment, so a managed tenant that turned it off is not reported ready on a probe of it.
+func TestGraphQLSwitchedOffByTheManifestIsReportedDisabled(t *testing.T) {
+	m := &proxy.RouteManifest{}
+	m.SetService(proxy.ServiceGraphQL, false)
+	if !ProbeConfigFrom(&config.Config{}, m, "").GraphQLDisabled {
+		t.Error("manifest services.graphql off: reported on")
+	}
+	if ProbeConfigFrom(&config.Config{}, &proxy.RouteManifest{}, "").GraphQLDisabled {
+		t.Error("manifest says nothing: reported off")
+	}
+}

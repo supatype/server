@@ -40,6 +40,12 @@ type TenantConfig struct {
 	RealtimeURL      string `json:"realtime_url,omitempty"`
 	FunctionsEnabled *bool  `json:"functions_enabled,omitempty"`
 
+	// StorageEnabled and GraphQLEnabled switch those services off (or back on) for a managed tenant,
+	// the managed counterpart of SUPATYPE_STORAGE_DISABLED and SUPATYPE_GRAPHQL_DISABLED. Nil says
+	// nothing and leaves the server's start value in force.
+	StorageEnabled *bool `json:"storage_enabled,omitempty"`
+	GraphQLEnabled *bool `json:"graphql_enabled,omitempty"`
+
 	FunctionsWorkerURL string            `json:"functions_worker_url,omitempty"`
 	FunctionWorkerURLs map[string]string `json:"function_worker_urls,omitempty"`
 

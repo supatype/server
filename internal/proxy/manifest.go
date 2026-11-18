@@ -44,7 +44,7 @@ type RouteManifest struct {
 	// ViteDevURL overrides SUPATYPE_VITE_DEV_URL when set (dev HMR at /_vite/*).
 	ViteDevURL string `json:"vite_dev_url,omitempty"`
 
-	// Services switches upstream services on and off by name (ServiceRealtime, ServiceStorage,
+	// Services switches upstream services on and off by name (ServiceRealtime, ServiceStorage, ServiceGraphQL,
 	// ServiceFunctions), read per request. A service it says nothing about keeps the server's start
 	// value. The legacy realtime_enabled and functions_enabled keys are read into it (UnmarshalJSON).
 	Services map[string]ServiceSwitch `json:"services,omitempty"`

@@ -41,6 +41,9 @@ const (
 // that looks like a navigation (see wantsSPAFallback): that is served
 // dir/index.html, the SPA client-side routing fallback.
 //
+// Before either, an extensionless GET or HEAD tries <path>.html (pretty URLs), so a
+// multi-page build's /about is its about.html.
+//
 // A directory, the root included, is served its own index.html. One without
 // an index.html is the same 404, never a listing and never the SPA fallback.
 //
@@ -113,6 +116,9 @@ func directoryIndex(dir, urlPath string) (isDir, hasIndex bool) {
 func serveMiss(w http.ResponseWriter, r *http.Request, dir string, spa bool, cache CacheOpts) {
 	if reservedAppPrefix(r.URL.Path) {
 		serveReservedMiss(w)
+		return
+	}
+	if servePrettyURL(w, r, dir, cache) {
 		return
 	}
 	if !spa || !wantsSPAFallback(r) {
@@ -446,4 +452,25 @@ func serveReservedMiss(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
 	_, _ = w.Write([]byte(`{"error":"not_found"}`))
+}
+
+// servePrettyURL answers an extensionless GET or HEAD for which no file exists with <path>.html,
+// the page a multi-page build writes for /about. It reports whether it answered. The page is an
+// HTML document, so it takes the HTML cache policy, and a precompressed sidecar is honoured.
+func servePrettyURL(w http.ResponseWriter, r *http.Request, dir string, cache CacheOpts) bool {
+	urlPath := r.URL.Path
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if urlPath == "/" || strings.HasSuffix(urlPath, "/") || path.Ext(path.Base(urlPath)) != "" {
+		return false
+	}
+	page := urlPath + ".html"
+	disk, enc, ok := pickVariant(dir, page, r)
+	if !ok {
+		return false
+	}
+	setCacheHeaders(w, page, cache)
+	serveVariant(w, r, dir, disk, enc, page)
+	return true
 }

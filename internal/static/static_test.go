@@ -363,3 +363,82 @@ func TestReservedAppPrefixMatchesWholeSegments(t *testing.T) {
 		}
 	}
 }
+
+func prettyDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"index.html":      "shell",
+		"about.html":      "about-page",
+		"docs/intro.html": "intro-page",
+		"blog.html":       "blog-file",
+		"blog/index.html": "blog-index",
+		"404.html":        "custom-404",
+		"data.json":       "{}",
+	} {
+		full := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func getPath(h http.Handler, method, p string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(method, p, nil))
+	return rec
+}
+
+// An extensionless path with no file behind it tries <path>.html before the SPA fallback or the
+// 404 page, so a multi-page build's /about is its about.html.
+func TestPrettyURLServesTheHTMLFile(t *testing.T) {
+	t.Parallel()
+	dir := prettyDir(t)
+
+	for _, spa := range []bool{false, true} {
+		h := Handler(dir, spa, CacheOpts{})
+		for p, want := range map[string]string{"/about": "about-page", "/docs/intro": "intro-page"} {
+			rec := getPath(h, http.MethodGet, p)
+			if rec.Code != http.StatusOK || rec.Body.String() != want {
+				t.Errorf("spa=%v %s: %d %q, want 200 %q", spa, p, rec.Code, rec.Body.String(), want)
+			}
+			if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+				t.Errorf("spa=%v %s: Content-Type = %q", spa, p, got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+				t.Errorf("spa=%v %s: Cache-Control = %q, want no-cache", spa, p, got)
+			}
+		}
+		if rec := getPath(h, http.MethodHead, "/about"); rec.Code != http.StatusOK {
+			t.Errorf("spa=%v HEAD /about: %d", spa, rec.Code)
+		}
+	}
+}
+
+// A directory with an index wins over a sibling .html, a path with no page still 404s with the
+// build's 404.html, a POST is never rewritten, and a service prefix stays a JSON 404.
+func TestPrettyURLEdges(t *testing.T) {
+	t.Parallel()
+	dir := prettyDir(t)
+	h := Handler(dir, false, CacheOpts{})
+
+	if rec := getPath(h, http.MethodGet, "/blog/"); rec.Body.String() != "blog-index" {
+		t.Errorf("/blog/ = %q, want the directory index", rec.Body.String())
+	}
+	if rec := getPath(h, http.MethodGet, "/nope"); rec.Code != http.StatusNotFound || rec.Body.String() != "custom-404" {
+		t.Errorf("/nope = %d %q, want the 404 page", rec.Code, rec.Body.String())
+	}
+	if rec := getPath(h, http.MethodPost, "/about"); rec.Code != http.StatusNotFound {
+		t.Errorf("POST /about = %d, want 404", rec.Code)
+	}
+	if rec := getPath(h, http.MethodGet, "/data"); rec.Code != http.StatusNotFound {
+		t.Errorf("/data (only data.json) = %d, want 404", rec.Code)
+	}
+	if rec := getPath(Handler(dir, true, CacheOpts{}), http.MethodGet, "/rest/about"); !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Errorf("/rest/about served a page")
+	}
+}

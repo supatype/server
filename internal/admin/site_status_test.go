@@ -10,6 +10,7 @@ import (
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/data/keyspace/keyspacetest"
 	"github.com/supatype/server/internal/restcache"
+	"github.com/supatype/server/internal/static"
 )
 
 // Studio's Static site pages say what the app mount serves. These tests hold the route that tells
@@ -72,6 +73,21 @@ func TestSiteStatusStaticWithNothingToServeIsNotServing(t *testing.T) {
 		SiteSettings{Mode: "static", StaticDir: missing}))
 	if got.Serving || got.FileCount != 0 {
 		t.Errorf("a missing directory is serving=%v files=%d", got.Serving, got.FileCount)
+	}
+}
+
+func TestSiteStatusReportsTheCacheControlInForce(t *testing.T) {
+	cache := static.CacheOpts{HTML: "no-store", Prefixes: map[string]string{"/downloads/": "public, max-age=60"}}.Effective()
+	got := siteStatusOf(t, siteHandler(t, &config.Config{Mode: "standalone"},
+		SiteSettings{Mode: "static", StaticDir: t.TempDir(), Cache: cache}))
+	if got.CacheControl.HTML != "no-store" {
+		t.Errorf("html = %q", got.CacheControl.HTML)
+	}
+	if got.CacheControl.HashedAssets != "public, max-age=31536000, immutable" {
+		t.Errorf("hashed assets = %q, want the built-in default", got.CacheControl.HashedAssets)
+	}
+	if got.CacheControl.Prefixes["/downloads/"] != "public, max-age=60" {
+		t.Errorf("prefixes = %v", got.CacheControl.Prefixes)
 	}
 }
 

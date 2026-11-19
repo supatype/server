@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/supatype/server/internal/static"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -25,6 +26,8 @@ type SiteSettings struct {
 	// Upstream is the proxied address, when Mode is proxy.
 	Upstream string
 	// SPAFallback is whether a missing path answers with index.html, when Mode is static.
+	// Cache is the Cache-Control the static handler sends, defaults filled in (static.CacheOpts.Effective).
+	Cache       static.CacheOpts
 	SPAFallback bool
 }
 
@@ -43,8 +46,16 @@ type siteStatusResponse struct {
 	Serving     bool   `json:"serving"`
 	FileCount   int    `json:"file_count"`
 	TotalBytes  int64  `json:"total_bytes"`
+	// CacheControl is the Cache-Control the static app is served with, defaults included. Only for static.
+	CacheControl *cacheControlResponse `json:"cache_control,omitempty"`
 	// Truncated is true when the directory held more than maxSiteWalk entries and the count stopped.
 	Truncated bool `json:"truncated,omitempty"`
+}
+
+type cacheControlResponse struct {
+	HTML         string            `json:"html"`
+	HashedAssets string            `json:"hashed_assets"`
+	Prefixes     map[string]string `json:"prefixes"`
 }
 
 func siteStatusHandler(site func(*http.Request) SiteSettings) http.HandlerFunc {
@@ -63,6 +74,10 @@ func describeSite(s SiteSettings) siteStatusResponse {
 	case "static":
 		out.StaticDir = s.StaticDir
 		out.SPAFallback = s.SPAFallback
+		out.CacheControl = &cacheControlResponse{HTML: s.Cache.HTML, HashedAssets: s.Cache.HashedAssets, Prefixes: s.Cache.Prefixes}
+		if out.CacheControl.Prefixes == nil {
+			out.CacheControl.Prefixes = map[string]string{}
+		}
 		if dir := strings.TrimSpace(s.StaticDir); dir != "" {
 			out.FileCount, out.TotalBytes, out.Truncated = measureDir(dir)
 			out.Serving = out.FileCount > 0

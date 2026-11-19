@@ -110,6 +110,7 @@ func (d *Deps) SiteSettings(req *http.Request) admin.SiteSettings {
 		StaticDir:   AppStaticDir(m, d.Config),
 		Upstream:    AppUpstream(m, d.Config),
 		SPAFallback: d.Config.AppSPAFallback,
+		Cache:       staticCacheOpts(d.Config, m).Effective(),
 	}
 }
 

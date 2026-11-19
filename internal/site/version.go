@@ -61,7 +61,7 @@ func (s *Syncer) build(ctx context.Context, ref *proxy.SiteRef) error {
 	if err != nil {
 		return err
 	}
-	if err := s.validate(m.Files); err != nil {
+	if err := s.validate(m.Files, s.budget(ref)); err != nil {
 		return err
 	}
 	if err := s.download(ctx, ref, m.Files); err != nil {
@@ -72,7 +72,7 @@ func (s *Syncer) build(ctx context.Context, ref *proxy.SiteRef) error {
 
 // validate refuses a manifest that could write outside the version folder, name a blob that is not a
 // hash, repeat a path, or exceed the byte budget. It runs before any download.
-func (s *Syncer) validate(files []file) error {
+func (s *Syncer) validate(files []file, budget int64) error {
 	seen := make(map[string]bool, len(files))
 	var total int64
 	for _, f := range files {
@@ -86,12 +86,12 @@ func (s *Syncer) validate(files []file) error {
 		if !sha256Pattern.MatchString(f.SHA256) {
 			return fmt.Errorf("site: %q has an invalid sha256", f.Path)
 		}
-		if f.Size < 0 || f.Size > s.cfg.MaxBytes {
+		if f.Size < 0 || (budget > 0 && f.Size > budget) {
 			return fmt.Errorf("site: %q has an invalid size %d", f.Path, f.Size)
 		}
 		total += f.Size
-		if total > s.cfg.MaxBytes {
-			return fmt.Errorf("site: deployment is over the %d byte budget", s.cfg.MaxBytes)
+		if budget > 0 && total > budget {
+			return fmt.Errorf("site: deployment is over the %d byte budget", budget)
 		}
 	}
 	return nil
@@ -253,15 +253,13 @@ func (s *Syncer) fill(root *os.Root, tmpRel string, files []file) error {
 	return nil
 }
 
-// prune keeps the served version and the one before it, which makes a rollback instant, removes every
-// other version and any crashed build, and deletes blobs no kept version uses.
+// prune keeps only the served version, removes every other version (after RetireAfter, so a request
+// that began on one can finish) and any crashed build, and deletes blobs the served version does not
+// use. Rolling back to a removed version downloads only the blobs it lacks.
 func (s *Syncer) prune() {
 	keep := map[string]bool{}
 	if cur := s.serve.Load(); cur != nil {
 		keep[cur.id] = true
-	}
-	if s.previous != "" && s.versionComplete(s.previous) {
-		keep[s.previous] = true
 	}
 	entries, err := os.ReadDir(filepath.Join(s.cfg.Dir, "versions"))
 	if err != nil {
@@ -294,7 +292,7 @@ func (s *Syncer) retire(id string) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		delete(s.retiring, id)
-		if cur := s.serve.Load(); (cur != nil && cur.id == id) || s.previous == id {
+		if cur := s.serve.Load(); cur != nil && cur.id == id {
 			return
 		}
 		removeVersion(s.versionDir(id))

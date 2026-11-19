@@ -32,7 +32,9 @@ type Config struct {
 	SourceURL string
 	// TenantID is this project's id as the control plane's internal routes name it.
 	TenantID string
-	// MaxBytes refuses a deployment whose declared files total more than this.
+	// MaxBytes is the fallback byte budget, used only when the site pointer carries no max_bytes. A
+	// deployment whose declared files total more than the budget is refused. Zero with no pointer
+	// value means no budget.
 	MaxBytes int64
 	// Cache returns the Cache-Control policy the static handler applies, read when a version is
 	// swapped in. Nil means the defaults.
@@ -68,10 +70,9 @@ type Syncer struct {
 	wake    chan struct{}
 	lastErr atomic.Pointer[string]
 
-	// mu serialises Reconcile, so one worker acts on the latest target at a time, and guards
-	// previous, the version served before the current one.
+	// mu serialises Reconcile, so one worker acts on the latest target at a time, and guards retiring,
+	// the versions waiting out RetireAfter.
 	mu       sync.Mutex
-	previous string
 	retiring map[string]bool
 }
 
@@ -242,10 +243,16 @@ func (s *Syncer) syncLocked(ctx context.Context, ref *proxy.SiteRef) error {
 	return nil
 }
 
-func (s *Syncer) swapTo(ref *proxy.SiteRef) {
-	if cur := s.serve.Load(); cur != nil {
-		s.previous = cur.id
+// budget is the byte budget for ref: the pointer's own max_bytes when it has one, otherwise the
+// configured fallback. It is read on every sync, so a plan change needs no restart.
+func (s *Syncer) budget(ref *proxy.SiteRef) int64 {
+	if ref.MaxBytes > 0 {
+		return ref.MaxBytes
 	}
+	return s.cfg.MaxBytes
+}
+
+func (s *Syncer) swapTo(ref *proxy.SiteRef) {
 	dir := s.versionDir(ref.DeploymentID)
 	var cache static.CacheOpts
 	if s.cfg.Cache != nil {

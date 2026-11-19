@@ -1,6 +1,7 @@
 package keyspace
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/supatype/server/internal/proxy"
@@ -231,4 +232,33 @@ func TestMergingIntoExistingMaps(t *testing.T) {
 func TestMergingNothing(t *testing.T) {
 	(*TenantConfig)(nil).mergeRoutingInto(&proxy.RouteManifest{})
 	(&TenantConfig{Schema: "app"}).mergeRoutingInto(nil)
+}
+
+// The live site pointer rides the tenant config, so a keyspace rebuilt after a loss still serves the
+// site, and a config that carries none leaves the manifest without one.
+func TestTenantConfigCarriesTheSitePointer(t *testing.T) {
+	site := &proxy.SiteRef{DeploymentID: "d1", Version: "v1", SPA: true, FilesSHA256: "abc", Token: "tok"}
+
+	withSite := &proxy.RouteManifest{Schema: "public"}
+	(&TenantConfig{Site: site}).mergeRoutingInto(withSite)
+	if withSite.Site == nil || *withSite.Site != *site {
+		t.Fatalf("site did not reach the manifest: %+v", withSite.Site)
+	}
+
+	without := &proxy.RouteManifest{Schema: "public"}
+	(&TenantConfig{Schema: "app"}).mergeRoutingInto(without)
+	if without.Site != nil {
+		t.Fatalf("a config with no site produced one: %+v", without.Site)
+	}
+}
+
+func TestTenantConfigSiteRoundTripsAsJSON(t *testing.T) {
+	raw := `{"site":{"deployment_id":"d1","version":"v1","spa":true,"files_sha256":"abc","token":"tok"}}`
+	var tc TenantConfig
+	if err := json.Unmarshal([]byte(raw), &tc); err != nil {
+		t.Fatal(err)
+	}
+	if tc.Site == nil || tc.Site.DeploymentID != "d1" || !tc.Site.SPA || tc.Site.Token != "tok" || tc.Site.FilesSHA256 != "abc" {
+		t.Fatalf("decoded %+v", tc.Site)
+	}
 }

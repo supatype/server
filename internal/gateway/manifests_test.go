@@ -183,3 +183,38 @@ func TestManifestHash(t *testing.T) {
 		t.Errorf("a manifest that cannot be encoded hashed to %x, want no hash", h)
 	}
 }
+
+// A site that changed installs a new manifest and tells onInstall; the same site read again installs
+// nothing, so the syncer is not woken by a quiet keyspace.
+func TestAChangedSiteInstallsAndNotifies(t *testing.T) {
+	site := &proxy.SiteRef{DeploymentID: "d1", Version: "v1"}
+	live := newLiveManifests(&proxy.RouteManifest{Schema: "public"})
+	live.merge = func(_ context.Context, file *proxy.RouteManifest) (*proxy.RouteManifest, error) {
+		out := proxy.CloneRouteManifest(file)
+		out.Site = site
+		return out, nil
+	}
+	var seen []*proxy.SiteRef
+	live.onInstall = func(m *proxy.RouteManifest) { seen = append(seen, m.Site) }
+
+	live.refresh()
+	live.refresh()
+	if len(seen) != 1 || seen[0] == nil || seen[0].DeploymentID != "d1" {
+		t.Fatalf("after two reads of one site, onInstall saw %+v, want one call with d1", seen)
+	}
+
+	site = &proxy.SiteRef{DeploymentID: "d2", Version: "v2"}
+	live.refresh()
+	if len(seen) != 2 || seen[1].DeploymentID != "d2" {
+		t.Fatalf("after a flip, onInstall saw %+v, want a second call with d2", seen)
+	}
+	if got := live.For(nil).Site; got == nil || got.DeploymentID != "d2" {
+		t.Fatalf("live site = %+v, want d2", got)
+	}
+
+	site = nil
+	live.refresh()
+	if len(seen) != 3 || seen[2] != nil {
+		t.Fatalf("after the site was removed, onInstall saw %+v, want a third call with nil", seen)
+	}
+}

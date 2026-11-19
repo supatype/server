@@ -114,6 +114,10 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if len(tc.CorsAllowedOrigins) > 0 {
 		m.CorsAllowedOrigins = append([]string(nil), tc.CorsAllowedOrigins...)
 	}
+	if tc.Site != nil {
+		site := *tc.Site
+		m.Site = &site
+	}
 	if tc.StaticCacheHTML != "" {
 		m.StaticCacheHTML = tc.StaticCacheHTML
 	}

@@ -75,6 +75,7 @@ func buildAdminAPI(d *Deps) http.Handler {
 		Stats:    d.CacheStats,
 		Monitor:  d.KeyspaceMonitor(),
 		Declared: d.DeclaredCache,
+		Site:     d.SiteSettings,
 	})
 }
 
@@ -95,6 +96,21 @@ func (d *Deps) DeclaredCache(req *http.Request) map[string]proxy.TableCache {
 		return nil
 	}
 	return m.Cache
+}
+
+// SiteSettings is what the app mount serves for this request: the manifest over the config, the
+// lookups buildApp mounts on, so the admin site status describes the mount that is actually there.
+func (d *Deps) SiteSettings(req *http.Request) admin.SiteSettings {
+	var m *proxy.RouteManifest
+	if d.ManifestFor != nil {
+		m = d.ManifestFor(req)
+	}
+	return admin.SiteSettings{
+		Mode:        AppMode(m, d.Config),
+		StaticDir:   AppStaticDir(m, d.Config),
+		Upstream:    AppUpstream(m, d.Config),
+		SPAFallback: d.Config.AppSPAFallback,
+	}
 }
 
 func buildMetadata(d *Deps) http.Handler   { return sqlrunner.MetadataHandler(d.Config, d.AdminPool) }

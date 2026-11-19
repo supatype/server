@@ -63,44 +63,44 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 	o.AnonymousSignIns = tollbooth.NewLimiter(gc.RateLimitAnonymousUsers/(60*60),
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(int(gc.RateLimitAnonymousUsers)).SetMethods([]string{"POST"})
+		}).SetBurst(burstFor(gc.RateLimitAnonymousUsers)).SetMethods([]string{"POST"})
 
 	o.Token = tollbooth.NewLimiter(gc.RateLimitTokenRefresh/(60*5),
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(30)
+		}).SetBurst(burstFor(gc.RateLimitTokenRefresh))
 
 	o.Verify = tollbooth.NewLimiter(gc.RateLimitVerify/(60*5),
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(30)
+		}).SetBurst(burstFor(gc.RateLimitVerify))
 
 	o.FactorVerify = tollbooth.NewLimiter(gc.MFA.RateLimitChallengeAndVerify/60,
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Minute,
-		}).SetBurst(30)
+		}).SetBurst(burstFor(gc.MFA.RateLimitChallengeAndVerify))
 
 	o.FactorChallenge = tollbooth.NewLimiter(gc.MFA.RateLimitChallengeAndVerify/60,
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Minute,
-		}).SetBurst(30)
+		}).SetBurst(burstFor(gc.MFA.RateLimitChallengeAndVerify))
 
 	o.SSO = tollbooth.NewLimiter(gc.RateLimitSso/(60*5),
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(30)
+		}).SetBurst(burstFor(gc.RateLimitSso))
 
 	o.SAMLAssertion = tollbooth.NewLimiter(gc.SAML.RateLimitAssertion/(60*5),
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(30)
+		}).SetBurst(burstFor(gc.SAML.RateLimitAssertion))
 
 	o.Web3 = tollbooth.NewLimiter(gc.RateLimitWeb3/(60*5),
 		&limiter.ExpirableOptions{
 			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(30)
+		}).SetBurst(burstFor(gc.RateLimitWeb3))
 
-	// These all use the OTP limit per 5 min with 1hour ttl and burst of 30.
+	// These all use the OTP limit per 5 min with 1hour ttl and a burst equal to the limit.
 	o.Recover = newLimiterPer5mOver1h(gc.RateLimitOtp)
 	o.Resend = newLimiterPer5mOver1h(gc.RateLimitOtp)
 	o.MagicLink = newLimiterPer5mOver1h(gc.RateLimitOtp)
@@ -116,6 +116,16 @@ func newLimiterPer5mOver1h(rate float64) *limiter.Limiter {
 	freq := rate / (60 * 5)
 	lim := tollbooth.NewLimiter(freq, &limiter.ExpirableOptions{
 		DefaultExpirationTTL: time.Hour,
-	}).SetBurst(30)
+	}).SetBurst(burstFor(rate))
 	return lim
+}
+
+// burstFor returns the token bucket size for a limit: the configured number
+// of requests, so the limit is a real cap on a burst and not only a refill
+// rate. A fractional or non-positive limit still allows one request.
+func burstFor(limit float64) int {
+	if limit < 1 {
+		return 1
+	}
+	return int(limit)
 }

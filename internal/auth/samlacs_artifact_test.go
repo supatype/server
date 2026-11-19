@@ -2,7 +2,9 @@ package auth
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -96,13 +98,46 @@ func (ts *SAMLACSTestSuite) artifactLogin(certificate *x509.Certificate) *url.UR
 	provider.SAMLProvider.MetadataXML = ts.IdP.metadataXMLWithArtifactResolver(ts.artifactResolver(response))
 	require.NoError(ts.T(), ts.API.db.UpdateColumns(&provider.SAMLProvider, "metadata_xml"))
 
-	// The artifact's value does not matter: the resolver answers any.
-	return ts.postACSForm(url.Values{"SAMLart": {"AAQAAMFbLinkpkf0SCP5a4cX0KD3NOhGeTd69x5JM5lW7JnSDNhSMEzwnS8="}, "RelayState": {relayState}})
+	// The resolver answers any artifact, but the library records each one it
+	// resolves and refuses to resolve the same artifact twice, so every login
+	// needs its own: a type code, an endpoint index, a source ID and a random
+	// message handle.
+	artifact := make([]byte, 44)
+	copy(artifact, []byte{0x00, 0x04, 0x00, 0x00})
+	_, err := rand.Read(artifact[24:])
+	require.NoError(ts.T(), err)
+	return ts.postACSForm(url.Values{"SAMLart": {base64.StdEncoding.EncodeToString(artifact)}, "RelayState": {relayState}})
+}
+
+// inMode runs the rest of the test with SUPATYPE_MODE set to mode, and the SAML
+// dev policy an API started in that mode has.
+func (ts *SAMLACSTestSuite) inMode(mode string) {
+	previousMode, previousPolicy := ts.Config.Mode, ts.API.samlDev
+	ts.Config.Mode = mode
+	ts.API.samlDev = newSAMLDevPolicy(ts.Config)
+	ts.T().Cleanup(func() {
+		ts.Config.Mode = previousMode
+		ts.API.samlDev = previousPolicy
+	})
+}
+
+// The artifact is resolved by a message that carries the user's assertion, so
+// outside dev mode the library must not send it to an http endpoint.
+func (ts *SAMLACSTestSuite) TestArtifactOverPlainHTTPIsRefusedOutsideDev() {
+	for _, mode := range []string{"", "production", "standalone"} {
+		ts.Run("mode "+mode, func() {
+			ts.inMode(mode)
+			location := ts.artifactLogin(ts.Config.SAML.Certificate)
+			require.Empty(ts.T(), ts.signedInAs(location), "signed in over http: %s", location)
+		})
+	}
 }
 
 // An IdP using the artifact binding may encrypt to either key while a
 // rotation is in progress.
 func (ts *SAMLACSTestSuite) TestArtifactAssertionEncryptedToEitherKeySignsIn() {
+	// The test IdP's resolver listens on plain http, which only dev mode allows.
+	ts.inMode("dev")
 	next := ts.withNextKey()
 	for name, certificate := range map[string]*x509.Certificate{"current key": ts.Config.SAML.Certificate, "next key": next} {
 		ts.Run(name, func() {

@@ -28,6 +28,14 @@ func (p samlDevPolicy) allowsMetadataScheme(scheme string) bool {
 	return scheme == "https" || (p.dev && scheme == "http")
 }
 
+// allowsInsecureSOAPEndpoints reports whether the service provider may send
+// artifact resolution and other SOAP messages to an http endpoint of the
+// identity provider: in dev mode only. Those messages carry the user's
+// assertion, so production sends them over https only.
+func (p samlDevPolicy) allowsInsecureSOAPEndpoints() bool {
+	return p.dev
+}
+
 // verifiesWithoutLookup reports whether domain counts as verified with no DNS
 // lookup: a .supatype.test domain in dev mode.
 func (p samlDevPolicy) verifiesWithoutLookup(domain string) bool {

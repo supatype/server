@@ -794,6 +794,16 @@ func (ts *SSOTestSuite) TestAdminCreateSSOProviderHTTPMetadataURL() {
 		require.Contains(ts.T(), w.Body.String(), "metadata_url is not a HTTPS URL")
 	})
 
+	ts.Run("Production", func() {
+		ts.inMode("production")
+		w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{
+			"type":         "saml",
+			"metadata_url": ts.serveSAMLMetadata("http://idp.local/create-production"),
+		})
+		require.Equal(ts.T(), http.StatusBadRequest, w.Code, w.Body.String())
+		require.Contains(ts.T(), w.Body.String(), "metadata_url is not a HTTPS URL")
+	})
+
 	ts.Run("Dev", func() {
 		ts.inMode("dev")
 		w := ts.adminSSORequest(http.MethodPost, "", map[string]interface{}{

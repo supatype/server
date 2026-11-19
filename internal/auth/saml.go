@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/samlsp"
 	dsig "github.com/russellhaering/goxmldsig"
-	"github.com/supatype/saml"
-	"github.com/supatype/saml/samlsp"
 )
 
 // getSAMLServiceProvider generates a new service provider object with the
@@ -62,6 +62,9 @@ func (a *API) getSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
 	// The library signs with RSA-SHA1 by default, which identity providers
 	// increasingly refuse.
 	provider.SignatureMethod = dsig.RSASHA256SignatureMethod
+	// The library refuses to send SOAP messages (artifact resolution) to an
+	// http endpoint unless told otherwise. Only dev mode tells it.
+	provider.AllowInsecureSOAPEndpoints = a.samlDev.allowsInsecureSOAPEndpoints()
 
 	return &provider
 }
@@ -73,10 +76,9 @@ func (a *API) getSAMLServiceProvider(identityProvider *saml.EntityDescriptor, id
 func (a *API) samlKeyDescriptors(serviceProvider *saml.ServiceProvider, metadata *saml.EntityDescriptor) []saml.KeyDescriptor {
 	written := spKeyDescriptors(metadata)
 	if a.config.SAML.NextCertificate != nil {
-		// The library writes the descriptors of the certificate it holds.
-		// The next certificate belongs in the supatype/saml fork's
-		// Metadata(), with the extra keys carrying their certificates; this
-		// copy goes once the fork does that.
+		// The library writes the descriptors of the certificate it holds
+		// only: DecryptionKeys are not advertised in its metadata. Ask it
+		// for the next certificate's descriptors with a copy that holds it.
 		next := *serviceProvider
 		next.Certificate = a.config.SAML.NextCertificate
 		written = append(written, spKeyDescriptors(next.Metadata())...)
@@ -116,7 +118,7 @@ func (a *API) SAMLMetadata(w http.ResponseWriter, r *http.Request) error {
 	for i := range metadata.SPSSODescriptors {
 		// we set this to false since the IdP initiated flow can only
 		// sign the Assertion, and not the full Request
-		// unfortunately ServiceProvider.Metadata in github.com/supatype/saml
+		// unfortunately ServiceProvider.Metadata in github.com/crewjam/saml
 		// hardcodes this if signatures (instead of encryption) are supported
 		metadata.SPSSODescriptors[i].AuthnRequestsSigned = nil
 

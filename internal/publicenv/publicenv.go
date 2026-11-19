@@ -12,9 +12,11 @@ package publicenv
 import (
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -42,6 +44,9 @@ type Values struct {
 	URL string `json:"url"`
 	// AnonKey is SUPATYPE_ANON_KEY. Empty, or a service role token, is a fault.
 	AnonKey string `json:"anonKey"`
+	// Env is the site's own public values, name to value, which every visitor can read. Left out of
+	// the document when empty, so a deployment with none serves what it always has.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // PublicURL is the deployment's public API address: SUPATYPE_URL when it is
@@ -68,19 +73,53 @@ func PublicURL(supatypeURL, apiExternalURL string) string {
 // about why it failed: the reason in the script is the only way the client can
 // name the fault on its first call.
 func Handler(v Values) http.Handler {
+	return HandlerWith(v, nil)
+}
+
+// rendered is both bodies for one set of the site's public values.
+type rendered struct {
+	values map[string]string
+	doc    []byte
+	script []byte
+}
+
+// render makes the JSON document and the script for v with the site's values env. json.Marshal
+// escapes <, >, & and U+2028/U+2029, so the literal cannot close the script element or end the
+// statement early. A struct of strings and a map of strings cannot fail to marshal.
+func render(v Values, env map[string]string) rendered {
+	v.Env = env
+	doc, _ := json.Marshal(v)
+	return rendered{values: maps.Clone(env), doc: doc, script: scriptOf(doc)}
+}
+
+// HandlerWith is Handler with the site's public values read from env on every request, so a change
+// to them reaches the next page load with no restart. env may be nil, and may return nothing. A
+// misconfigured deployment serves none of them: the fault is the whole answer. The bodies are made
+// again only when the values differ from the ones last made, not on every request.
+func HandlerWith(v Values, env func(*http.Request) map[string]string) http.Handler {
 	v.URL = strings.TrimSpace(v.URL)
 	v.AnonKey = strings.TrimSpace(v.AnonKey)
 	problem := misconfiguration(v)
-	// json.Marshal escapes <, >, & and U+2028/U+2029, so the literal cannot
-	// close the script element or end the statement early. A struct of two
-	// strings, or of one, cannot fail to marshal.
-	doc, _ := json.Marshal(v)
-	script := scriptOf(doc)
+	fixed := render(v, nil)
 	if problem != "" {
 		reason, _ := json.Marshal(struct {
 			Error string `json:"error"`
 		}{problem})
-		script = scriptOf(reason)
+		fixed.script = scriptOf(reason)
+	}
+	var last atomic.Pointer[rendered]
+	last.Store(&fixed)
+	bodies := func(r *http.Request) *rendered {
+		if env == nil || problem != "" {
+			return &fixed
+		}
+		values := env(r)
+		if cur := last.Load(); maps.Equal(cur.values, values) {
+			return cur
+		}
+		next := render(v, values)
+		last.Store(&next)
+		return &next
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,11 +130,11 @@ func Handler(v Values) http.Handler {
 		case !v.Enabled:
 			refuse(w, http.StatusNotFound, "404 page not found")
 		case r.URL.Path == ScriptPath:
-			write(w, r, scriptType, cacheFor(problem), script)
+			write(w, r, scriptType, cacheFor(problem), bodies(r).script)
 		case problem != "":
 			refuse(w, http.StatusServiceUnavailable, problem)
 		default:
-			write(w, r, "application/json; charset=utf-8", "no-cache", doc)
+			write(w, r, "application/json; charset=utf-8", "no-cache", bodies(r).doc)
 		}
 	})
 }

@@ -262,3 +262,18 @@ func TestTenantConfigSiteRoundTripsAsJSON(t *testing.T) {
 		t.Fatalf("decoded %+v", tc.Site)
 	}
 }
+
+// Cloud has no manifest file, so a project's public values arrive through tenant config or its
+// deployed site reads none of them.
+func TestTenantConfigCarriesPublicEnv(t *testing.T) {
+	tc := &TenantConfig{PublicEnv: map[string]string{"STRIPE_PK": "pk_live_1"}}
+	m := &proxy.RouteManifest{Schema: "public"}
+	tc.mergeRoutingInto(m)
+	if m.PublicEnv["STRIPE_PK"] != "pk_live_1" {
+		t.Fatalf("public env did not reach the manifest: %v", m.PublicEnv)
+	}
+	tc.PublicEnv["STRIPE_PK"] = "changed"
+	if m.PublicEnv["STRIPE_PK"] != "pk_live_1" {
+		t.Fatal("the manifest shares the tenant config's map")
+	}
+}

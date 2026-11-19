@@ -36,7 +36,7 @@ It can:
 - `/admin/v1/*` -> admin API
 - `/studio-config` -> Studio config payload
 - `/sql` -> SQL runner endpoint
-- `/supatype-env.json`, `/supatype-env.js` -> the public API address and anon key (see `SUPATYPE_PUBLIC_ENV`)
+- `/supatype-env.json`, `/supatype-env.js` -> the public API address, anon key and the site's public values (see `SUPATYPE_PUBLIC_ENV`)
 - `/*` -> app runtime (`none`, `static`, or `proxy`)
 
 The functions admin API's old address, `/functions/v1/admin/*`, still answers for a transition: a
@@ -143,7 +143,7 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_TENANT_SIGNING_KEY` (a tenant gateway's own key, `tenantKey(master, tenantId)`. Needs `SUPATYPE_MANAGED_PROJECT_REF`, and verifies only requests signed for that ref)
 - `SUPATYPE_TENANT_MASTER_SECRET` (the platform server's master, which derives each tenant's key per request from the tenant ID the request claims. Never set it on a tenant gateway)
 - `SUPATYPE_TLS_DOMAIN`
-- `SUPATYPE_PUBLIC_ENV` (default `true`). `GET /supatype-env.json` answers `{"url":...,"anonKey":...}` for `supatype build`, and `GET /supatype-env.js` sets `window.__SUPATYPE_ENV__` for a static app's script tag, whatever `SUPATYPE_APP_MODE` is and ahead of a file of the same name in the app. `url` is `SUPATYPE_URL`, else `SUPATYPE_API_EXTERNAL_URL` without a trailing `/auth/v1`; the key is `SUPATYPE_ANON_KEY`. The service role key is never served. A misconfigured deployment names every setting to fix, one per line, key before URL: no anon key, an anon key whose JWT role is `service_role` (refused, never echoed), or neither URL set. `/supatype-env.json` answers that text as a 503 with `no-store`. `/supatype-env.js` answers 200 with `no-store` and `window.__SUPATYPE_ENV__ = {"error":"..."};` carrying the same text and no key, because a browser neither runs a script answered with an error status nor tells the page why, and the client throws that reason on its first call. Set `false` for an API-only project: both paths then answer 404.
+- `SUPATYPE_PUBLIC_ENV` (default `true`). `GET /supatype-env.json` answers `{"url":...,"anonKey":...}` for `supatype build`, and `GET /supatype-env.js` sets `window.__SUPATYPE_ENV__` for a static app's script tag, whatever `SUPATYPE_APP_MODE` is and ahead of a file of the same name in the app. `url` is `SUPATYPE_URL`, else `SUPATYPE_API_EXTERNAL_URL` without a trailing `/auth/v1`; the key is `SUPATYPE_ANON_KEY`. The service role key is never served. A misconfigured deployment names every setting to fix, one per line, key before URL: no anon key, an anon key whose JWT role is `service_role` (refused, never echoed), or neither URL set. `/supatype-env.json` answers that text as a 503 with `no-store`. `/supatype-env.js` answers 200 with `no-store` and `window.__SUPATYPE_ENV__ = {"error":"..."};` carrying the same text and no key, because a browser neither runs a script answered with an error status nor tells the page why, and the client throws that reason on its first call. The static site's own public values, which `supatype push` writes into the manifest as `public_env` (self-host) or the control plane publishes in the tenant config (Cloud), are served in the same two documents as an `env` member, `{"url":...,"anonKey":...,"env":{"NAME":"value"}}`, read from the live manifest on every request so a change reaches the next page load. Every visitor can read them. `env` is left out when there are none. Set `false` for an API-only project: both paths then answer 404.
 
 Tenant signing keys (managed mode):
 

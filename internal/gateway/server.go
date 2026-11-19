@@ -217,7 +217,11 @@ func NewWithApp(ctx context.Context) (http.Handler, http.Handler, func(), error)
 			syncer.Run(ctx)
 		}()
 		siteStatus = syncer.Status
-		appHandler = NewAppHandler(srvCfg, syncer.Handler(), WithAPIExternalURL(authCfg.API.ExternalURL))
+		appHandler = NewAppHandler(srvCfg, syncer.Handler(), WithAPIExternalURL(authCfg.API.ExternalURL),
+			WithManifestFor(func(*http.Request) *proxy.RouteManifest {
+				// Never the request: a visitor to the public host chooses its headers.
+				return live.For(nil)
+			}))
 	}
 	if perTenantManifest {
 		live.tenant = keyspace.NewTenantManifestCache(ksPlatform, 0, live.Base)

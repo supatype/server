@@ -34,6 +34,7 @@ It can:
 - `/realtime/v1/*` -> realtime WebSocket handler
 - `/admin/v1/functions/*` -> functions admin API (service-role key required)
 - `/admin/v1/*` -> admin API
+  - `GET /admin/v1/site/status` -> what the app mount serves (mode, dir or upstream, SPA fallback, file count, bytes); read-only
 - `/studio-config` -> Studio config payload
 - `/sql` -> SQL runner endpoint
 - `/supatype-env.json`, `/supatype-env.js` -> the public API address and anon key (see `SUPATYPE_PUBLIC_ENV`)

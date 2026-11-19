@@ -99,6 +99,9 @@ type Deps struct {
 	// Nil, or a nil return, means no declaration, which is "nothing may be cached", not "no
 	// constraint". See cacheceiling.Narrow.
 	Declared func(*http.Request) map[string]proxy.TableCache
+	// Site is what the app mount serves for this request, from its manifest over the config. Nil
+	// reads as mode none.
+	Site func(*http.Request) SiteSettings
 }
 
 func Handler(d Deps) http.Handler {
@@ -112,6 +115,8 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("/database/credentials/first-view", only(http.MethodPost, credentialFirstViewHandler(cfg, platform)))
 	mux.HandleFunc("/database/credentials/rotate", only(http.MethodPost, credentialRotateHandler(cfg, platform)))
 	mux.HandleFunc("/database/connection", only(http.MethodGet, connectionHandler(cfg)))
+
+	mux.HandleFunc("/site/status", only(http.MethodGet, siteStatusHandler(d.Site)))
 
 	mountCacheRoutes(mux, cfg, vc, platform, stats)
 	mountKeyspaceStatsRoutes(mux, cfg, d.Monitor)

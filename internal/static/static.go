@@ -474,3 +474,15 @@ func servePrettyURL(w http.ResponseWriter, r *http.Request, dir string, cache Ca
 	serveVariant(w, r, dir, disk, enc, page)
 	return true
 }
+
+// Effective is o with the built-in defaults filled in for what it leaves empty, so a caller can
+// report the Cache-Control a request really gets, not only what was configured.
+func (o CacheOpts) Effective() CacheOpts {
+	if strings.TrimSpace(o.HTML) == "" {
+		o.HTML = defaultHTMLCache
+	}
+	if strings.TrimSpace(o.HashedAssets) == "" {
+		o.HashedAssets = defaultHashedCache
+	}
+	return o
+}

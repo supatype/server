@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crewjam/saml"
 	"github.com/fatih/structs"
 	"github.com/gofrs/uuid"
-	"github.com/supatype/saml"
 	"github.com/supatype/server/internal/auth/apierrors"
 	"github.com/supatype/server/internal/auth/metering"
 	"github.com/supatype/server/internal/auth/models"
@@ -415,7 +415,7 @@ func samlPrivateError(err error) error {
 }
 
 func samlResponseIssuer(responseXML []byte) (string, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(responseXML)) // #nosec G709 -- token scan only; the SAML response is fully validated by github.com/supatype/saml after provider lookup.
+	decoder := xml.NewDecoder(bytes.NewReader(responseXML)) // #nosec G709 -- token scan only; the SAML response is fully validated by github.com/crewjam/saml after provider lookup.
 	for {
 		tok, err := decoder.Token()
 		if err != nil {

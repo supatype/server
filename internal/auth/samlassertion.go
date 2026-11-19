@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/supatype/saml"
+	"github.com/crewjam/saml"
 	"github.com/supatype/server/internal/auth/models"
 )
 

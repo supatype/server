@@ -53,13 +53,13 @@ func TestPublicEnvServesTheManifestsValues(t *testing.T) {
 	}
 }
 
-// The app listener, which has no manifest of its own, is handed the live one's values.
+// The app listener, which has no per-request manifest, is handed the live one, whatever the request.
 func TestTheAppListenerServesThePublicValues(t *testing.T) {
 	cfg := managedAppConfig()
 	cfg.AnonKey = "anon-key-value"
 	cfg.SupatypeURL = "https://p.example.test"
-	source := func(*http.Request) map[string]string { return map[string]string{"MAPS_KEY": "m1"} }
-	h := NewAppHandler(&cfg, siteStub(), WithPublicEnvSource(source))
+	manifest := &proxy.RouteManifest{Schema: "public", PublicEnv: map[string]string{"MAPS_KEY": "m1"}}
+	h := NewAppHandler(&cfg, siteStub(), WithManifestFor(func(*http.Request) *proxy.RouteManifest { return manifest }))
 	rec := appRequest(h, http.MethodGet, publicenv.JSONPath)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"env":{"MAPS_KEY":"m1"}`) {
 		t.Errorf("%s: %d %q", publicenv.JSONPath, rec.Code, rec.Body.String())

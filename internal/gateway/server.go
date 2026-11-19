@@ -218,9 +218,9 @@ func NewWithApp(ctx context.Context) (http.Handler, http.Handler, func(), error)
 		}()
 		siteStatus = syncer.Status
 		appHandler = NewAppHandler(srvCfg, syncer.Handler(), WithAPIExternalURL(authCfg.API.ExternalURL),
-			WithPublicEnvSource(func(*http.Request) map[string]string {
+			WithManifestFor(func(*http.Request) *proxy.RouteManifest {
 				// Never the request: a visitor to the public host chooses its headers.
-				return live.For(nil).PublicEnv
+				return live.For(nil)
 			}))
 	}
 	if perTenantManifest {

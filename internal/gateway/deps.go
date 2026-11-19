@@ -92,11 +92,6 @@ type Deps struct {
 	// APIExternalURL is the auth service's API_EXTERNAL_URL, the public address the deployment
 	// answers on when SUPATYPE_URL is not set. Set by WithAPIExternalURL.
 	APIExternalURL string
-
-	// PublicEnvSource, when set, gives the site's public values in place of the request's manifest.
-	// The app listener has no per-request manifest, so it is handed the live one's. Set by
-	// WithPublicEnvSource.
-	PublicEnvSource func(*http.Request) map[string]string
 }
 
 // DepsOption sets something NewDeps cannot derive from its arguments.
@@ -114,10 +109,10 @@ func WithAPIExternalURL(externalURL string) DepsOption {
 	return func(d *Deps) { d.APIExternalURL = externalURL }
 }
 
-// WithPublicEnvSource gives the gateway the site's public values for a request, for a router with no
-// manifest of its own.
-func WithPublicEnvSource(source func(*http.Request) map[string]string) DepsOption {
-	return func(d *Deps) { d.PublicEnvSource = source }
+// WithManifestFor gives a router with no per-request manifest of its own the one to answer from. The
+// app listener has none: it is handed the live manifest, whatever the request says.
+func WithManifestFor(manifestFor func(*http.Request) *proxy.RouteManifest) DepsOption {
+	return func(d *Deps) { d.ManifestFor = manifestFor }
 }
 
 // NewDeps resolves everything the mounts share.

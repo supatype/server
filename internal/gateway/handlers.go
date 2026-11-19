@@ -410,13 +410,10 @@ func buildPublicEnv(d *Deps) http.Handler {
 	}, d.publicValues)
 }
 
-// publicValues is the site's public values for this request: the ones the app listener was handed,
-// else the request's own manifest's. Neither holds the service role key, and the only thing here
-// that was ever a person's input is a value they typed to be read by every visitor.
+// publicValues is the site's public values for this request, from its manifest. The manifest holds
+// no service role key, and the only thing here that was ever a person's input is a value they typed
+// to be read by every visitor.
 func (d *Deps) publicValues(r *http.Request) map[string]string {
-	if d.PublicEnvSource != nil {
-		return d.PublicEnvSource(r)
-	}
 	if d.ManifestFor == nil {
 		return nil
 	}

@@ -34,8 +34,9 @@ type Config struct {
 	TenantID string
 	// MaxBytes refuses a deployment whose declared files total more than this.
 	MaxBytes int64
-	// Cache is the Cache-Control policy the static handler applies.
-	Cache static.CacheOpts
+	// Cache returns the Cache-Control policy the static handler applies, read when a version is
+	// swapped in. Nil means the defaults.
+	Cache func() static.CacheOpts
 	// RetireAfter is how long a version that left the kept set stays on disk, so a request that
 	// started on it can finish. Zero removes it at once.
 	RetireAfter time.Duration
@@ -246,5 +247,9 @@ func (s *Syncer) swapTo(ref *proxy.SiteRef) {
 		s.previous = cur.id
 	}
 	dir := s.versionDir(ref.DeploymentID)
-	s.serve.Store(&served{id: ref.DeploymentID, handler: static.Handler(dir, ref.SPA, s.cfg.Cache)})
+	var cache static.CacheOpts
+	if s.cfg.Cache != nil {
+		cache = s.cfg.Cache()
+	}
+	s.serve.Store(&served{id: ref.DeploymentID, handler: static.Handler(dir, ref.SPA, cache)})
 }

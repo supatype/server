@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/supatype/server/internal/changelog"
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/site"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -41,6 +42,10 @@ type ProbeConfig struct {
 	// is nil when no listener is wired. Shown on /health for `supatype doctor`; never part of
 	// readiness, since the request-path fallback still serves every API write.
 	AfterHooks func() changelog.Status
+	// Site reports the static site syncer (what is wanted, what is served, the last error), or is nil
+	// when there is no app listener. Shown on /health; never part of readiness, since the API does not
+	// depend on the site.
+	Site func() site.Status
 }
 
 // Attach mounts GET /health and GET /health/ready on r (supatype-server outer mux).
@@ -88,6 +93,9 @@ func collectComponents(probes ProbeConfig, timeout time.Duration) map[string]any
 	}
 	if probes.AfterHooks != nil {
 		components["after_hooks"] = probes.AfterHooks()
+	}
+	if probes.Site != nil {
+		components["site"] = probes.Site()
 	}
 	return components
 }

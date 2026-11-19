@@ -106,6 +106,12 @@ type RouteManifest struct {
 	// Site is the live static site deployment, written by the control plane when a deploy goes live
 	// or is rolled back. The site syncer follows it. Nil means no site.
 	Site *SiteRef `json:"site,omitempty"`
+
+	// PublicEnv is the static site's public, non-secret values, served beside the API address and
+	// anon key at /supatype-env.js and /supatype-env.json. `supatype push` writes them on a
+	// self-hosted deployment, and the control plane publishes them for a managed one. Every visitor
+	// can read them.
+	PublicEnv map[string]string `json:"public_env,omitempty"`
 }
 
 // SiteRef names the deployment a project's site is served from. Token is the bearer the gateway
@@ -252,6 +258,9 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 		site := *m.Site
 		cm.Site = &site
 	}
+	if len(m.PublicEnv) > 0 {
+		cm.PublicEnv = maps.Clone(m.PublicEnv)
+	}
 	// Deep-copied like every other map here. A shared hook map would let one tenant's reload mutate
 	// what another tenant's in-flight request is reading.
 	if len(m.Hooks) > 0 {
@@ -348,6 +357,9 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	if overlay.Site != nil {
 		site := *overlay.Site
 		base.Site = &site
+	}
+	if len(overlay.PublicEnv) > 0 {
+		base.PublicEnv = maps.Clone(overlay.PublicEnv)
 	}
 	if overlay.StaticCacheHTML != "" {
 		base.StaticCacheHTML = overlay.StaticCacheHTML

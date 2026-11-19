@@ -2,6 +2,8 @@ package keyspace
 
 import (
 	"context"
+	"maps"
+
 	"github.com/supatype/server/internal/proxy"
 )
 
@@ -117,6 +119,9 @@ func (tc *TenantConfig) mergeRoutingInto(m *proxy.RouteManifest) {
 	if tc.Site != nil {
 		site := *tc.Site
 		m.Site = &site
+	}
+	if len(tc.PublicEnv) > 0 {
+		m.PublicEnv = maps.Clone(tc.PublicEnv)
 	}
 	if tc.StaticCacheHTML != "" {
 		m.StaticCacheHTML = tc.StaticCacheHTML

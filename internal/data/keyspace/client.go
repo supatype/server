@@ -84,6 +84,10 @@ type TenantConfig struct {
 	// Site is the live static site deployment (see proxy.SiteRef), merged into the manifest.
 	Site *proxy.SiteRef `json:"site,omitempty"`
 
+	// PublicEnv is the project's public static site values (see proxy.RouteManifest.PublicEnv),
+	// merged into the manifest.
+	PublicEnv map[string]string `json:"public_env,omitempty"`
+
 	StaticCacheHTML         string            `json:"static_cache_html,omitempty"`
 	StaticCacheHashedAssets string            `json:"static_cache_hashed_assets,omitempty"`
 	StaticCachePrefixes     map[string]string `json:"static_cache_prefixes,omitempty"`

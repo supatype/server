@@ -403,11 +403,24 @@ func buildApp(d *Deps) http.Handler {
 // buildPublicEnv serves the deployment's public address and anon key. Never the service role key:
 // publicenv.Values has no field that could carry it.
 func buildPublicEnv(d *Deps) http.Handler {
-	return publicenv.Handler(publicenv.Values{
+	return publicenv.HandlerWith(publicenv.Values{
 		Enabled: d.Config.PublicEnv.On(),
 		URL:     publicenv.PublicURL(d.Config.SupatypeURL, d.APIExternalURL),
 		AnonKey: d.Config.AnonKey,
-	})
+	}, d.publicValues)
+}
+
+// publicValues is the site's public values for this request: the ones the app listener was handed,
+// else the request's own manifest's. Neither holds the service role key, and the only thing here
+// that was ever a person's input is a value they typed to be read by every visitor.
+func (d *Deps) publicValues(r *http.Request) map[string]string {
+	if d.PublicEnvSource != nil {
+		return d.PublicEnvSource(r)
+	}
+	if d.ManifestFor == nil {
+		return nil
+	}
+	return d.ManifestFor(r).PublicEnv
 }
 
 // newHookCallback builds the previous() endpoint, which reads the rows a write

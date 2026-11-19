@@ -42,6 +42,9 @@ type Values struct {
 	URL string `json:"url"`
 	// AnonKey is SUPATYPE_ANON_KEY. Empty, or a service role token, is a fault.
 	AnonKey string `json:"anonKey"`
+	// Env is the site's own public values, name to value, which every visitor can read. Left out of
+	// the document when empty, so a deployment with none serves what it always has.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // PublicURL is the deployment's public API address: SUPATYPE_URL when it is
@@ -68,6 +71,13 @@ func PublicURL(supatypeURL, apiExternalURL string) string {
 // about why it failed: the reason in the script is the only way the client can
 // name the fault on its first call.
 func Handler(v Values) http.Handler {
+	return HandlerWith(v, nil)
+}
+
+// HandlerWith is Handler with the site's public values read from env on every request, so a change
+// to them reaches the next page load with no restart. env may be nil, and may return nothing. A
+// misconfigured deployment serves none of them: the fault is the whole answer.
+func HandlerWith(v Values, env func(*http.Request) map[string]string) http.Handler {
 	v.URL = strings.TrimSpace(v.URL)
 	v.AnonKey = strings.TrimSpace(v.AnonKey)
 	problem := misconfiguration(v)
@@ -91,13 +101,30 @@ func Handler(v Values) http.Handler {
 		case !v.Enabled:
 			refuse(w, http.StatusNotFound, "404 page not found")
 		case r.URL.Path == ScriptPath:
-			write(w, r, scriptType, cacheFor(problem), script)
+			write(w, r, scriptType, cacheFor(problem), withEnv(v, env, r, problem, script, scriptOf))
 		case problem != "":
 			refuse(w, http.StatusServiceUnavailable, problem)
 		default:
-			write(w, r, "application/json; charset=utf-8", "no-cache", doc)
+			write(w, r, "application/json; charset=utf-8", "no-cache", withEnv(v, env, r, problem, doc, identity))
 		}
 	})
+}
+
+func identity(doc []byte) []byte { return doc }
+
+// withEnv is fixed, the answer settled at start, unless the request has public values to carry, in
+// which case the document is made again with them and shaped by wrap. A fault is never decorated.
+func withEnv(v Values, env func(*http.Request) map[string]string, r *http.Request, problem string, fixed []byte, wrap func([]byte) []byte) []byte {
+	if env == nil || problem != "" {
+		return fixed
+	}
+	values := env(r)
+	if len(values) == 0 {
+		return fixed
+	}
+	v.Env = values
+	doc, _ := json.Marshal(v)
+	return wrap(doc)
 }
 
 // scriptOf is the statement that hands literal to the client.

@@ -305,3 +305,61 @@ func TestSPAFallbackUsesHTMLCachePolicy(t *testing.T) {
 		t.Fatalf("Cache-Control = %q", got)
 	}
 }
+
+// A path under a service prefix that no service answered is that service's miss, never the app
+// shell: the SPA fallback must not turn /realtime/v1/websocket into index.html.
+func TestSPAFallbackNeverAnswersAServicePrefix(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>shell</html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(dir, true, CacheOpts{})
+
+	for _, p := range []string{
+		"/realtime/v1/websocket", "/functions/v1/hello", "/rest/v1/todos",
+		"/auth/v1/token", "/storage/v1/object/a", "/graphql/v1",
+	} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", p, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "shell") {
+			t.Errorf("%s: served index.html", p)
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+			t.Errorf("%s: Content-Type = %q, want JSON", p, got)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", p, got)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "shell") {
+		t.Errorf("/dashboard: status %d body %q, want the app shell", rec.Code, rec.Body.String())
+	}
+}
+
+// Only a whole first segment is reserved: /restaurant and /authors are the site's own routes.
+func TestReservedAppPrefixMatchesWholeSegments(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"/rest/", true}, {"/rest/v1/x", true}, {"/graphql/v1", true},
+		{"/restaurant", false}, {"/rest", false}, {"/authors/x", false}, {"/", false},
+	} {
+		if got := reservedAppPrefix(tc.path); got != tc.want {
+			t.Errorf("reservedAppPrefix(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}

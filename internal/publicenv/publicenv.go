@@ -12,9 +12,11 @@ package publicenv
 import (
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -74,23 +76,50 @@ func Handler(v Values) http.Handler {
 	return HandlerWith(v, nil)
 }
 
+// rendered is both bodies for one set of the site's public values.
+type rendered struct {
+	values map[string]string
+	doc    []byte
+	script []byte
+}
+
+// render makes the JSON document and the script for v with the site's values env. json.Marshal
+// escapes <, >, & and U+2028/U+2029, so the literal cannot close the script element or end the
+// statement early. A struct of strings and a map of strings cannot fail to marshal.
+func render(v Values, env map[string]string) rendered {
+	v.Env = env
+	doc, _ := json.Marshal(v)
+	return rendered{values: maps.Clone(env), doc: doc, script: scriptOf(doc)}
+}
+
 // HandlerWith is Handler with the site's public values read from env on every request, so a change
 // to them reaches the next page load with no restart. env may be nil, and may return nothing. A
-// misconfigured deployment serves none of them: the fault is the whole answer.
+// misconfigured deployment serves none of them: the fault is the whole answer. The bodies are made
+// again only when the values differ from the ones last made, not on every request.
 func HandlerWith(v Values, env func(*http.Request) map[string]string) http.Handler {
 	v.URL = strings.TrimSpace(v.URL)
 	v.AnonKey = strings.TrimSpace(v.AnonKey)
 	problem := misconfiguration(v)
-	// json.Marshal escapes <, >, & and U+2028/U+2029, so the literal cannot
-	// close the script element or end the statement early. A struct of two
-	// strings, or of one, cannot fail to marshal.
-	doc, _ := json.Marshal(v)
-	script := scriptOf(doc)
+	fixed := render(v, nil)
 	if problem != "" {
 		reason, _ := json.Marshal(struct {
 			Error string `json:"error"`
 		}{problem})
-		script = scriptOf(reason)
+		fixed.script = scriptOf(reason)
+	}
+	var last atomic.Pointer[rendered]
+	last.Store(&fixed)
+	bodies := func(r *http.Request) *rendered {
+		if env == nil || problem != "" {
+			return &fixed
+		}
+		values := env(r)
+		if cur := last.Load(); maps.Equal(cur.values, values) {
+			return cur
+		}
+		next := render(v, values)
+		last.Store(&next)
+		return &next
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,30 +130,13 @@ func HandlerWith(v Values, env func(*http.Request) map[string]string) http.Handl
 		case !v.Enabled:
 			refuse(w, http.StatusNotFound, "404 page not found")
 		case r.URL.Path == ScriptPath:
-			write(w, r, scriptType, cacheFor(problem), withEnv(v, env, r, problem, script, scriptOf))
+			write(w, r, scriptType, cacheFor(problem), bodies(r).script)
 		case problem != "":
 			refuse(w, http.StatusServiceUnavailable, problem)
 		default:
-			write(w, r, "application/json; charset=utf-8", "no-cache", withEnv(v, env, r, problem, doc, identity))
+			write(w, r, "application/json; charset=utf-8", "no-cache", bodies(r).doc)
 		}
 	})
-}
-
-func identity(doc []byte) []byte { return doc }
-
-// withEnv is fixed, the answer settled at start, unless the request has public values to carry, in
-// which case the document is made again with them and shaped by wrap. A fault is never decorated.
-func withEnv(v Values, env func(*http.Request) map[string]string, r *http.Request, problem string, fixed []byte, wrap func([]byte) []byte) []byte {
-	if env == nil || problem != "" {
-		return fixed
-	}
-	values := env(r)
-	if len(values) == 0 {
-		return fixed
-	}
-	v.Env = values
-	doc, _ := json.Marshal(v)
-	return wrap(doc)
 }
 
 // scriptOf is the statement that hands literal to the client.

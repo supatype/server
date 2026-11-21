@@ -63,7 +63,7 @@ func resolve(r *http.Request, opts Options) *http.Request {
 	r.Header.Del(SecretHeaderName)
 	r.Header.Del(HeaderName)
 
-	peer := remoteHost(r.RemoteAddr)
+	peer := RemoteHost(r.RemoteAddr)
 	ctx := r.Context()
 	if secret := opts.Security.ForwardingSecret; secret != "" {
 		addr := peer
@@ -127,7 +127,9 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func remoteHost(remoteAddr string) string {
+// RemoteHost is remoteAddr without its port; every new connection has a new source port, so a limit
+// keyed on host:port would give each connection a fresh allowance.
+func RemoteHost(remoteAddr string) string {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		return remoteAddr

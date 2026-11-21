@@ -66,7 +66,7 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 			DefaultExpirationTTL: time.Hour,
 		}).SetBurst(int(gc.RateLimitAnonymousUsers)).SetMethods([]string{"POST"})
 
-	o.Token = newClientLimiter(gc.RateLimitTokenRefresh, 5*time.Minute, time.Hour)
+	o.Token = newPerClientLimiter(gc.RateLimitTokenRefresh)
 
 	o.Verify = newPerClientLimiter(gc.RateLimitVerify)
 
@@ -74,11 +74,11 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 
 	o.FactorChallenge = newClientLimiter(gc.MFA.RateLimitChallengeAndVerify, time.Minute, time.Minute)
 
-	o.SSO = newClientLimiter(gc.RateLimitSso, 5*time.Minute, time.Hour)
+	o.SSO = newPerClientLimiter(gc.RateLimitSso)
 
-	o.SAMLAssertion = newClientLimiter(gc.SAML.RateLimitAssertion, 5*time.Minute, time.Hour)
+	o.SAMLAssertion = newPerClientLimiter(gc.SAML.RateLimitAssertion)
 
-	o.Web3 = newClientLimiter(gc.RateLimitWeb3, 5*time.Minute, time.Hour)
+	o.Web3 = newPerClientLimiter(gc.RateLimitWeb3)
 
 	// Sign-ups and sign-ins share the OTP limit: each endpoint counts its own requests per client.
 	o.Recover = newPerClientLimiter(gc.RateLimitOtp)
@@ -87,7 +87,7 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 	o.Otp = newPerClientLimiter(gc.RateLimitOtp)
 	o.User = newPerClientLimiter(gc.RateLimitOtp)
 	o.Signups = newPerClientLimiter(gc.RateLimitOtp)
-	o.OAuthClientRegister = newClientLimiter(gc.RateLimitOAuthDynamicClientRegister, 5*time.Minute, time.Hour)
+	o.OAuthClientRegister = newPerClientLimiter(gc.RateLimitOAuthDynamicClientRegister)
 
 	return o
 }

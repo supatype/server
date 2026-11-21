@@ -134,3 +134,44 @@ func TestRateLimitKey(t *testing.T) {
 		})
 	}
 }
+
+// Token refresh, SSO, MFA and Web3 hold their configured number too, not a fixed 30.
+func TestEveryLimitAllowsItsConfiguredNumber(t *testing.T) {
+	cfg := limitConfig("X-Real-IP")
+	cfg.RateLimitTokenRefresh = 3
+	cfg.RateLimitSso = 4
+	cfg.RateLimitWeb3 = 5
+	cfg.MFA.RateLimitChallengeAndVerify = 2
+	lo := NewLimiterOptions(cfg)
+
+	cases := map[string]struct {
+		lmt  *limiter.Limiter
+		want int
+	}{
+		"token":            {lo.Token, 3},
+		"sso":              {lo.SSO, 4},
+		"web3":             {lo.Web3, 5},
+		"factor verify":    {lo.FactorVerify, 2},
+		"factor challenge": {lo.FactorChallenge, 2},
+	}
+	for name, tc := range cases {
+		require.Equal(t, tc.want, allowedBeforeLimit(tc.lmt, "198.51.100.1", 40), name)
+		require.Equal(t, tc.want, allowedBeforeLimit(tc.lmt, "198.51.100.2", 40), name+": another client has its own count")
+	}
+}
+
+// A limit below one request still lets one through on each of them.
+func TestEveryLimitBelowOneStillAllowsOne(t *testing.T) {
+	cfg := limitConfig("X-Real-IP")
+	cfg.RateLimitTokenRefresh = 0.5
+	cfg.RateLimitSso = 0.5
+	cfg.RateLimitWeb3 = 0.5
+	cfg.MFA.RateLimitChallengeAndVerify = 0.5
+	lo := NewLimiterOptions(cfg)
+	for name, lmt := range map[string]*limiter.Limiter{
+		"token": lo.Token, "sso": lo.SSO, "web3": lo.Web3,
+		"factor verify": lo.FactorVerify, "factor challenge": lo.FactorChallenge,
+	} {
+		require.Equal(t, 1, allowedBeforeLimit(lmt, "198.51.100.1", 5), name)
+	}
+}

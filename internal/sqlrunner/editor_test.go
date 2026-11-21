@@ -20,7 +20,9 @@ const (
 // statement commits, not to the editor's login role.
 //
 // The database here is owned by a non-superuser role, and the editor logs in as
-// a member of it, which is the shape the postgres image provisions.
+// a plain member of it with no reassign function, so this is the plain REASSIGN
+// an image from before public.supatype_sql_editor_reassign_owned() gets. The
+// image's own shape is TestTheImageEditorHandsObjectsToTheOwner.
 func TestEditorObjectsAreHandedToTheDatabaseOwner(t *testing.T) {
 	admin, editor := editorPools(t)
 
@@ -54,6 +56,59 @@ func TestTheFallbackConnectionStillRuns(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
 	}
+}
+
+// On the supatype postgres image the editor is a member of the owner WITH SET
+// FALSE, so it cannot run REASSIGN OWNED itself on Postgres 16 and later. What it
+// creates still ends up the owner's, through the image's reassign function, and
+// it still cannot SET ROLE into the owner.
+//
+// Needs the image's DSN as a superuser (SUPATYPE_SECSQL_DSN) and the password the
+// image was started with for supatype_sql_editor (SUPATYPE_SECSQL_EDITOR_PASSWORD).
+func TestTheImageEditorHandsObjectsToTheOwner(t *testing.T) {
+	admin, editor := imageEditorPools(t)
+	ctx := context.Background()
+	t.Cleanup(func() { _, _ = admin.Exec(ctx, `DROP TABLE IF EXISTS public.sqlrunner_image_editor_made`) })
+
+	rec := post(t, authorised(&config.Config{}), func() (Pool, error) { return editor, nil },
+		`{"query":"CREATE TABLE public.sqlrunner_image_editor_made (id serial PRIMARY KEY)"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var owner, dbOwner string
+	err := admin.QueryRow(ctx, `SELECT pg_catalog.pg_get_userbyid(c.relowner),
+	    (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+	  FROM pg_catalog.pg_class c WHERE c.oid = 'public.sqlrunner_image_editor_made'::regclass`).Scan(&owner, &dbOwner)
+	if err != nil {
+		t.Fatalf("read owner: %v", err)
+	}
+	if owner != dbOwner {
+		t.Errorf("the table is owned by %q, want the database owner %q", owner, dbOwner)
+	}
+
+	rec = post(t, authorised(&config.Config{}), func() (Pool, error) { return editor, nil },
+		`{"query":"SET ROLE `+dbOwner+`"}`, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("SET ROLE %s: status = %d (%s), want 422", dbOwner, rec.Code, rec.Body.String())
+	}
+}
+
+// imageEditorPools returns a superuser pool and an editor pool on the image's
+// database, or skips when either credential is missing.
+func imageEditorPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
+	t.Helper()
+	dsn := os.Getenv("SUPATYPE_SECSQL_DSN")
+	password := os.Getenv("SUPATYPE_SECSQL_EDITOR_PASSWORD")
+	if dsn == "" || password == "" {
+		t.Skip("set SUPATYPE_SECSQL_DSN and SUPATYPE_SECSQL_EDITOR_PASSWORD to run the editor against the postgres image")
+	}
+	admin := connect(t, dsn, func(*pgxpool.Config) {})
+	editor := connect(t, dsn, func(c *pgxpool.Config) {
+		c.ConnConfig.User = editorRole
+		c.ConnConfig.Password = password
+	})
+	return admin, editor
 }
 
 // editorPools provisions a database owned by a non-superuser role and an editor

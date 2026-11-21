@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/supatype/server/internal/config"
 )
 
@@ -363,6 +364,14 @@ func TestFailuresAreReportedWithTheStatusTheyMean(t *testing.T) {
 		"the result set ends in an error": {
 			serving(&fakePool{tx: &fakeTx{rows: &fakeRows{columns: []string{"n"}, err: boom}}}),
 			http.StatusInternalServerError,
+		},
+		// A statement with no result set (SET ROLE, CREATE ...) reports what
+		// Postgres said through the result, not through Query.
+		"postgres rejects the statement once it runs": {
+			serving(&fakePool{tx: &fakeTx{rows: &fakeRows{columns: []string{"n"}, err: &pgconn.PgError{
+				Code: "42501", Message: `permission denied to set role "supatype_owner"`,
+			}}}}),
+			http.StatusUnprocessableEntity,
 		},
 		"the commit does not land": {
 			serving(&fakePool{tx: &fakeTx{commitErr: boom, rows: &fakeRows{columns: []string{"n"}}}}),

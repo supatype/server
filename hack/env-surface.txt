@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 577 names
+# total: 578 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -1012,6 +1012,8 @@ SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPT
 SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPTION_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPTION_KEY_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_FORWARDING_SECRET
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_MANUAL_LINKING_ENABLED
     struct internal/conf.GlobalConfiguration

@@ -52,6 +52,10 @@ func RemoteHost(r *http.Request) string {
 
 // GetIPAddress returns the real IP address of the HTTP request.
 func GetIPAddress(r *http.Request) string {
+	if addr, ok := stff.DecidedAddress(r); ok {
+		return addr
+	}
+
 	if stffAddr, ok := stff.GetIPAddress(r); ok {
 		return stffAddr
 	}

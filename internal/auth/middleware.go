@@ -68,6 +68,12 @@ var emailRateLimitCounter = observability.ObtainMetricCounter("supatype_auth_ema
 // the limit entirely, so one that did not come through the gateway, or a server with no header
 // configured, was never limited; it now counts against the peer it came from.
 func (a *API) rateLimitKey(req *http.Request) string {
+	// With a forwarding secret configured the resolver has already decided, and no header on the
+	// request is believed unless it came with the secret.
+	if addr, ok := stff.DecidedAddress(req); ok {
+		return addr
+	}
+
 	if stffAddr, ok := stff.GetIPAddress(req); ok {
 		return stffAddr
 	}

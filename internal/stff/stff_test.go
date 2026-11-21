@@ -59,56 +59,6 @@ func TestParseHeader(t *testing.T) {
 	}
 }
 
-func TestWithIPAddress(t *testing.T) {
-	testCases := []struct {
-		name      string
-		headerVal string
-		expAddr   string
-		expErr    error
-	}{
-		{
-			name:      "WithHeader",
-			headerVal: "2600:cafe:bead::1",
-			expAddr:   "2600:cafe:bead::1",
-			expErr:    nil,
-		},
-		{
-			name:      "HeaderNotFound",
-			headerVal: "",
-			expAddr:   "",
-			expErr:    ErrHeaderNotFound,
-		},
-		{
-			name:      "HeaderInvalid",
-			headerVal: "invalid",
-			expAddr:   "",
-			expErr:    ErrHeaderInvalid,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
-
-			if tc.headerVal != "" {
-				r.Header.Set(HeaderName, tc.headerVal)
-			}
-
-			obsReq, obsErr := withIPAddress(r)
-
-			if tc.expErr == nil {
-				require.NotNil(t, obsReq)
-
-				obsAddr, ok := GetIPAddress(obsReq)
-				require.Equal(t, tc.expAddr, obsAddr)
-				require.Equal(t, true, ok)
-			}
-
-			require.ErrorIs(t, obsErr, tc.expErr)
-		})
-	}
-}
-
 func TestGetIPAddress(t *testing.T) {
 	testCases := []struct {
 		name string

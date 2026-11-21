@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/supatype/server/internal/stff"
 )
 
 // DefaultTimeout is used when a hook declares none. Well below the edge-function ceiling, so a hung
@@ -26,13 +28,13 @@ const maxVerdictBytes = 1 << 20 // 1 MiB
 type OutcomeKind int
 
 const (
-	// OutcomeProceed — carry on with the request unchanged.
+	// OutcomeProceed: carry on with the request unchanged.
 	OutcomeProceed OutcomeKind = iota
-	// OutcomeReplace — carry on, using Body as the request body.
+	// OutcomeReplace: carry on, using Body as the request body.
 	OutcomeReplace
-	// OutcomeReject — the hook said no. Status and Body go to the caller.
+	// OutcomeReject: the hook said no. Status and Body go to the caller.
 	OutcomeReject
-	// OutcomeUnavailable — the hook did not answer. The per-hook policy decides.
+	// OutcomeUnavailable: the hook did not answer. The per-hook policy decides.
 	OutcomeUnavailable
 )
 
@@ -56,12 +58,12 @@ type Doer interface {
 // Deliberately **not** `internal/auth/hooks/hookshttp`: that dispatcher retries, which is right for an
 // auth webhook and wrong here. A retry before a write multiplies the latency the caller waits, and
 // re-invokes a handler that may already have acted. It also folds every non-2xx into an error, which
-// would lose the distinction this design turns on — a 4xx is the hook saying no, a 5xx is the hook
+// would lose the distinction this design turns on: a 4xx is the hook saying no, a 5xx is the hook
 // being broken.
 type Dispatcher struct {
 	client Doer
 	// Secret signs the payload so a handler can tell a real hook call from a public one. Optional:
-	// unsigned calls still work, because the security that matters does not rest here — the callback
+	// unsigned calls still work, because the security that matters does not rest here. The callback
 	// URL for previous() carries its own token, and a hook's verdict only affects the request that
 	// invoked it.
 	secret []byte
@@ -101,6 +103,10 @@ func (d *Dispatcher) Call(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Supatype-Hook", event)
 	req.Header.Set(HookDepthHeader, strconv.Itoa(depth))
+	// The end user who triggered the write, so the hook can attribute or limit by them.
+	if addr, ok := stff.ClientAddress(ctx); ok {
+		req.Header.Set(stff.HeaderName, addr)
+	}
 	// Identity encoding for the same reason hookshttp sets it: a gzipped response carries no length.
 	req.Header.Set("Accept-Encoding", "identity")
 	d.sign(req, payload)
@@ -108,7 +114,7 @@ func (d *Dispatcher) Call(
 	res, err := d.client.Do(req)
 	if err != nil {
 		// A timeout arrives here as a context error. Either way the hook did not answer, which is a
-		// different thing from answering "no" — the caller's policy decides.
+		// different thing from answering "no", and the caller's policy decides.
 		return Outcome{Kind: OutcomeUnavailable, Reason: fmt.Sprintf("calling hook: %v", err)}
 	}
 	defer func() { _ = res.Body.Close() }()

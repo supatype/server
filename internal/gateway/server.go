@@ -330,7 +330,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	}
 
 	tenantGateway = platform.New(srvCfg, ksPlatform)
-	handler := tenantGateway.Wrap(outerMux)
+	handler := forwardingFront(authCfg)(tenantGateway.Wrap(outerMux))
 	return handler, drain, nil
 }
 

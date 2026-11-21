@@ -859,6 +859,12 @@ type SecurityConfiguration struct {
 	ManualLinkingEnabled                  bool                 `json:"manual_linking_enabled" split_words:"true" default:"false"`
 	StForwardedForEnabled                 bool                 `json:"st_forwarded_for_enabled" split_words:"true" default:"false"`
 
+	// ForwardingSecret is SUPATYPE_SECURITY_FORWARDING_SECRET, held only by this stack's own gateway and
+	// workers. A request that presents it in St-Forwarding-Secret may name the end user's address; any
+	// other request is counted against the connection it came from. Empty keeps the older behaviour of
+	// believing a forwarded address from any sender. Never serialised, so no config dump carries it.
+	ForwardingSecret string `json:"-" split_words:"true"`
+
 	DBEncryption DatabaseEncryptionConfiguration `json:"database_encryption" split_words:"true"`
 }
 

@@ -159,13 +159,17 @@ func NewAPIWithVersion(globalConfig *conf.GlobalConfiguration, db *storage.Conne
 	r.UseBypass(recoverer)
 	r.UseBypass(observability.AddRequestID(globalConfig))
 	r.UseBypass(
-		stff.Middleware(
-			&globalConfig.Security,
-			func(r *http.Request, err error) {
+		// Before xffmw, which rewrites RemoteAddr from X-Forwarded-For for any sender: with a
+		// forwarding secret set, the raw peer is all an untrusted request has. Inside the gateway the
+		// outer layer has already resolved the request and this passes it through.
+		stff.Resolver(stff.Options{
+			Security:        &globalConfig.Security,
+			RateLimitHeader: globalConfig.RateLimitHeader,
+			OnInvalid: func(r *http.Request, err error) {
 				log := observability.GetLogEntry(r).Entry
 				log.WithField("error", err.Error()).Warn("error processing St-Forwarded-For")
 			},
-		),
+		}),
 	)
 	r.UseBypass(logger)
 	r.UseBypass(xffmw.Handler)

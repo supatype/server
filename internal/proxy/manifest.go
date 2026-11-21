@@ -44,7 +44,7 @@ type RouteManifest struct {
 	// ViteDevURL overrides SUPATYPE_VITE_DEV_URL when set (dev HMR at /_vite/*).
 	ViteDevURL string `json:"vite_dev_url,omitempty"`
 
-	// Services switches upstream services on and off by name (ServiceRealtime, ServiceStorage,
+	// Services switches upstream services on and off by name (ServiceRealtime, ServiceStorage, ServiceGraphQL,
 	// ServiceFunctions), read per request. A service it says nothing about keeps the server's start
 	// value. The legacy realtime_enabled and functions_enabled keys are read into it (UnmarshalJSON).
 	Services map[string]ServiceSwitch `json:"services,omitempty"`
@@ -102,6 +102,29 @@ type RouteManifest struct {
 	// of a Hooks entry as an event, so extra keys there fail the whole load, while an unknown
 	// top-level key is ignored.
 	Tables map[string]TableMeta `json:"tables,omitempty"`
+
+	// Site is the live static site deployment, written by the control plane when a deploy goes live
+	// or is rolled back. The site syncer follows it. Nil means no site.
+	Site *SiteRef `json:"site,omitempty"`
+
+	// PublicEnv is the static site's public, non-secret values, served beside the API address and
+	// anon key at /supatype-env.js and /supatype-env.json. `supatype push` writes them on a
+	// self-hosted deployment, and the control plane publishes them for a managed one. Every visitor
+	// can read them.
+	PublicEnv map[string]string `json:"public_env,omitempty"`
+}
+
+// SiteRef names the deployment a project's site is served from. Token is the bearer the gateway
+// presents to the control plane to download exactly this deployment for this tenant.
+type SiteRef struct {
+	DeploymentID string `json:"deployment_id"`
+	Version      string `json:"version"`
+	SPA          bool   `json:"spa"`
+	FilesSHA256  string `json:"files_sha256"`
+	Token        string `json:"token"`
+	// MaxBytes is the plan's byte cap for the site, which the syncer refuses a deployment over. Zero
+	// means the pointer carries none and the syncer's own fallback applies.
+	MaxBytes int64 `json:"max_bytes,omitempty"`
 }
 
 // TableCache is what one table's schema permits. See RouteManifest.Cache.
@@ -231,6 +254,13 @@ func CloneRouteManifest(m *RouteManifest) *RouteManifest {
 	if cm.Schema == "" {
 		cm.Schema = "public"
 	}
+	if m.Site != nil {
+		site := *m.Site
+		cm.Site = &site
+	}
+	if len(m.PublicEnv) > 0 {
+		cm.PublicEnv = maps.Clone(m.PublicEnv)
+	}
 	// Deep-copied like every other map here. A shared hook map would let one tenant's reload mutate
 	// what another tenant's in-flight request is reading.
 	if len(m.Hooks) > 0 {
@@ -323,6 +353,13 @@ func MergeRouteManifest(base, overlay *RouteManifest) {
 	}
 	if len(overlay.CorsAllowedOrigins) > 0 {
 		base.CorsAllowedOrigins = append([]string(nil), overlay.CorsAllowedOrigins...)
+	}
+	if overlay.Site != nil {
+		site := *overlay.Site
+		base.Site = &site
+	}
+	if len(overlay.PublicEnv) > 0 {
+		base.PublicEnv = maps.Clone(overlay.PublicEnv)
 	}
 	if overlay.StaticCacheHTML != "" {
 		base.StaticCacheHTML = overlay.StaticCacheHTML

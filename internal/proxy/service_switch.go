@@ -7,6 +7,7 @@ const (
 	ServiceRealtime  = "realtime"
 	ServiceStorage   = "storage"
 	ServiceFunctions = "functions"
+	ServiceGraphQL   = "graphql"
 )
 
 // ServiceSwitch is how a route manifest switches one upstream service on or off. It is the one

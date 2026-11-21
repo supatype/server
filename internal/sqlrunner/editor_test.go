@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,32 +15,54 @@ const (
 	editorTestOwner    = "sqlrunner_test_owner"
 	editorTestDatabase = "sqlrunner_editor_test"
 	editorRole         = "supatype_sql_editor"
+	// adoptEditorEnv lets the tests use a cluster that already has the editor
+	// role, as the supatype/postgres image does. They reset its password and
+	// drop what they make, so it must be a scratch container.
+	adoptEditorEnv = "SUPATYPE_TEST_ADOPT_EDITOR"
 )
 
 // An object the SQL editor creates belongs to the database owner once the
-// statement commits, not to the editor's login role.
+// statement commits, not to the editor's login role, through the handover
+// function the stack's start-up creates.
 //
-// The database here is owned by a non-superuser role, and the editor logs in as
-// a plain member of it with no reassign function, so this is the plain REASSIGN
-// an image from before public.supatype_sql_editor_reassign_owned() gets. The
-// image's own shape is TestTheImageEditorHandsObjectsToTheOwner.
+// The editor is a member of the owner WITH SET FALSE, as the postgres image
+// makes it, so a REASSIGN run in the editor's own session is refused.
 func TestEditorObjectsAreHandedToTheDatabaseOwner(t *testing.T) {
-	admin, editor := editorPools(t)
+	stack := editorStack(t)
+	installHandover(t, stack)
 
-	rec := post(t, authorised(&config.Config{}), func() (Pool, error) { return editor, nil },
+	rec := post(t, authorised(&config.Config{}), serving(stack.editor),
 		`{"query":"CREATE TABLE public.editor_made (id int)"}`, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	var owner string
-	err := admin.QueryRow(context.Background(),
-		`SELECT tableowner FROM pg_catalog.pg_tables WHERE schemaname = 'public' AND tablename = 'editor_made'`).Scan(&owner)
-	if err != nil {
-		t.Fatalf("read owner: %v", err)
+	if owner := tableOwner(t, stack, "editor_made"); owner != stack.owner {
+		t.Errorf("editor_made is owned by %q, want the database owner %q", owner, stack.owner)
 	}
-	if owner != editorTestOwner {
-		t.Errorf("editor_made is owned by %q, want the database owner %q", owner, editorTestOwner)
+}
+
+// A stack whose start-up has not created the function yet keeps today's inline
+// REASSIGN. Where the editor may not SET ROLE to the owner that is refused, and
+// the statement must not commit: this is the failure the function exists to end.
+func TestWithoutTheHandoverFunctionAnEditorThatCannotSetRoleIsRefused(t *testing.T) {
+	stack := editorStack(t)
+
+	rec := post(t, authorised(&config.Config{}), serving(stack.editor),
+		`{"query":"CREATE TABLE public.editor_refused (id int)"}`, nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "must be able to SET ROLE") {
+		t.Errorf("error = %s, want the SET ROLE refusal", rec.Body.String())
+	}
+	var exists bool
+	if err := stack.admin.QueryRow(context.Background(),
+		`SELECT to_regclass('public.editor_refused') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatalf("look up table: %v", err)
+	}
+	if exists {
+		t.Error("the statement committed although the handover failed")
 	}
 }
 
@@ -111,30 +134,41 @@ func imageEditorPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 	return admin, editor
 }
 
-// editorPools provisions a database owned by a non-superuser role and an editor
-// login that is a member of it. It returns a superuser pool on that database and
-// a pool connected as the editor, or skips when there is no database to use.
-func editorPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
+// editorEnv is a database and the roles around it: a superuser pool on the
+// database, a pool connected as the editor, and the role that owns the database.
+type editorEnv struct {
+	admin  *pgxpool.Pool
+	editor *pgxpool.Pool
+	owner  string
+}
+
+// editorStack provisions a database owned by a non-superuser role and an editor
+// login that is a member of it WITH INHERIT TRUE, SET FALSE, or skips when there
+// is no database to use.
+func editorStack(t *testing.T) editorEnv {
 	t.Helper()
 	dsn := os.Getenv("SUPATYPE_TEST_DSN")
 	if dsn == "" {
 		t.Skip("set SUPATYPE_TEST_DSN to run the SQL editor against Postgres")
 	}
 	root := connect(t, dsn, func(*pgxpool.Config) {})
-	provisionEditor(t, root)
-	admin := connect(t, dsn, func(c *pgxpool.Config) { c.ConnConfig.Database = editorTestDatabase })
+	database, owner := provisionEditor(t, root)
+	admin := connect(t, dsn, func(c *pgxpool.Config) { c.ConnConfig.Database = database })
 	editor := connect(t, dsn, func(c *pgxpool.Config) {
-		c.ConnConfig.Database = editorTestDatabase
+		c.ConnConfig.Database = database
 		c.ConnConfig.User = editorRole
 		c.ConnConfig.Password = "editor"
 	})
-	return admin, editor
+	return editorEnv{admin: admin, editor: editor, owner: owner}
 }
 
-// provisionEditor creates the owner, the editor and the database, and removes
-// them when the test ends. A cluster that already has an editor role belongs to
-// someone else, so the test leaves it alone rather than reset its password.
-func provisionEditor(t *testing.T, root *pgxpool.Pool) {
+// provisionEditor makes the owner, the editor and the database, and removes
+// them when the test ends. It answers the database and the owner to use.
+//
+// A cluster that already has an editor role belongs to someone else, so the
+// test leaves it alone unless adoptEditorEnv says it is a scratch one. Then it
+// uses the database the DSN names and the role that owns it.
+func provisionEditor(t *testing.T, root *pgxpool.Pool) (database, owner string) {
 	t.Helper()
 	ctx := context.Background()
 	var exists bool
@@ -142,19 +176,44 @@ func provisionEditor(t *testing.T, root *pgxpool.Pool) {
 		t.Fatalf("look up %s: %v", editorRole, err)
 	}
 	if exists {
-		t.Skipf("%s already exists on this cluster; run against a scratch Postgres", editorRole)
+		return adoptEditor(t, root)
 	}
 	t.Cleanup(func() { teardownEditor(root) })
 	for _, stmt := range []string{
 		`CREATE ROLE ` + editorTestOwner + ` NOLOGIN NOSUPERUSER`,
 		`CREATE ROLE ` + editorRole + ` LOGIN NOSUPERUSER PASSWORD 'editor'`,
-		`GRANT ` + editorTestOwner + ` TO ` + editorRole,
+		`GRANT ` + editorTestOwner + ` TO ` + editorRole + ` WITH INHERIT TRUE, SET FALSE`,
 		`CREATE DATABASE ` + editorTestDatabase + ` OWNER ` + editorTestOwner,
 	} {
 		if _, err := root.Exec(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)
 		}
 	}
+	return editorTestDatabase, editorTestOwner
+}
+
+// adoptEditor uses the editor role a cluster already has, as the postgres image
+// provisions it, and cleans up after the test.
+func adoptEditor(t *testing.T, root *pgxpool.Pool) (database, owner string) {
+	t.Helper()
+	if os.Getenv(adoptEditorEnv) != "1" {
+		t.Skipf("%s already exists on this cluster; run against a scratch Postgres, or set %s=1 for one", editorRole, adoptEditorEnv)
+	}
+	ctx := context.Background()
+	if err := root.QueryRow(ctx,
+		`SELECT current_database(), pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()`).Scan(&database, &owner); err != nil {
+		t.Fatalf("read the database owner: %v", err)
+	}
+	if _, err := root.Exec(ctx, `ALTER ROLE `+editorRole+` WITH LOGIN PASSWORD 'editor'`); err != nil {
+		t.Fatalf("set the editor password: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = root.Exec(ctx, `DROP SCHEMA IF EXISTS supatype_editor CASCADE`)
+		for _, name := range []string{"editor_made", "editor_refused", "handover_planted", "handover_other_made", "handover_second"} {
+			_, _ = root.Exec(ctx, `DROP TABLE IF EXISTS public.`+name)
+		}
+	})
+	return database, owner
 }
 
 // teardownEditor runs after every pool on the test database has been closed,
@@ -168,6 +227,18 @@ func teardownEditor(root *pgxpool.Pool) {
 	} {
 		_, _ = root.Exec(ctx, stmt)
 	}
+}
+
+// tableOwner is who owns public.<name>, read as the superuser.
+func tableOwner(t *testing.T, stack editorEnv, name string) string {
+	t.Helper()
+	var owner string
+	err := stack.admin.QueryRow(context.Background(),
+		`SELECT tableowner FROM pg_catalog.pg_tables WHERE schemaname = 'public' AND tablename = $1`, name).Scan(&owner)
+	if err != nil {
+		t.Fatalf("read owner of %s: %v", name, err)
+	}
+	return owner
 }
 
 // connect opens a pool on dsn after applying adjust, closed when the test ends.

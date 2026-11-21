@@ -44,17 +44,35 @@ func newLogStream(workerURL string) *logStream {
 	if trimmed == "" {
 		return nil
 	}
-	return &logStream{
-		workerURL: trimmed,
-		// No timeout: this request is a stream that stays open for as long as the reader wants it.
-		// The default client's timeout would cut the tail off mid-flight.
-		client: &http.Client{},
-	}
+	return &logStream{workerURL: trimmed, client: tailClient}
 }
 
-// tailFunctionLogs relays the worker's event stream for as long as the client stays connected.
-func tailFunctionLogs(stream *logStream) http.HandlerFunc {
+// WorkerResolver names the worker that produces `function`'s logs, per request: its base URL, or
+// empty when no worker runs it (functions in-process). The gateway supplies the routing the
+// invocation proxy uses, so the tail follows a call to the worker that served it. `function` is
+// empty when the caller named none, which resolves to the project's own worker.
+type WorkerResolver func(r *http.Request, function string) string
+
+// staticWorker is a resolver that answers workerURL for every function: one worker for all.
+func staticWorker(workerURL string) WorkerResolver {
+	return func(*http.Request, string) string { return workerURL }
+}
+
+// tailClient never follows a redirect: a worker that answers one is pointing this server at
+// somewhere the project did not configure. It has no timeout, because the request is a stream that
+// stays open for as long as the reader wants it; a timeout would cut the tail off mid-flight.
+var tailClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// tailFunctionLogs relays the event stream of the worker resolve names for the request, for as long
+// as the client stays connected. The function comes from the `function` query parameter.
+func tailFunctionLogs(resolve WorkerResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var stream *logStream
+		if resolve != nil {
+			stream = newLogStream(resolve(r, strings.TrimSpace(r.URL.Query().Get("function"))))
+		}
 		if stream == nil {
 			// Not an error: a deployment running functions in-process has no worker to tail, and the
 			// caller should be told that plainly rather than getting an empty stream that never ends.

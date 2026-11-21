@@ -41,14 +41,18 @@ func Dial(addr string, auth Auth) (Client, error) {
 	if err == nil {
 		return c, nil
 	}
-	return newRedialing(dial, redialFirst, redialMax, func() {
+	r := newRedialing(dial, redialFirst, redialMax, func() {
 		logrus.WithField("addr", addr).Info("keyspace: connected after the first connection failed; caches are back on")
-	}), err
+	})
+	r.keys = auth.Keys
+	return r, err
 }
 
 // redialing is a Client whose connection is not there yet. Until its background dial succeeds
 // every operation answers ErrNotConnected; after, every operation is the connected client's.
 type redialing struct {
+	// keys is known before the first connection is: it follows from the login.
+	keys    KeyLayout
 	live    atomic.Pointer[liveClient]
 	stop    chan struct{}
 	done    chan struct{}
@@ -97,6 +101,10 @@ var notConnected Client = unavailableClient{err: ErrNotConnected}
 
 func (r *redialing) Available() bool { return r.client().Available() }
 
+// Layout is the login's layout, connected or not, so a key built while redialling
+// is the one the connected client would have built.
+func (r *redialing) Layout() KeyLayout { return r.keys }
+
 func (r *redialing) GetTenantConfig(ctx context.Context, ref string) (*TenantConfig, error) {
 	return r.client().GetTenantConfig(ctx, ref)
 }
@@ -123,6 +131,10 @@ func (r *redialing) TTLSeconds(ctx context.Context, key string) (int, error) {
 
 func (r *redialing) AddToExpiringSet(ctx context.Context, key, member string, expireAt time.Time) error {
 	return r.client().AddToExpiringSet(ctx, key, member, expireAt)
+}
+
+func (r *redialing) Subscribe(ctx context.Context, channel string, onSubscribed, onMessage func()) error {
+	return r.client().Subscribe(ctx, channel, onSubscribed, onMessage)
 }
 
 // Close stops the redial, waits for a dial in progress to finish, and closes what it connected.

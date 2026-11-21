@@ -109,6 +109,12 @@ func WithAPIExternalURL(externalURL string) DepsOption {
 	return func(d *Deps) { d.APIExternalURL = externalURL }
 }
 
+// WithManifestFor gives a router with no per-request manifest of its own the one to answer from. The
+// app listener has none: it is handed the live manifest, whatever the request says.
+func WithManifestFor(manifestFor func(*http.Request) *proxy.RouteManifest) DepsOption {
+	return func(d *Deps) { d.ManifestFor = manifestFor }
+}
+
 // NewDeps resolves everything the mounts share.
 func NewDeps(
 	cfg *config.Config,
@@ -250,7 +256,7 @@ func (d *Deps) EditorPool() (sqlrunner.Pool, error) {
 func apiConfigStore(cfg *config.Config, platform keyspace.Client) apiconfig.Store {
 	ref := strings.TrimSpace(cfg.ManagedProjectRef)
 	if ref != "" && strings.TrimSpace(cfg.Mode) == "managed" && platform != nil && platform.Available() {
-		return apiconfig.NewKeyspaceStore(platform, ref)
+		return apiconfig.NewKeyspaceStore(platform, platform.Layout().Tenant(ref, keyspace.KeyAPIConfig))
 	}
 	return apiconfig.NewFileStore(cfg.ApiConfigPath)
 }

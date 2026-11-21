@@ -108,8 +108,19 @@ type Config struct {
 	// ApiConfigPath is the path to the .supatype/api-config.json file managed by the admin API.
 	ApiConfigPath string `envconfig:"SUPATYPE_API_CONFIG_PATH" default:".supatype/api-config.json"`
 
-	// TenantHMACSecret is the shared HMAC secret for verifying X-Supatype-Tenant-Sig (Mode=managed).
+	// TenantHMACSecret is the platform-wide HMAC secret the tenant signature used to be made with
+	// directly (Mode=managed). It is the transition fallback: accepted for as long as it is set, and
+	// removing it turns it off. See the README, "Tenant signing keys".
 	TenantHMACSecret string `envconfig:"SUPATYPE_TENANT_HMAC_SECRET"`
+
+	// TenantSigningKey is this gateway's own tenant key, derived as modes.TenantKey(master, tenant).
+	// A tenant gateway (ManagedProjectRef set) holds this and nothing else, and accepts only requests
+	// signed for its own ref.
+	TenantSigningKey string `envconfig:"SUPATYPE_TENANT_SIGNING_KEY"`
+
+	// TenantMasterSecret is the master the platform server (ManagedProjectRef empty) derives each
+	// tenant's key from, per request. Never set on a tenant gateway.
+	TenantMasterSecret string `envconfig:"SUPATYPE_TENANT_MASTER_SECRET"`
 
 	// KeyspaceAddr is the RESP address of the keyspace holding the tenant config
 	// cache (Mode=managed) and the REST response cache. It is pg_keyspace inside
@@ -168,12 +179,42 @@ type Config struct {
 	KeyspacePasswordFile        string `envconfig:"SUPATYPE_KEYSPACE_PASSWORD_FILE"`
 	ProjectKeyspacePasswordFile string `envconfig:"SUPATYPE_PROJECT_KEYSPACE_PASSWORD_FILE"`
 
+	// KeyspaceKeyLayout is how this process names keys in the platform keyspace:
+	// empty or "legacy" (`tenant:{ref}:...`, self-host and dev), "scoped" (a login
+	// the keyspace scopes to one tenant, which sends keys relative to it), or
+	// "prefixed" (an exempt login reading `{ref}:...` beside scoped gateways).
+	// Parsed by keyspace.ParseKeyLayout when the keyspace is opened.
+	KeyspaceKeyLayout string `envconfig:"SUPATYPE_KEYSPACE_KEY_LAYOUT"`
+
 	// ManagedProjectRef is the cloud project ref (slug) for a single-tenant managed pod.
 	// When set with Mode=managed and a keyspace address, the route manifest is merged
 	// from keyspace keys tenant:{ref}:config and tenant:{ref}:manifest.
 	// When empty (with managed + a keyspace), manifests are resolved per request from
 	// X-Supatype-Tenant (after HMAC verification) with a short TTL cache.
 	ManagedProjectRef string `envconfig:"SUPATYPE_MANAGED_PROJECT_REF"`
+
+	// InternalAddr is the listen address of the internal entrance (Mode=managed, ManagedProjectRef
+	// set), such as ":9990": the way a project's own functions and hooks call its API from inside
+	// the cluster, without a Kong signature. Empty, there is no internal entrance. The network policy
+	// must keep it reachable from the project's own namespace only.
+	InternalAddr string `envconfig:"SUPATYPE_INTERNAL_ADDR"`
+
+	// AppAddr is the listen address of the app listener (Mode=managed, ManagedProjectRef set), such as
+	// ":9998": it serves the project's static site and the public env, and nothing of the API. Empty,
+	// there is no app listener. Kong routes the project's own host to it.
+	AppAddr string `envconfig:"SUPATYPE_APP_ADDR"`
+
+	// SiteDir is where the app listener keeps the site it serves (an emptyDir): blobs and versions.
+	SiteDir string `envconfig:"SUPATYPE_SITE_DIR"`
+
+	// SiteSourceURL is the control plane's base URL, where the site is downloaded from. Set in the
+	// environment, never taken from the keyspace.
+	SiteSourceURL string `envconfig:"SUPATYPE_SITE_SOURCE_URL"`
+
+	// SiteMaxBytes is the fallback byte budget for the site, used only when the site pointer in the
+	// tenant config carries no max_bytes. Optional: the pointer's value is the plan's cap and follows a
+	// plan change without a restart.
+	SiteMaxBytes int64 `envconfig:"SUPATYPE_SITE_MAX_BYTES"`
 
 	// DenoPath is the path to the deno binary.
 	DenoPath string `envconfig:"SUPATYPE_DENO_PATH" default:"deno"`

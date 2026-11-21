@@ -7,8 +7,11 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/supatype/server/internal/testutil"
 )
 
 // The client is a wrapper around a real protocol, with a circuit breaker that
@@ -529,5 +532,87 @@ func TestAnOpenCircuitRefusesEveryOperation(t *testing.T) {
 	}
 	if _, err := c.TTLSeconds(ctx, "k"); !errors.Is(err, ErrCircuitOpen) {
 		t.Errorf("TTLSeconds: %v", err)
+	}
+}
+
+// Subscribe hears a PUBLISH on the channel, reports the subscription once the keyspace has confirmed
+// it, and returns the context's error when cancelled, leaving the client usable. Against a real
+// pg_keyspace this found that its SUBSCRIBE confirmation never reaches valkey-go's OnSubscription hook.
+func TestSubscribeHearsAPublishAndStopsWhenCancelled(t *testing.T) {
+	c := connectedClient(t)
+	var subscribed, heard atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ended := make(chan error, 1)
+	go func() {
+		ended <- c.Subscribe(ctx, "test-config-changed", func() { subscribed.Add(1) }, func() { heard.Add(1) })
+	}()
+	testutil.Eventually(t, "the subscription to be confirmed", func() bool { return subscribed.Load() == 1 })
+
+	got, err := c.vc.Do(ctx, c.vc.B().Publish().Channel("test-config-changed").Message("config").Build()).AsInt64()
+	if err != nil || got != 1 {
+		t.Fatalf("PUBLISH reached %d subscribers, err %v; want 1", got, err)
+	}
+	testutil.Eventually(t, "the message to be heard", func() bool { return heard.Load() == 1 })
+
+	cancel()
+	if err := <-ended; !errors.Is(err, context.Canceled) {
+		t.Errorf("Subscribe after cancel = %v, want context.Canceled", err)
+	}
+	if err := c.SetBytes(context.Background(), "test-subscribe-after", []byte("v"), 5); err != nil {
+		t.Errorf("client unusable after a subscription closed: %v", err)
+	}
+}
+
+// Subscribe reports a SUBSCRIBE the keyspace could not take, and never claims to be subscribed.
+func TestSubscribeReportsASubscribeThatFails(t *testing.T) {
+	c := connectedClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var subscribed atomic.Int32
+	err := c.Subscribe(ctx, "test-config-changed", func() { subscribed.Add(1) }, func() {})
+	if err == nil || !strings.Contains(err.Error(), "SUBSCRIBE test-config-changed") {
+		t.Fatalf("Subscribe with a cancelled context = %v, want a SUBSCRIBE failure naming the channel", err)
+	}
+	if subscribed.Load() != 0 {
+		t.Error("onSubscribed ran for a subscription that was never made")
+	}
+}
+
+// A subscription whose connection the server drops returns an error naming the channel, so the
+// caller knows to subscribe again, and does not wait for a context that nobody will cancel.
+func TestSubscribeReturnsWhenTheServerDropsTheConnection(t *testing.T) {
+	c := connectedClient(t)
+	var subscribed atomic.Int32
+	ended := make(chan error, 1)
+	go func() {
+		ended <- c.Subscribe(context.Background(), "test-config-dropped", func() { subscribed.Add(1) }, func() {})
+	}()
+	testutil.Eventually(t, "the subscription to be confirmed", func() bool { return subscribed.Load() == 1 })
+
+	kill := c.vc.B().Arbitrary("CLIENT", "KILL", "TYPE", "pubsub").Build()
+	if err := c.vc.Do(context.Background(), kill).Error(); err != nil {
+		t.Fatalf("CLIENT KILL TYPE pubsub: %v", err)
+	}
+	select {
+	case err := <-ended:
+		if err == nil || !strings.Contains(err.Error(), "subscription to test-config-dropped ended") {
+			t.Errorf("Subscribe after the connection dropped = %v, want an ended-subscription error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Subscribe did not return after the server dropped its connection")
+	}
+}
+
+// A connection that ends without an error of its own still gives the caller one, and one that
+// ends with an error keeps it.
+func TestSubscriptionEndedAlwaysCarriesAnError(t *testing.T) {
+	err := subscriptionEnded("ch", nil)
+	if err == nil || err.Error() != "keyspace: subscription to ch ended: connection closed" {
+		t.Errorf("no cause = %v", err)
+	}
+	cause := errors.New("EOF")
+	if err := subscriptionEnded("ch", cause); !errors.Is(err, cause) {
+		t.Errorf("with a cause = %v, want it to wrap %v", err, cause)
 	}
 }

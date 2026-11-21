@@ -41,14 +41,30 @@ func storing(t *testing.T, cfg *keyspace.TenantConfig, override *proxy.RouteMani
 		if err != nil {
 			t.Fatal(err)
 		}
-		cache.Put(keyspace.RouteManifestKey(ref), raw, 60)
+		cache.Put(keyspace.LayoutLegacy.Tenant(ref, keyspace.KeyManifest), raw, 60)
 	}
 	return cache
 }
 
 func TestRouteManifestKey(t *testing.T) {
-	if got := keyspace.RouteManifestKey("proj-1"); got != "tenant:proj-1:manifest" {
+	if got := keyspace.LayoutLegacy.Tenant("proj-1", keyspace.KeyManifest); got != "tenant:proj-1:manifest" {
 		t.Errorf("key = %q", got)
+	}
+}
+
+// A gateway logged in scoped reads its override by the relative name, which the
+// keyspace stores under its tenant; the legacy name would be another tenant's.
+func TestMergeReadsTheOverrideByTheClientsLayout(t *testing.T) {
+	cache := keyspacetest.New()
+	cache.KeyLayout = keyspace.LayoutScoped
+	cache.Put("manifest", []byte(`{"postgrest_url":"http://scoped-rest"}`), 60)
+	cache.Put(keyspace.LayoutLegacy.Tenant(ref, keyspace.KeyManifest), []byte(`{"postgrest_url":"http://legacy-rest"}`), 60)
+	got, err := keyspace.LoadMergedManagedManifest(context.Background(), cache, ref, fileManifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PostgRESTURL != "http://scoped-rest" {
+		t.Errorf("PostgRESTURL = %q, want the override stored under the relative name", got.PostgRESTURL)
 	}
 }
 
@@ -109,7 +125,7 @@ func TestMergeReportsWhatItCannotRead(t *testing.T) {
 // the previous routing.
 func TestAnOverrideThatWillNotParse(t *testing.T) {
 	cache := keyspacetest.New()
-	cache.Put(keyspace.RouteManifestKey(ref), []byte("{not json"), 60)
+	cache.Put(keyspace.LayoutLegacy.Tenant(ref, keyspace.KeyManifest), []byte("{not json"), 60)
 
 	if _, err := keyspace.LoadMergedManagedManifest(context.Background(), cache, ref, fileManifest()); err == nil {
 		t.Error("want an error")

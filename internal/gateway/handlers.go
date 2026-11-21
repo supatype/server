@@ -212,11 +212,17 @@ func restProxyHandler(d *Deps) http.Handler {
 // grants apply. The gateway never substitutes its service role key here; doing
 // so ran every GraphQL query with row security bypassed, whoever sent it.
 func buildGraphQL(d *Deps) http.Handler {
-	if d.Config.GraphQLDisabled {
-		return http.HandlerFunc(graphQLUnavailable)
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		u, err := url.Parse(GraphQLUpstream(d.ManifestFor(req), d.Config))
+		// Asked per request: the route manifest's services.graphql, when it says, else
+		// SUPATYPE_GRAPHQL_DISABLED (serviceswitch).
+		m := d.ManifestFor(req)
+		start := serviceswitch.Start(d.Config, proxy.ServiceGraphQL)
+		if !m.ServiceOn(proxy.ServiceGraphQL, start) {
+			// Started on and off now: the project switched it off.
+			graphQLUnavailable(w, start)
+			return
+		}
+		u, err := url.Parse(GraphQLUpstream(m, d.Config))
 		if err != nil {
 			badGateway(w, "bad gateway")
 			return
@@ -225,14 +231,19 @@ func buildGraphQL(d *Deps) http.Handler {
 	})
 }
 
-// graphQLUnavailable answers /graphql/v1 on a stack whose Postgres has no
-// pg_graphql. Forwarding there got an empty 502 or PostgREST's "could not
-// find the function graphql_public.graphql", which read like a fault in the
-// stack or the caller's query rather than a stack without GraphQL.
-func graphQLUnavailable(w http.ResponseWriter, _ *http.Request) {
+// graphQLUnavailable answers /graphql/v1 where GraphQL is off: switched off by the project
+// (`services.graphql: false`, which a hosted project's manifest carries), or a stack whose Postgres
+// has no pg_graphql (native `supatype dev`). Forwarding there got an empty 502 or PostgREST's "could
+// not find the function graphql_public.graphql", which read like a fault in the stack or the query.
+// The message says which, since telling a hosted project to use the Docker provider is no help.
+func graphQLUnavailable(w http.ResponseWriter, byProject bool) {
+	message := "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1."
+	if byProject {
+		message = "GraphQL is switched off for this project (services.graphql in supatype.config.ts)."
+	}
 	utilities.WriteJSON(w, http.StatusNotImplemented, map[string]string{
 		"code":    "graphql_unavailable",
-		"message": "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1.",
+		"message": message,
 	})
 }
 
@@ -392,11 +403,21 @@ func buildApp(d *Deps) http.Handler {
 // buildPublicEnv serves the deployment's public address and anon key. Never the service role key:
 // publicenv.Values has no field that could carry it.
 func buildPublicEnv(d *Deps) http.Handler {
-	return publicenv.Handler(publicenv.Values{
+	return publicenv.HandlerWith(publicenv.Values{
 		Enabled: d.Config.PublicEnv.On(),
 		URL:     publicenv.PublicURL(d.Config.SupatypeURL, d.APIExternalURL),
 		AnonKey: d.Config.AnonKey,
-	})
+	}, d.publicValues)
+}
+
+// publicValues is the site's public values for this request, from its manifest. The manifest holds
+// no service role key, and the only thing here that was ever a person's input is a value they typed
+// to be read by every visitor.
+func (d *Deps) publicValues(r *http.Request) map[string]string {
+	if d.ManifestFor == nil {
+		return nil
+	}
+	return d.ManifestFor(r).PublicEnv
 }
 
 // newHookCallback builds the previous() endpoint, which reads the rows a write

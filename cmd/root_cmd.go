@@ -35,7 +35,7 @@ func loadGlobalConfig(ctx context.Context) *conf.GlobalConfiguration {
 		panic("context must not be nil")
 	}
 
-	config, err := conf.LoadGlobal(configFile)
+	config, err := loadConfigFromFlags(configFile, watchDir)
 	if err != nil {
 		logrus.Fatalf("Failed to load configuration: %+v", err)
 	}
@@ -60,4 +60,14 @@ func loadGlobalConfig(ctx context.Context) *conf.GlobalConfiguration {
 
 func execWithConfigAndArgs(cmd *cobra.Command, fn func(config *conf.GlobalConfiguration, args []string), args []string) {
 	fn(loadGlobalConfig(cmd.Context()), args)
+}
+
+// loadConfigFromFlags loads configuration for the commands that read it once
+// at startup. The --config-dir files go into the environment after the base
+// file and before anything is decoded or validated, in the same order and with
+// the same precedence (the directory overrides) as gateway.New and the
+// reloader, so a key that only the directory holds is present when the
+// required-key check runs and a reload cannot change the result.
+func loadConfigFromFlags(file, dir string) (*conf.GlobalConfiguration, error) {
+	return conf.LoadGlobalWithDir(file, dir)
 }

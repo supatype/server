@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/supatype/server/internal/testutil"
 )
 
 // The supervisor had no test that started anything. What it is for is keeping a
@@ -97,20 +99,6 @@ func manager(t *testing.T, behaviour string) *Manager {
 	return New(filepath.Join(t.TempDir(), "deno"), entry, 8001, env, false)
 }
 
-// waitFor polls until condition holds, so a test does not have to guess how
-// long a child takes to start.
-func waitFor(t *testing.T, what string, condition func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
-}
-
 // ─── Running ──────────────────────────────────────────────────────────────────
 
 // Both streams reach the ring buffer, labelled, so `supatype dev` can show a
@@ -193,7 +181,7 @@ func TestACrashedWorkerIsRestarted(t *testing.T) {
 	m.Start(ctx)
 	// The first backoff is a second, so a second start is the proof that the
 	// schedule is being waited out rather than skipped.
-	waitFor(t, "a restart", func() bool { return starts.Load() >= 2 })
+	testutil.Eventually(t, "a restart", func() bool { return starts.Load() >= 2 })
 	m.Stop()
 }
 
@@ -251,7 +239,7 @@ func TestACleanExitResetsTheBackoff(t *testing.T) {
 	m.Start(ctx)
 
 	// No backoff is waited out, so several restarts happen quickly.
-	waitFor(t, "restarts without a backoff", func() bool { return starts.Load() >= 3 })
+	testutil.Eventually(t, "restarts without a backoff", func() bool { return starts.Load() >= 3 })
 	cancel()
 	m.Stop()
 }
@@ -471,7 +459,7 @@ func TestCancellingDuringTheBackoffReturnsAtOnce(t *testing.T) {
 		m.runLoop(ctx)
 	}()
 
-	waitFor(t, "the first crash", func() bool { return starts.Load() >= 1 })
+	testutil.Eventually(t, "the first crash", func() bool { return starts.Load() >= 1 })
 	// Settle, so the loop is inside the backoff wait rather than still running
 	// the child: cancelling before it fails takes a different path out.
 	time.Sleep(backoffInitial / 4)

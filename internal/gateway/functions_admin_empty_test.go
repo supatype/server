@@ -17,7 +17,7 @@ func TestWithoutAFunctionsDirTheAdminAPIListsNone(t *testing.T) {
 		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"data":[]}` {
 			t.Errorf("GET %s: %d %s, want 200 and an empty list", target, rec.Code, rec.Body.String())
 		}
-		if got, reached := r.lastHit(); reached {
+		if got, reached := r.reachedBeyondTheList(); reached {
 			t.Errorf("GET %s reached %s; the admin API answers it itself", target, got.upstream)
 		}
 	}

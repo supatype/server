@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -164,14 +165,18 @@ func (o *poller) scanFile(
 
 func (o *poller) scanEntries(ps *pollerState, ents []fs.DirEntry) {
 	for _, ent := range ents {
-		fi, err := ent.Info()
+		if !strings.HasSuffix(ent.Name(), ".env") {
+			continue
+		}
+
+		// Stat follows a symlink: in a Kubernetes Secret volume each file is a
+		// symlink through ..data, and an update only changes where that points,
+		// so the entry's own info (the link) would never change.
+		fi, err := os.Stat(filepath.Join(o.dir, ent.Name()))
 		if err != nil {
 			continue
 		}
 		if fi.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(ent.Name(), ".env") {
 			continue
 		}
 

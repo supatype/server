@@ -166,3 +166,55 @@ func TestTheWatcherCallbackReloads(t *testing.T) {
 		t.Errorf("schema = %q, want the reloaded file", got)
 	}
 }
+
+// A manifest that cannot be encoded has no hash, so the live manifest treats every read of it as
+// changed; one that can has the same hash as an equal manifest and another as a different one.
+func TestManifestHash(t *testing.T) {
+	a := &proxy.RouteManifest{Schema: "public"}
+	if h := manifestHash(a); len(h) != 32 || string(h) != string(manifestHash(&proxy.RouteManifest{Schema: "public"})) {
+		t.Errorf("equal manifests must hash alike to a SHA-256, got %x", h)
+	}
+	if string(manifestHash(a)) == string(manifestHash(&proxy.RouteManifest{Schema: "other"})) {
+		t.Error("different manifests hashed alike")
+	}
+
+	failing := func(*proxy.RouteManifest) ([]byte, error) { return nil, errors.New("cannot encode") }
+	if h := manifestHashWith(a, failing); h != nil {
+		t.Errorf("a manifest that cannot be encoded hashed to %x, want no hash", h)
+	}
+}
+
+// A site that changed installs a new manifest and tells onInstall; the same site read again installs
+// nothing, so the syncer is not woken by a quiet keyspace.
+func TestAChangedSiteInstallsAndNotifies(t *testing.T) {
+	site := &proxy.SiteRef{DeploymentID: "d1", Version: "v1"}
+	live := newLiveManifests(&proxy.RouteManifest{Schema: "public"})
+	live.merge = func(_ context.Context, file *proxy.RouteManifest) (*proxy.RouteManifest, error) {
+		out := proxy.CloneRouteManifest(file)
+		out.Site = site
+		return out, nil
+	}
+	var seen []*proxy.SiteRef
+	live.onInstall = func(m *proxy.RouteManifest) { seen = append(seen, m.Site) }
+
+	live.refresh()
+	live.refresh()
+	if len(seen) != 1 || seen[0] == nil || seen[0].DeploymentID != "d1" {
+		t.Fatalf("after two reads of one site, onInstall saw %+v, want one call with d1", seen)
+	}
+
+	site = &proxy.SiteRef{DeploymentID: "d2", Version: "v2"}
+	live.refresh()
+	if len(seen) != 2 || seen[1].DeploymentID != "d2" {
+		t.Fatalf("after a flip, onInstall saw %+v, want a second call with d2", seen)
+	}
+	if got := live.For(nil).Site; got == nil || got.DeploymentID != "d2" {
+		t.Fatalf("live site = %+v, want d2", got)
+	}
+
+	site = nil
+	live.refresh()
+	if len(seen) != 3 || seen[2] != nil {
+		t.Fatalf("after the site was removed, onInstall saw %+v, want a third call with nil", seen)
+	}
+}

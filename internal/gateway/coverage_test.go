@@ -1201,3 +1201,17 @@ func TestDeclaredCacheSurvivesAMissingManifest(t *testing.T) {
 func functionsSwitched(on bool) *proxy.RouteManifest {
 	return &proxy.RouteManifest{Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: on})}
 }
+
+// Under a scoped login the API config is written by its relative name; the keyspace files it
+// under the gateway's own tenant.
+func TestAScopedPodWritesItsAPIConfigByItsRelativeName(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abcdef", ApiConfigPath: "/tmp/unused.json"}
+	platform := keyspacetest.New()
+	platform.KeyLayout = keyspace.LayoutScoped
+	if err := apiConfigStore(cfg, platform).Set(context.Background(), apiconfig.DefaultApiConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if got := platform.Keys(); len(got) != 1 || got[0] != keyspace.KeyAPIConfig {
+		t.Errorf("keys = %v, want [%s]", got, keyspace.KeyAPIConfig)
+	}
+}

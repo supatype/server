@@ -14,12 +14,14 @@ import (
 )
 
 // Start is what a service is before the route manifest says anything about it: storage is on
-// unless SUPATYPE_STORAGE_DISABLED, functions are on when a worker is configured, and realtime,
+// unless SUPATYPE_STORAGE_DISABLED, GraphQL is on unless SUPATYPE_GRAPHQL_DISABLED, functions are on when a worker is configured, and realtime,
 // which has no setting of its own in the environment, is off.
 func Start(cfg *config.Config, name string) bool {
 	switch name {
 	case proxy.ServiceStorage:
 		return !cfg.StorageDisabled
+	case proxy.ServiceGraphQL:
+		return !cfg.GraphQLDisabled
 	case proxy.ServiceFunctions:
 		return strings.TrimSpace(cfg.FunctionsWorkerURL) != ""
 	default:

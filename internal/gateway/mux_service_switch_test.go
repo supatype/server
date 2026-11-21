@@ -3,6 +3,8 @@ package gateway
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,6 +60,8 @@ func TestEveryServiceIsSwitchedByTheServicesMap(t *testing.T) {
 	}{
 		{"storage started off, switched on", `{"storage_url":"UPSTREAM","services":{"storage":{"enabled":true}}}`, "/storage/v1/bucket", http.StatusOK},
 		{"storage switched off again", `{"storage_url":"UPSTREAM","services":{"storage":{"enabled":false}}}`, "/storage/v1/bucket", http.StatusServiceUnavailable},
+		{"graphql switched off", `{"services":{"graphql":{"enabled":false}}}`, "/graphql/v1", http.StatusNotImplemented},
+		{"graphql switched on", `{"services":{"graphql":{"enabled":true}}}`, "/graphql/v1", http.StatusOK},
 		{"realtime switched on", `{"services":{"realtime":{"enabled":true}}}`, "/realtime/v1/health", http.StatusOK},
 		{"realtime switched off", `{"services":{"realtime":{"enabled":false}}}`, "/realtime/v1/health", http.StatusNotFound},
 		{"functions switched on", `{"functions_worker_url":"UPSTREAM","services":{"functions":{"enabled":true}}}`, "/functions/v1/send", http.StatusOK},
@@ -104,5 +108,34 @@ func TestAServiceTheManifestSaysNothingAboutKeepsItsStartValue(t *testing.T) {
 		if got := statusOf(handler, path); got != want {
 			t.Errorf("%s answered %d, want %d", path, got, want)
 		}
+	}
+}
+
+// With a static app and its SPA fallback on, a service that is switched off must answer its own
+// miss, not index.html: /realtime/v1/x with realtime off is not a client-side route.
+func TestSwitchedOffServiceDoesNotFallThroughToTheAppShell(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("app-shell"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, _, _ := switchMux(t, func(up string) *config.Config {
+		return &config.Config{
+			Mode: "dev", PostgRESTURL: up, RealtimeURL: up,
+			AppMode: "static", AppStaticDir: dir, AppSPAFallback: true,
+		}
+	})
+	for _, p := range []string{"/realtime/v1/x", "/functions/v1/x", "/graphql/v1/x"} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		req.Header.Set("Accept", "text/html")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if strings.Contains(rr.Body.String(), "app-shell") {
+			t.Errorf("%s answered index.html", p)
+		}
+	}
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/some/route", nil))
+	if !strings.Contains(rr.Body.String(), "app-shell") {
+		t.Errorf("/some/route lost the SPA fallback: %d %q", rr.Code, rr.Body.String())
 	}
 }

@@ -8,10 +8,12 @@ import (
 	"github.com/supatype/server/internal/utilities"
 )
 
-// functionsAdminAPI is the functions admin API over this server's functions directory, as both of
-// its addresses serve it.
+// functionsAdminAPI is the functions admin API, as both of its addresses serve it. Its env routes act
+// on this server's functions directory; its list is the functions calls are sent to, asked of the
+// workers that run them (functionsLister).
 func functionsAdminAPI(d *Deps) http.Handler {
-	return functions.Handler(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs())
+	list := functionsLister(d.Config, d.ManifestFor, workerListClient())
+	return functions.HandlerListing(d.Config, d.Config.DenoFunctionsDir, d.FunctionLogs(), list, functionsLogWorker(d.Config, d.ManifestFor))
 }
 
 // buildLegacyFunctionsAdmin serves /functions/v1/admin while callers move to /admin/v1/functions.

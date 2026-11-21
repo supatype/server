@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"math"
 	"time"
 
 	"github.com/didip/tollbooth/v5"
@@ -70,10 +71,7 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 			DefaultExpirationTTL: time.Hour,
 		}).SetBurst(30)
 
-	o.Verify = tollbooth.NewLimiter(gc.RateLimitVerify/(60*5),
-		&limiter.ExpirableOptions{
-			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(30)
+	o.Verify = newPerClientLimiter(gc.RateLimitVerify)
 
 	o.FactorVerify = tollbooth.NewLimiter(gc.MFA.RateLimitChallengeAndVerify/60,
 		&limiter.ExpirableOptions{
@@ -100,16 +98,27 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 			DefaultExpirationTTL: time.Hour,
 		}).SetBurst(30)
 
-	// These all use the OTP limit per 5 min with 1hour ttl and burst of 30.
-	o.Recover = newLimiterPer5mOver1h(gc.RateLimitOtp)
-	o.Resend = newLimiterPer5mOver1h(gc.RateLimitOtp)
-	o.MagicLink = newLimiterPer5mOver1h(gc.RateLimitOtp)
-	o.Otp = newLimiterPer5mOver1h(gc.RateLimitOtp)
-	o.User = newLimiterPer5mOver1h(gc.RateLimitOtp)
-	o.Signups = newLimiterPer5mOver1h(gc.RateLimitOtp)
+	// Sign-ups and sign-ins share the OTP limit: each endpoint counts its own requests per client.
+	o.Recover = newPerClientLimiter(gc.RateLimitOtp)
+	o.Resend = newPerClientLimiter(gc.RateLimitOtp)
+	o.MagicLink = newPerClientLimiter(gc.RateLimitOtp)
+	o.Otp = newPerClientLimiter(gc.RateLimitOtp)
+	o.User = newPerClientLimiter(gc.RateLimitOtp)
+	o.Signups = newPerClientLimiter(gc.RateLimitOtp)
 	o.OAuthClientRegister = newLimiterPer5mOver1h(gc.RateLimitOAuthDynamicClientRegister)
 
 	return o
+}
+
+// newPerClientLimiter allows perFiveMinutes requests from one client every 5 minutes. The bucket
+// holds that many, so a client gets the configured number at once and then one more each time
+// 5 minutes / perFiveMinutes passes. A fixed burst of 30 let 30 through whatever the limit was, so
+// a limit below 30 never refused a burst. At least one request is always allowed.
+func newPerClientLimiter(perFiveMinutes float64) *limiter.Limiter {
+	burst := max(1, int(math.Ceil(perFiveMinutes)))
+	return tollbooth.NewLimiter(perFiveMinutes/(60*5), &limiter.ExpirableOptions{
+		DefaultExpirationTTL: time.Hour,
+	}).SetBurst(burst)
 }
 
 func newLimiterPer5mOver1h(rate float64) *limiter.Limiter {

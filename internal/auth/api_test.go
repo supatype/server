@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"fmt"
+	"net/http"
+	"sync/atomic"
 	"testing"
 
 	jwt "github.com/golang-jwt/jwt/v5"
@@ -34,7 +37,7 @@ func setupAPIForTest(opts ...Option) (*API, *conf.GlobalConfiguration, error) {
 		return nil, nil, err
 	}
 
-	return NewAPIWithVersion(config, conn, apiTestVersion, opts...), config, nil
+	return withDistinctClients(NewAPIWithVersion(config, conn, apiTestVersion, opts...)), config, nil
 }
 
 func setupAPIForTestWithCallback(cb func(*conf.GlobalConfiguration, *storage.Connection)) (*API, *conf.GlobalConfiguration, error) {
@@ -57,7 +60,30 @@ func setupAPIForTestWithCallback(cb func(*conf.GlobalConfiguration, *storage.Con
 	}
 
 	limiterOpts := NewLimiterOptions(config)
-	return NewAPIWithVersion(config, conn, apiTestVersion, limiterOpts), config, nil
+	return withDistinctClients(NewAPIWithVersion(config, conn, apiTestVersion, limiterOpts)), config, nil
+}
+
+// httptestRemoteAddr is the peer every httptest.NewRequest reports.
+const httptestRemoteAddr = "192.0.2.1:1234"
+
+var testClientSeq atomic.Uint32
+
+// withDistinctClients gives each request that names no client a peer address of its own. A request
+// without the rate limit header counts against the connection's address, and every httptest request
+// has the same one, so a suite's requests would otherwise share one allowance and a suite that
+// signs in more than the limit would be refused part way. A test about limiting names its client
+// in the header, or sets RemoteAddr itself.
+func withDistinctClients(api *API) *API {
+	next := api.handler
+	header := api.config.RateLimitHeader
+	api.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.RemoteAddr == httptestRemoteAddr && (header == "" || r.Header.Get(header) == "") {
+			n := testClientSeq.Add(1)
+			r.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234", byte(n>>16), byte(n>>8), byte(n))
+		}
+		next.ServeHTTP(w, r)
+	})
+	return api
 }
 
 func TestEmailEnabledByDefault(t *testing.T) {

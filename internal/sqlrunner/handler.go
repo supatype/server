@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/modes"
@@ -173,9 +174,16 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 //
 // The editor logs in as supatype_sql_editor, a non-superuser member of the
 // database owner, so an object it creates would otherwise belong to a login
-// role no migration or Studio view expects to find as an owner. The owner is
-// resolved from the catalogue rather than assumed, because it is `postgres`
-// on self-host but need not be anywhere else.
+// role no migration or Studio view expects to find as an owner.
+//
+// The editor's membership in the owner is SET FALSE, so submitted SQL cannot
+// SET ROLE into it, and from Postgres 16 that also stops the editor running
+// REASSIGN OWNED itself. The postgres image ships
+// public.supatype_sql_editor_reassign_owned(), a SECURITY DEFINER function only
+// the editor may execute, which reassigns from the editor to the current
+// database's owner and takes no arguments. An image from before that function
+// gets the plain REASSIGN, which is what ran before and still succeeds there for
+// a statement that created nothing.
 //
 // It only runs when this session is the editor. A deployment that has not
 // configured SUPATYPE_SQL_EDITOR_DATABASE_URL falls back to the SQL DSN, whose
@@ -183,8 +191,12 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 const reassignToOwner = `DO $reassign$
 BEGIN
   IF session_user = 'supatype_sql_editor' THEN
-    EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I',
-      (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()));
+    IF pg_catalog.to_regprocedure('public.supatype_sql_editor_reassign_owned()') IS NOT NULL THEN
+      PERFORM public.supatype_sql_editor_reassign_owned();
+    ELSE
+      EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I',
+        (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()));
+    END IF;
   END IF;
 END
 $reassign$`
@@ -193,8 +205,7 @@ $reassign$`
 func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, error) {
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
-		logrus.WithError(err).Error("sqlrunner: query failed")
-		return nil, failure{status: http.StatusUnprocessableEntity, err: err}
+		return nil, refused(err)
 	}
 	defer rows.Close()
 
@@ -218,7 +229,29 @@ func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, 
 		}
 		result = append(result, row)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, rejected(err)
+	}
+	return result, nil
+}
+
+// rejected classifies an error that arrived through the result set. A statement
+// with no rows to return (SET ROLE, CREATE TABLE ...) reports what Postgres said
+// there rather than from Query, and that is still the caller's statement being
+// refused. Anything that is not Postgres answering (a dropped connection, the
+// timeout) stays ours.
+func rejected(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return refused(err)
+	}
+	return err
+}
+
+// refused logs a statement Postgres rejected and reports it as the caller's to fix.
+func refused(err error) failure {
+	logrus.WithError(err).Error("sqlrunner: query failed")
+	return failure{status: http.StatusUnprocessableEntity, err: err}
 }
 
 // ─── Schema resolution ────────────────────────────────────────────────────────

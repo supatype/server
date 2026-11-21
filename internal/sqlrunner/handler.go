@@ -205,8 +205,7 @@ $reassign$`
 func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, error) {
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
-		logrus.WithError(err).Error("sqlrunner: query failed")
-		return nil, failure{status: http.StatusUnprocessableEntity, err: err}
+		return nil, refused(err)
 	}
 	defer rows.Close()
 
@@ -244,10 +243,15 @@ func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, 
 func rejected(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		logrus.WithError(err).Error("sqlrunner: query failed")
-		return failure{status: http.StatusUnprocessableEntity, err: err}
+		return refused(err)
 	}
 	return err
+}
+
+// refused logs a statement Postgres rejected and reports it as the caller's to fix.
+func refused(err error) failure {
+	logrus.WithError(err).Error("sqlrunner: query failed")
+	return failure{status: http.StatusUnprocessableEntity, err: err}
 }
 
 // ─── Schema resolution ────────────────────────────────────────────────────────

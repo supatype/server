@@ -142,17 +142,21 @@ func TestEveryLimitAllowsItsConfiguredNumber(t *testing.T) {
 	cfg.RateLimitSso = 4
 	cfg.RateLimitWeb3 = 5
 	cfg.MFA.RateLimitChallengeAndVerify = 2
+	cfg.SAML.RateLimitAssertion = 6
+	cfg.RateLimitOAuthDynamicClientRegister = 7
 	lo := NewLimiterOptions(cfg)
 
 	cases := map[string]struct {
 		lmt  *limiter.Limiter
 		want int
 	}{
-		"token":            {lo.Token, 3},
-		"sso":              {lo.SSO, 4},
-		"web3":             {lo.Web3, 5},
-		"factor verify":    {lo.FactorVerify, 2},
-		"factor challenge": {lo.FactorChallenge, 2},
+		"token":                 {lo.Token, 3},
+		"sso":                   {lo.SSO, 4},
+		"web3":                  {lo.Web3, 5},
+		"saml assertion":        {lo.SAMLAssertion, 6},
+		"oauth client register": {lo.OAuthClientRegister, 7},
+		"factor verify":         {lo.FactorVerify, 2},
+		"factor challenge":      {lo.FactorChallenge, 2},
 	}
 	for name, tc := range cases {
 		require.Equal(t, tc.want, allowedBeforeLimit(tc.lmt, "198.51.100.1", 40), name)
@@ -167,10 +171,13 @@ func TestEveryLimitBelowOneStillAllowsOne(t *testing.T) {
 	cfg.RateLimitSso = 0.5
 	cfg.RateLimitWeb3 = 0.5
 	cfg.MFA.RateLimitChallengeAndVerify = 0.5
+	cfg.SAML.RateLimitAssertion = 0.5
+	cfg.RateLimitOAuthDynamicClientRegister = 0.5
 	lo := NewLimiterOptions(cfg)
 	for name, lmt := range map[string]*limiter.Limiter{
 		"token": lo.Token, "sso": lo.SSO, "web3": lo.Web3,
 		"factor verify": lo.FactorVerify, "factor challenge": lo.FactorChallenge,
+		"saml assertion": lo.SAMLAssertion, "oauth client register": lo.OAuthClientRegister,
 	} {
 		require.Equal(t, 1, allowedBeforeLimit(lmt, "198.51.100.1", 5), name)
 	}

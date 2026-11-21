@@ -76,10 +76,7 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 
 	o.SSO = newClientLimiter(gc.RateLimitSso, 5*time.Minute, time.Hour)
 
-	o.SAMLAssertion = tollbooth.NewLimiter(gc.SAML.RateLimitAssertion/(60*5),
-		&limiter.ExpirableOptions{
-			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(30)
+	o.SAMLAssertion = newClientLimiter(gc.SAML.RateLimitAssertion, 5*time.Minute, time.Hour)
 
 	o.Web3 = newClientLimiter(gc.RateLimitWeb3, 5*time.Minute, time.Hour)
 
@@ -90,7 +87,7 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 	o.Otp = newPerClientLimiter(gc.RateLimitOtp)
 	o.User = newPerClientLimiter(gc.RateLimitOtp)
 	o.Signups = newPerClientLimiter(gc.RateLimitOtp)
-	o.OAuthClientRegister = newLimiterPer5mOver1h(gc.RateLimitOAuthDynamicClientRegister)
+	o.OAuthClientRegister = newClientLimiter(gc.RateLimitOAuthDynamicClientRegister, 5*time.Minute, time.Hour)
 
 	return o
 }
@@ -98,7 +95,8 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 // newClientLimiter allows limit requests from one client per window. The bucket holds that many,
 // so a client gets the configured number at once and then one more each time window / limit passes.
 // A fixed burst of 30 let 30 through whatever the limit was, so a limit below 30 never refused a
-// burst. At least one request is always allowed. ttl is how long an idle client's bucket is kept.
+// burst; every configured limit now goes through here. At least one request is always allowed.
+// ttl is how long an idle client's bucket is kept.
 func newClientLimiter(limit float64, window, ttl time.Duration) *limiter.Limiter {
 	burst := max(1, int(math.Ceil(limit)))
 	return tollbooth.NewLimiter(limit/window.Seconds(), &limiter.ExpirableOptions{
@@ -109,12 +107,4 @@ func newClientLimiter(limit float64, window, ttl time.Duration) *limiter.Limiter
 // newPerClientLimiter is newClientLimiter for the limits counted per 5 minutes.
 func newPerClientLimiter(perFiveMinutes float64) *limiter.Limiter {
 	return newClientLimiter(perFiveMinutes, 5*time.Minute, time.Hour)
-}
-
-func newLimiterPer5mOver1h(rate float64) *limiter.Limiter {
-	freq := rate / (60 * 5)
-	lim := tollbooth.NewLimiter(freq, &limiter.ExpirableOptions{
-		DefaultExpirationTTL: time.Hour,
-	}).SetBurst(30)
-	return lim
 }

@@ -321,6 +321,13 @@ type Config struct {
 	// variable existed keep working.
 	SQLEditorDatabaseURL string `envconfig:"SUPATYPE_SQL_EDITOR_DATABASE_URL"`
 
+	// ChangeLogDatabaseURL is the DSN the after-hook change-log listener reads its replication
+	// slot on. Creating and reading a logical slot needs the REPLICATION attribute, which the
+	// role behind SQLDSN may rightly lack (Cloud's project role is NOREPLICATION), so a
+	// deployment can give the listener a login of its own. Empty means the listener shares
+	// SQLDSN, as self-host does.
+	ChangeLogDatabaseURL string `envconfig:"SUPATYPE_CHANGELOG_DATABASE_URL"`
+
 	// DatabaseURL is the generic DSN fallback. The auth service reads the same
 	// variable through its own configuration, which is one of the connection
 	// paths this refactor collapses.
@@ -540,8 +547,19 @@ func (c *Config) SQLDSN() string {
 // SQLEditorDSN is the connection string for the Studio SQL editor: the editor
 // variable when it is set, and SQLDSN otherwise.
 func (c *Config) SQLEditorDSN() string {
-	if dsn := strings.TrimSpace(c.SQLEditorDatabaseURL); dsn != "" {
-		return dsn
+	return dsnOr(c.SQLEditorDatabaseURL, c.SQLDSN())
+}
+
+// ChangeLogDSN is the connection string for the after-hook change-log listener: its own
+// variable when it is set, and SQLDSN otherwise.
+func (c *Config) ChangeLogDSN() string {
+	return dsnOr(c.ChangeLogDatabaseURL, c.SQLDSN())
+}
+
+// dsnOr is dsn trimmed, or fallback when dsn is blank.
+func dsnOr(dsn, fallback string) string {
+	if trimmed := strings.TrimSpace(dsn); trimmed != "" {
+		return trimmed
 	}
-	return c.SQLDSN()
+	return fallback
 }

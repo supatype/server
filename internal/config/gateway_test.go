@@ -19,6 +19,7 @@ func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 		"VALKEY_ADDR":                      "valkey:6379",
 		"SUPATYPE_SQL_DATABASE_URL":        "postgres://a/b",
 		"SUPATYPE_SQL_EDITOR_DATABASE_URL": "postgres://e/f",
+		"SUPATYPE_CHANGELOG_DATABASE_URL":  "postgres://r/s",
 		"DATABASE_URL":                     "postgres://c/d",
 		"SUPATYPE_DB_SCHEMA":               "app",
 		"SUPATYPE_SQLRUNNER_INSECURE":      "yes",
@@ -44,6 +45,7 @@ func TestLoadReadsTheAbsorbedVariables(t *testing.T) {
 		"VALKEY_ADDR":                      cfg.ValkeyAddrLegacy,
 		"SUPATYPE_SQL_DATABASE_URL":        cfg.SQLDatabaseURL,
 		"SUPATYPE_SQL_EDITOR_DATABASE_URL": cfg.SQLEditorDatabaseURL,
+		"SUPATYPE_CHANGELOG_DATABASE_URL":  cfg.ChangeLogDatabaseURL,
 		"DATABASE_URL":                     cfg.DatabaseURL,
 		"SUPATYPE_DB_SCHEMA":               cfg.SQLSchema,
 		"POSTGRES_PASSWORD":                cfg.PostgresPassword,
@@ -141,6 +143,24 @@ func TestSQLDSNPrefersTheSupatypeVariable(t *testing.T) {
 
 	if got := (&Config{}).SQLDSN(); got != "" {
 		t.Errorf("no DSN configured should be empty, got %q", got)
+	}
+}
+
+// The change-log listener's DSN wins when set, so a deployment whose SQL DSN may not use
+// replication slots can give the listener a login that may; unset, it keeps the SQL DSN.
+func TestChangeLogDSNFallsBackToTheSQLDSN(t *testing.T) {
+	both := &Config{ChangeLogDatabaseURL: " postgres://repl/db ", SQLDatabaseURL: "postgres://admin/db"}
+	if got := both.ChangeLogDSN(); got != "postgres://repl/db" {
+		t.Errorf("SUPATYPE_CHANGELOG_DATABASE_URL should win, trimmed, got %q", got)
+	}
+
+	fallback := &Config{ChangeLogDatabaseURL: "  ", SQLDatabaseURL: "postgres://admin/db"}
+	if got := fallback.ChangeLogDSN(); got != "postgres://admin/db" {
+		t.Errorf("should fall back to SQLDSN, got %q", got)
+	}
+
+	if got := (&Config{DatabaseURL: "postgres://app/db"}).ChangeLogDSN(); got != "postgres://app/db" {
+		t.Errorf("should fall back through SQLDSN to DATABASE_URL, got %q", got)
 	}
 }
 

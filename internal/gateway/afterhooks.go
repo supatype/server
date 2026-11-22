@@ -17,14 +17,15 @@ func WithAfterHookListener(l *changelog.Listener) DepsOption {
 
 // newAfterHookListener builds the change-log listener for a single-project server, or nil where it
 // cannot run: no database to read, or a server answering for many tenants from one process, whose
-// databases one listener cannot follow. Nil keeps after hooks on the request path.
+// databases one listener cannot follow. Nil keeps after hooks on the request path. It reads on
+// ChangeLogDSN, which is a replication login of its own where the SQL DSN's role has none.
 func newAfterHookListener(
 	cfg *config.Config,
 	manifest func() *proxy.RouteManifest,
 	inProcessDeno bool,
 	perTenant bool,
 ) *changelog.Listener {
-	dsn := cfg.SQLDSN()
+	dsn := cfg.ChangeLogDSN()
 	switch {
 	case perTenant:
 		changelog.Log().Info("per-tenant manifests: after hooks stay on the request path")

@@ -16,7 +16,7 @@ import (
 // table and audit table of the engine's shape, removed again after the test.
 func cliTestDB(t *testing.T) (*storage.Connection, *conf.GlobalConfiguration) {
 	t.Helper()
-	config, err := conf.LoadGlobal("../hack/test.env")
+	config, err := conf.LoadGlobalKeepingEnv("../hack/test.env")
 	require.NoError(t, err)
 	db, err := storage.Dial(config)
 	require.NoError(t, err)

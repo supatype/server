@@ -20,7 +20,7 @@ func TestUtils(t *testing.T) {
 		// positive
 		{
 			testCfgPath := "../../hack/test.env"
-			testCfg := Must(conf.LoadGlobal(testCfgPath))
+			testCfg := Must(conf.LoadGlobalKeepingEnv(testCfgPath))
 			globalCfg := Must(Config())
 			require.Equal(t, testCfg, globalCfg)
 		}

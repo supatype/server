@@ -72,3 +72,41 @@ func TestSettings_EmailDisabled(t *testing.T) {
 	p := resp.ExternalProviders
 	require.False(t, p.Email)
 }
+
+func TestSettings_CaptchaAbsentWhenDisabled(t *testing.T) {
+	api, config, err := setupAPIForTest()
+	require.NoError(t, err)
+
+	config.Security.Captcha.Enabled = false
+	config.Security.Captcha.SiteKey = "should-not-leak"
+
+	w := httptest.NewRecorder()
+	api.handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://localhost/settings", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&raw))
+	require.NotContains(t, raw, "captcha")
+}
+
+func TestSettings_CaptchaCarriesProviderAndSiteKeyWhenEnabled(t *testing.T) {
+	api, config, err := setupAPIForTest()
+	require.NoError(t, err)
+
+	config.Security.Captcha.Enabled = true
+	config.Security.Captcha.Provider = "turnstile"
+	config.Security.Captcha.Secret = "never-published"
+	config.Security.Captcha.SiteKey = "0x4AAAA-site"
+
+	w := httptest.NewRecorder()
+	api.handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://localhost/settings", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.NotContains(t, body, "never-published")
+
+	resp := Settings{}
+	require.NoError(t, json.Unmarshal([]byte(body), &resp))
+	require.NotNil(t, resp.Captcha)
+	require.Equal(t, "turnstile", resp.Captcha.Provider)
+	require.Equal(t, "0x4AAAA-site", resp.Captcha.SiteKey)
+}

@@ -1245,6 +1245,11 @@ func (config *GlobalConfiguration) ApplyDefaults() error {
 	if config.JWT.DefaultGroupName == "" {
 		config.JWT.DefaultGroupName = "authenticated"
 	}
+	// Users are stored with, and looked up by, this audience. Unset, it was empty
+	// and every host had to remember to set it to match the users it already held.
+	if config.JWT.Aud == "" {
+		config.JWT.Aud = "authenticated"
+	}
 
 	if config.JWT.Exp == 0 {
 		config.JWT.Exp = 3600

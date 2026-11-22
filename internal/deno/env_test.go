@@ -8,7 +8,7 @@ import (
 	"github.com/supatype/server/internal/config"
 )
 
-func TestEdgeSubprocessEnv_coreAndPassThrough(t *testing.T) {
+func TestEdgeSubprocessEnv_coreAndNoPrefixRemap(t *testing.T) {
 	t.Setenv("SUPATYPE_EDGE_CUSTOM", "hello")
 
 	srv := &config.Config{
@@ -18,8 +18,10 @@ func TestEdgeSubprocessEnv_coreAndPassThrough(t *testing.T) {
 	}
 	got := EdgeSubprocessEnv(srv, "http://localhost:9999")
 
-	if !slices.Contains(got, "CUSTOM=hello") {
-		t.Fatalf("missing pass-through: %#v", got)
+	for _, entry := range got {
+		if strings.HasPrefix(entry, "CUSTOM=") || strings.HasPrefix(entry, "SUPATYPE_EDGE_") {
+			t.Fatalf("a SUPATYPE_EDGE_ variable reached the child: %q", entry)
+		}
 	}
 	if !slices.Contains(got, "SUPATYPE_URL=http://localhost:9999") {
 		t.Fatalf("missing URL: %#v", got)
@@ -51,23 +53,6 @@ func TestEdgeSubprocessEnv_supatypeURLWinsOverFallback(t *testing.T) {
 func TestEdgeSubprocessEnvWithNoConfig(t *testing.T) {
 	if got := EdgeSubprocessEnv(nil, "http://localhost:9999"); got != nil {
 		t.Errorf("got %v, want nothing", got)
-	}
-}
-
-// The prefix is stripped to make the variable name, so a variable that is only
-// the prefix names nothing and is skipped rather than exported as "=value".
-func TestEdgeSubprocessEnvSkipsAVariableWithNoNameAfterThePrefix(t *testing.T) {
-	t.Setenv("SUPATYPE_EDGE_", "orphan")
-	t.Setenv("SUPATYPE_EDGE_REAL", "kept")
-
-	got := EdgeSubprocessEnv(&config.Config{}, "")
-	for _, entry := range got {
-		if strings.HasPrefix(entry, "=") {
-			t.Errorf("an unnamed variable was exported: %q", entry)
-		}
-	}
-	if !slices.Contains(got, "REAL=kept") {
-		t.Errorf("got %v, want the named one kept", got)
 	}
 }
 

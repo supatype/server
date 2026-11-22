@@ -61,7 +61,7 @@ func (ts *RefreshTokenV2Suite) SetupTest() {
 }
 
 func (ts *RefreshTokenV2Suite) config() *conf.GlobalConfiguration {
-	config, err := conf.LoadGlobal("../../../hack/test.env")
+	config, err := conf.LoadGlobalKeepingEnv("../../../hack/test.env")
 	if err != nil {
 		panic("failed to load config")
 	}
@@ -806,7 +806,7 @@ type IDTokenTestSuite struct {
 func TestIDTokenGeneration(t *testing.T) {
 	ts := &IDTokenTestSuite{}
 
-	config, err := conf.LoadGlobal("../../../hack/test_asymmetric.env")
+	config, err := conf.LoadGlobalKeepingEnv("../../../hack/test_asymmetric.env")
 	require.NoError(t, err)
 
 	conn, err := test.SetupDBConnection(config)

@@ -16,7 +16,7 @@ import (
 
 func TestValidateRequestOrigin(t *testing.T) {
 	// Setup test configuration
-	globalConfig, err := conf.LoadGlobal(oauthServerTestConfig)
+	globalConfig, err := conf.LoadGlobalKeepingEnv(oauthServerTestConfig)
 	require.NoError(t, err)
 
 	// Set up test site URL for validation
@@ -123,7 +123,7 @@ func TestValidateRequestOrigin(t *testing.T) {
 }
 
 func TestValidateRequestOriginEdgeCases(t *testing.T) {
-	globalConfig, err := conf.LoadGlobal(oauthServerTestConfig)
+	globalConfig, err := conf.LoadGlobalKeepingEnv(oauthServerTestConfig)
 	require.NoError(t, err)
 
 	globalConfig.SiteURL = "https://example.com"

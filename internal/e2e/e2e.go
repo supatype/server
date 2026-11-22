@@ -45,7 +45,7 @@ func GetConfigPath() string {
 
 // Config calls conf.LoadGlobal using GetConfigPath().
 func Config() (*conf.GlobalConfiguration, error) {
-	globalCfg, err := conf.LoadGlobal(GetConfigPath())
+	globalCfg, err := conf.LoadGlobalKeepingEnv(GetConfigPath())
 	if err != nil {
 		return nil, err
 	}

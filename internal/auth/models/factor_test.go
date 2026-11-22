@@ -20,7 +20,7 @@ type FactorTestSuite struct {
 }
 
 func TestFactor(t *testing.T) {
-	globalConfig, err := conf.LoadGlobal(modelsTestConfig)
+	globalConfig, err := conf.LoadGlobalKeepingEnv(modelsTestConfig)
 	require.NoError(t, err)
 	conn, err := test.SetupDBConnection(globalConfig)
 	require.NoError(t, err)

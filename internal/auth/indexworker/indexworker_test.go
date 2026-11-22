@@ -32,7 +32,7 @@ type IndexWorkerTestSuite struct {
 
 func (ts *IndexWorkerTestSuite) SetupSuite() {
 	// Load test configuration
-	config, err := conf.LoadGlobal("../../../hack/test.env")
+	config, err := conf.LoadGlobalKeepingEnv("../../../hack/test.env")
 	require.NoError(ts.T(), err)
 	ts.config = config
 	ts.maxUsersThreshold = config.IndexWorker.MaxUsersThreshold

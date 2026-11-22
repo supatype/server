@@ -23,7 +23,7 @@ func (ts *AccountLinkingTestSuite) SetupTest() {
 }
 
 func TestAccountLinking(t *testing.T) {
-	globalConfig, err := conf.LoadGlobal(modelsTestConfig)
+	globalConfig, err := conf.LoadGlobalKeepingEnv(modelsTestConfig)
 	require.NoError(t, err)
 
 	conn, err := test.SetupDBConnection(globalConfig)

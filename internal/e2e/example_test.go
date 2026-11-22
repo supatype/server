@@ -10,7 +10,7 @@ import (
 
 func Example_config() {
 	testCfgPath := "../../hack/test.env"
-	testCfg := e2e.Must(conf.LoadGlobal(testCfgPath))
+	testCfg := e2e.Must(conf.LoadGlobalKeepingEnv(testCfgPath))
 	globalCfg := e2e.Must(e2e.Config())
 
 	if reflect.DeepEqual(testCfg, globalCfg) {

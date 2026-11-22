@@ -6,7 +6,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 DATABASE="$DIR/database.yml"
 
 export SUPATYPE_DB_DRIVER="postgres"
-export SUPATYPE_DB_DATABASE_URL="postgres://supatype_auth_admin:root@localhost:5432/$DB_ENV"
+export SUPATYPE_DB_DATABASE_URL="postgres://supatype_auth_admin:root@localhost:55440/$DB_ENV"
 export SUPATYPE_DB_MIGRATIONS_PATH=$DIR/../migrations
 
 go run main.go migrate -c $DIR/test.env

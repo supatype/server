@@ -5,7 +5,7 @@ docker rm -f supatype_auth_postgres >/dev/null 2>/dev/null || true
 docker volume inspect postgres_data 2>/dev/null >/dev/null || docker volume create --name postgres_data >/dev/null
 
 docker run --name supatype_auth_postgres \
-	-p 5432:5432 \
+	-p 127.0.0.1:55440:5432 \
     -e POSTGRES_USER=postgres \
 	-e POSTGRES_PASSWORD=root \
 	-e POSTGRES_DB=postgres \

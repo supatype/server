@@ -885,7 +885,7 @@ func (c *SecurityConfiguration) Validate() error {
 func loadEnvironment(filename string) error {
 	var err error
 	if filename != "" {
-		err = godotenv.Overload(filename)
+		err = godotenv.Load(filename)
 	} else {
 		err = godotenv.Load()
 		// handle if .env file does not exist, this is OK
@@ -1016,14 +1016,13 @@ func (e *ExtensibilityPointConfiguration) PopulateExtensibilityPoint() error {
 }
 
 // LoadFile calls godotenv.Load() when the given filename is empty ignoring any
-// errors loading, otherwise it calls godotenv.Overload(filename).
-//
-// godotenv.Load: preserves env, ".env" path is optional
-// godotenv.Overload: overrides env, "filename" path must exist
+// errors loading, otherwise it calls godotenv.Load(filename). Neither replaces a
+// variable the environment already sets, so a shell value beats the file and a
+// test run can aim DATABASE_URL at a private database. The filename must exist.
 func LoadFile(filename string) error {
 	var err error
 	if filename != "" {
-		err = godotenv.Overload(filename)
+		err = godotenv.Load(filename)
 	} else {
 		err = godotenv.Load()
 		// handle if .env file does not exist, this is OK

@@ -89,7 +89,7 @@ func (ts *WebAuthnChallengeTestSuite) TestDelete() {
 }
 
 func (ts *WebAuthnChallengeTestSuite) TestNullableUserID() {
-	// Discoverable flow — no user ID
+	// Discoverable flow: no user ID
 	challenge := NewWebAuthnChallenge(nil, WebAuthnChallengeTypeSignup, &WebAuthnSessionData{
 		SessionData: &webauthn.SessionData{Challenge: "discoverable"},
 	}, time.Now().Add(5*time.Minute))

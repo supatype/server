@@ -17,8 +17,8 @@ import (
 // rather than in the keyspace, so they are not reachable over RESP and the
 // keyspace client cannot answer for them. *pgxpool.Pool satisfies this.
 //
-// An interface rather than the pool, because every one of the states below —
-// the extension absent, the feature off, no traffic yet — has to be rendered as
+// An interface rather than the pool, because every one of the states below
+// (the extension absent, the feature off, no traffic yet) has to be rendered as
 // itself, and the only honest way to know that they are is to be able to write
 // a test that produces each one.
 type StatsQuerier interface {
@@ -50,7 +50,7 @@ const (
 // Every counter carries a _total suffix because every counter is cumulative
 // since the segment started and is not reset by reading. A raw number is
 // meaningless to a reader who assumes otherwise, and a hit rate computed from
-// the totals shows 94% on a cache that has been broken for an hour — the rate
+// the totals shows 94% on a cache that has been broken for an hour. The rate
 // has to come from a delta between two reads, which is the caller's job and is
 // the reason these are named the way they are.
 type keyspaceStats struct {
@@ -78,20 +78,20 @@ type keyspaceStats struct {
 // rowCacheStatus is the Row cache health panel.
 //
 // State is first because it is the question. The views are EMPTY when
-// rowcache_decode is off — not zeroed — so a handler that unpacked rows into a
+// rowcache_decode is off (not zeroed), so a handler that unpacked rows into a
 // struct and returned it would report a disabled feature as a perfectly healthy
 // one with no traffic. That distinction is the panel's whole job.
 type rowCacheStatus struct {
 	// One of: unavailable, off, idle, participating, incoherent.
 	//
-	//   unavailable   — the extension is not installed, or this role cannot read
+	//   unavailable:   the extension is not installed, or this role cannot read
 	//                   its views. Needs GRANT pg_monitor.
-	//   off           — installed, rowcache_decode is off. Not an error and not
+	//   off:           installed, rowcache_decode is off. Not an error and not
 	//                   healthy: nothing is being cached or invalidated.
-	//   idle          — on, but this database has no registered tables, so it
+	//   idle:          on, but this database has no registered tables, so it
 	//                   takes no slot and no turn. That is by design.
-	//   participating — on, registered, and inside its staleness window.
-	//   incoherent    — on and registered, but behind or its slot was lost.
+	//   participating: on, registered, and inside its staleness window.
+	//   incoherent:    on and registered, but behind or its slot was lost.
 	//                   Reads fail closed to the heap: answers stay correct and
 	//                   nothing is being served from the cache.
 	State string `json:"state"`
@@ -105,14 +105,14 @@ type rowCacheStatus struct {
 	// may return the previous row for up to this long after another connection's
 	// UPDATE. It grows with the number of participating databases once they
 	// outnumber the invalidation pool, because a database waiting its turn is
-	// behind by the cycle time by design — which is exactly why a UI must read
+	// behind by the cycle time by design, which is exactly why a UI must read
 	// it instead of printing the 200ms default.
 	StaleAfterMS int64 `json:"stale_after_ms"`
 
 	Coherent bool `json:"coherent"`
 	// True when the server cut this database's slot loose for retaining too much
 	// WAL. An unknown set of invalidations was never delivered, so no heartbeat
-	// can vouch for what is cached — which is why this is its own field and not
+	// can vouch for what is cached, which is why this is its own field and not
 	// folded into Coherent.
 	SlotLost  bool   `json:"slot_lost"`
 	BeatAgeMS *int64 `json:"beat_age_ms"`
@@ -127,7 +127,7 @@ type rowCacheStatus struct {
 	// Invisible until the row cache is switched on, which is what makes it worth a comment: the
 	// view is EMPTY while `rowcache_decode` is off, so there is no row to scan, no error, and the
 	// handler correctly reports `off`. Turning the feature on is what starts returning a row, so
-	// the panel reported a working row cache as a missing one — and Studio renders a non-404/503
+	// the panel reported a working row cache as a missing one, and Studio renders a non-404/503
 	// failure as "not running", which is the same words it uses for genuinely off.
 	RegistrationsLoaded bool `json:"registrations_loaded"`
 
@@ -170,6 +170,12 @@ func keyspaceStatsHandler(_ *config.Config, monitor StatsQuerier) http.HandlerFu
 		}
 		rows, err := monitor.Query(r.Context(), keyspaceStatsSQL)
 		if err != nil {
+			// Absent or unreadable views are a supported deployment, as for the row cache, not
+			// an outage worth a 502 with the database's error in it (e2e 2026-11-21, FF-19).
+			if isMissingRelation(err) {
+				writeErr(w, http.StatusServiceUnavailable, "pg_keyspace statistics are not available on this database")
+				return
+			}
 			writeStatsErr(w, err)
 			return
 		}
@@ -231,7 +237,7 @@ func readRowCache(ctx context.Context, monitor StatsQuerier) (rowCacheStatus, er
 		if err := rows.Err(); err != nil {
 			return rowCacheStatus{}, err
 		}
-		// Installed, decoding off. Not zeroes — no rows at all.
+		// Installed, decoding off. Not zeroes: no rows at all.
 		return rowCacheStatus{State: "off"}, nil
 	}
 
@@ -249,7 +255,7 @@ func readRowCache(ctx context.Context, monitor StatsQuerier) (rowCacheStatus, er
 
 	switch {
 	case !s.DecodeEnabled:
-		// The view answers even with decoding off, and reports coherent=true —
+		// The view answers even with decoding off, and reports coherent=true,
 		// correctly, because with no decoder the operator owns coherence and the
 		// planner hook does not fail anything closed. Reporting that as a healthy
 		// cache is the error rule 2 is about, so the state wins over the column.
@@ -299,7 +305,7 @@ func readRowCacheDatabases(ctx context.Context, monitor StatsQuerier) ([]rowCach
 //
 // 42P01 is the view not existing; 42501 is it existing and this role not being
 // a pg_monitor member, which is the one every fresh provision hits. Both mean
-// the panel has nothing to show and neither is worth a 502 — a deployment
+// the panel has nothing to show and neither is worth a 502: a deployment
 // without the extension is a supported deployment.
 func isMissingRelation(err error) bool {
 	var pgErr *pgconn.PgError

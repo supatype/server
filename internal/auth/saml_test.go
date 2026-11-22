@@ -25,7 +25,7 @@ import (
 )
 
 func TestSAMLMetadataWithAPI(t *tst.T) {
-	config, err := conf.LoadGlobal(apiTestConfig)
+	config, err := conf.LoadGlobalKeepingEnv(apiTestConfig)
 	require.NoError(t, err)
 	config.API.ExternalURL = "https://projectref.supatype.com/auth/v1/"
 	config.SAML.Enabled = true
@@ -116,7 +116,7 @@ func newSAMLTestKeyConfig(t *tst.T) *conf.SAMLConfiguration {
 // next key when nextKey is set.
 func samlMetadataTestConfig(t *tst.T, nextKey string, allowEncrypted bool) *conf.GlobalConfiguration {
 	t.Helper()
-	config, err := conf.LoadGlobal(apiTestConfig)
+	config, err := conf.LoadGlobalKeepingEnv(apiTestConfig)
 	require.NoError(t, err)
 	config.SAML.NextPrivateKey = nextKey
 	config.SAML.AllowEncryptedAssertions = allowEncrypted
@@ -233,7 +233,7 @@ var validUntilAttr = regexp.MustCompile(`validUntil="[^"]*"`)
 // which is stamped per request. The configuration is read the way the
 // reloader reads it: the watch directory's files, then the environment.
 func TestSAMLMetadataStableAcrossReload(t *tst.T) {
-	_, err := conf.LoadGlobal(apiTestConfig)
+	_, err := conf.LoadGlobalKeepingEnv(apiTestConfig)
 	require.NoError(t, err)
 
 	dir := t.TempDir()

@@ -47,7 +47,7 @@ const authTestConfig = "../../hack/test.env"
 func requireAuthEnvironment(t *testing.T) string {
 	t.Helper()
 
-	cfg, err := conf.LoadGlobal(authTestConfig)
+	cfg, err := conf.LoadGlobalKeepingEnv(authTestConfig)
 	if err != nil {
 		t.Skipf("the auth configuration does not load: %v", err)
 	}

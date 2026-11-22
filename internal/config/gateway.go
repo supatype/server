@@ -188,6 +188,12 @@ type Config struct {
 	// DenoPort is the port deno will listen on (proxied by supatype-server).
 	DenoPort string `envconfig:"SUPATYPE_DENO_PORT" default:"8001"`
 
+	// FunctionsLogToStdout also writes each edge function worker line to this server's own output,
+	// prefixed with the function name. Off by default: the lines are always kept for Studio, and a
+	// hosted server's logs are not the place to repeat a customer's function output. Native
+	// `supatype dev` turns it on so a function's console.log shows in the dev terminal.
+	FunctionsLogToStdout bool `envconfig:"SUPATYPE_FUNCTIONS_LOG_TO_STDOUT"`
+
 	// FunctionsWorkerURL is the base URL of an external functions worker (Deno runtime).
 	// When set, supatype-server proxies /functions/v1 here and does not start an in-process Deno subprocess.
 	FunctionsWorkerURL string `envconfig:"SUPATYPE_FUNCTIONS_WORKER_URL"`

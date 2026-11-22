@@ -136,6 +136,7 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_STORAGE_URL`
 - `SUPATYPE_STORAGE_DISABLED` (answer every `/storage/v1` request with 503 `storage_unavailable`, whatever `STORAGE_PROVIDER` or the storage URLs say; native `supatype dev` sets it when its storage service could not start. `/health` and `/health/ready` then report `components.storage.status` as `disabled`, do not probe it, and do not count it toward readiness. It is only the starting value: the route manifest's `services.storage.enabled` overrides it while the server runs, see Service switches below)
 - `SUPATYPE_FUNCTIONS_WORKER_URL`
+- `SUPATYPE_FUNCTIONS_LOG_TO_STDOUT` (default off. When `true`, the in-process Deno worker's output is also written to this server's own stdout, one line per worker line, prefixed `[function-name]` or `[deno]` for a line that names no function. The lines are always kept for Studio; this only adds the copy. Native `supatype dev` sets it)
 - `SUPATYPE_DENO_PATH`
 - `SUPATYPE_DENO_FUNCTIONS_DIR`
 - `SUPATYPE_DENO_PORT`

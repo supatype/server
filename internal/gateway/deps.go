@@ -206,6 +206,17 @@ func (d *Deps) MaskedFields(ctx context.Context) (map[string][]studiobootstrap.F
 	return studiobootstrap.MaskedFields(ctx, d.Resources)
 }
 
+// storedAdminConfig reads the admin config the last push recorded in the database, which is the
+// only copy a push linked from another machine can leave.
+func (d *Deps) storedAdminConfig() studioauth.StoredAdminConfig {
+	if d.Resources == nil {
+		return nil
+	}
+	return studioauth.StoredAdminConfigFrom(func(ctx context.Context) (*studiobootstrap.Snapshot, error) {
+		return studiobootstrap.LoadSnapshot(ctx, d.Resources)
+	})
+}
+
 // AdminPool hands out the admin pool as the narrow interface the SQL runner
 // asks for. Resolved per request, not at mount time: a deployment with no
 // database answers 503 rather than failing to start.

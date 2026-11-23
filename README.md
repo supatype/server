@@ -132,7 +132,7 @@ Common `SUPATYPE_*` variables:
 - `SUPATYPE_MANIFEST_PATH`
 - `SUPATYPE_POSTGREST_URL`
 - `SUPATYPE_GRAPHQL_URL` (unset: PostgREST's URL, where pg_graphql is an RPC)
-- `SUPATYPE_GRAPHQL_DISABLED` (answer `/graphql/v1` with 501 `graphql_unavailable`; native `supatype dev` sets it. `/health` and `/health/ready` then report `components.graphql.status` as `disabled`, do not probe it, and do not count it toward readiness)
+- `SUPATYPE_GRAPHQL_DISABLED` (answer `/graphql/v1` with 501 `graphql_unavailable`; native `supatype dev` sets it. `SUPATYPE_GRAPHQL_DISABLED_REASON=project` says the project switched it off (`services.graphql: false`), which `supatype self-host` renders so the 501 reads "switched off for this project" as on Cloud. `/health` and `/health/ready` then report `components.graphql.status` as `disabled`, do not probe it, and do not count it toward readiness)
 - `SUPATYPE_STORAGE_URL`
 - `SUPATYPE_STORAGE_DISABLED` (answer every `/storage/v1` request with 503 `storage_unavailable`, whatever `STORAGE_PROVIDER` or the storage URLs say; native `supatype dev` sets it when its storage service could not start. `/health` and `/health/ready` then report `components.storage.status` as `disabled`, do not probe it, and do not count it toward readiness. It is only the starting value: the route manifest's `services.storage.enabled` overrides it while the server runs, see Service switches below)
 - `SUPATYPE_FUNCTIONS_WORKER_URL`

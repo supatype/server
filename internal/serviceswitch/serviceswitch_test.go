@@ -44,3 +44,22 @@ func TestOnTakesTheManifestOverTheStartValue(t *testing.T) {
 		t.Error("no manifest: functions off, want the start value, on")
 	}
 }
+
+func TestGraphQLOffByProject(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cfg        config.Config
+		byManifest bool
+		want       bool
+	}{
+		"the manifest switched it off by itself":          {config.Config{}, true, true},
+		"self-host, the CLI says the project switched it": {config.Config{GraphQLDisabled: true, GraphQLDisabledReason: "project"}, false, true},
+		"the reason is read case and space blind":         {config.Config{GraphQLDisabled: true, GraphQLDisabledReason: " Project "}, false, true},
+		"native dev, no reason: not available":            {config.Config{GraphQLDisabled: true}, false, false},
+		"an unknown reason: not available":                {config.Config{GraphQLDisabled: true, GraphQLDisabledReason: "pg_graphql"}, false, false},
+	} {
+		cfg := tc.cfg
+		if got := GraphQLOffByProject(&cfg, tc.byManifest); got != tc.want {
+			t.Errorf("%s: %v, want %v", name, got, tc.want)
+		}
+	}
+}

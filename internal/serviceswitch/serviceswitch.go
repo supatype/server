@@ -33,3 +33,16 @@ func Start(cfg *config.Config, name string) bool {
 func On(m *proxy.RouteManifest, cfg *config.Config, name string) bool {
 	return m.ServiceOn(name, Start(cfg, name))
 }
+
+// GraphQLReasonProject is the SUPATYPE_GRAPHQL_DISABLED_REASON value that says the project
+// switched GraphQL off, as against a stack that has no pg_graphql.
+const GraphQLReasonProject = "project"
+
+// GraphQLOffByProject is whether GraphQL being off is the project's own doing, which is what
+// the 501 message tells the caller. byManifest is whether the route manifest switched it off
+// (Cloud). Otherwise the CLI says so with the reason "project" when it rendered
+// services.graphql: false into a self-hosted stack. Off with no reason is a stack whose Postgres
+// has no pg_graphql (native `supatype dev`).
+func GraphQLOffByProject(cfg *config.Config, byManifest bool) bool {
+	return byManifest || strings.EqualFold(strings.TrimSpace(cfg.GraphQLDisabledReason), GraphQLReasonProject)
+}

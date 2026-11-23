@@ -234,6 +234,12 @@ type Config struct {
 	// GraphQL as before.
 	GraphQLDisabled bool `envconfig:"SUPATYPE_GRAPHQL_DISABLED"`
 
+	// GraphQLDisabledReason says why SUPATYPE_GRAPHQL_DISABLED is set. "project" means the
+	// project switched GraphQL off (`services.graphql: false`), which `supatype self-host`
+	// renders so a self-hosted stack gives the answer a Cloud project does. Unset, GraphQL is
+	// off because the stack has no pg_graphql (native `supatype dev`).
+	GraphQLDisabledReason string `envconfig:"SUPATYPE_GRAPHQL_DISABLED_REASON"`
+
 	// StorageDisabled answers every /storage/v1 request with 503
 	// storage_unavailable, whatever STORAGE_PROVIDER or the storage URLs say.
 	// Native `supatype dev` sets it when its storage service could not start:

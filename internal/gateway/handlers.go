@@ -217,7 +217,7 @@ func buildGraphQL(d *Deps) http.Handler {
 		// SUPATYPE_GRAPHQL_DISABLED (serviceswitch).
 		m := d.ManifestFor(req)
 		if !serviceswitch.On(m, d.Config, proxy.ServiceGraphQL) {
-			graphQLUnavailable(w, !m.ServiceOn(proxy.ServiceGraphQL, true))
+			graphQLUnavailable(w, serviceswitch.GraphQLOffByProject(d.Config, !m.ServiceOn(proxy.ServiceGraphQL, true)))
 			return
 		}
 		u, err := url.Parse(GraphQLUpstream(m, d.Config))

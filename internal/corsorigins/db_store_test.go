@@ -16,7 +16,7 @@ import (
 
 func testDB(t *testing.T) *storage.Connection {
 	t.Helper()
-	config, err := conf.LoadGlobal("../../hack/test.env")
+	config, err := conf.LoadGlobalKeepingEnv("../../hack/test.env")
 	require.NoError(t, err)
 	conn, err := test.SetupDBConnection(config)
 	require.NoError(t, err)

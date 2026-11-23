@@ -898,10 +898,24 @@ func (c *SecurityConfiguration) Validate() error {
 	return nil
 }
 
+// loadEnvironment is the production loader behind LoadGlobal and the server's -c
+// flag: a named file replaces variables the environment already sets.
 func loadEnvironment(filename string) error {
+	return loadEnvFile(filename, godotenv.Overload)
+}
+
+// loadEnvironmentKeepingEnv is the test loader: a named file only fills variables
+// the environment leaves unset, so a shell value beats hack/test.env.
+func loadEnvironmentKeepingEnv(filename string) error {
+	return loadEnvFile(filename, godotenv.Load)
+}
+
+// loadEnvFile reads filename with load, or the optional .env in the working
+// directory (never replacing the environment) when filename is empty.
+func loadEnvFile(filename string, load func(...string) error) error {
 	var err error
 	if filename != "" {
-		err = godotenv.Overload(filename)
+		err = load(filename)
 	} else {
 		err = godotenv.Load()
 		// handle if .env file does not exist, this is OK
@@ -1037,17 +1051,13 @@ func (e *ExtensibilityPointConfiguration) PopulateExtensibilityPoint() error {
 // godotenv.Load: preserves env, ".env" path is optional
 // godotenv.Overload: overrides env, "filename" path must exist
 func LoadFile(filename string) error {
-	var err error
-	if filename != "" {
-		err = godotenv.Overload(filename)
-	} else {
-		err = godotenv.Load()
-		// handle if .env file does not exist, this is OK
-		if os.IsNotExist(err) {
-			return nil
-		}
-	}
-	return err
+	return loadEnvironment(filename)
+}
+
+// LoadFileKeepingEnv is LoadFile for tests: a variable the environment already
+// sets beats the file, so a test run can aim DATABASE_URL at a private database.
+func LoadFileKeepingEnv(filename string) error {
+	return loadEnvironmentKeepingEnv(filename)
 }
 
 // LoadDirectory does nothing when configDir is empty, otherwise it will attempt
@@ -1114,7 +1124,17 @@ func LoadGlobalFromEnv() (*GlobalConfiguration, error) {
 }
 
 func LoadGlobal(filename string) (*GlobalConfiguration, error) {
-	if err := loadEnvironment(filename); err != nil {
+	return loadGlobalFrom(filename, loadEnvironment)
+}
+
+// LoadGlobalKeepingEnv is LoadGlobal for tests: the file never replaces a
+// variable the environment already sets. Production uses LoadGlobal.
+func LoadGlobalKeepingEnv(filename string) (*GlobalConfiguration, error) {
+	return loadGlobalFrom(filename, loadEnvironmentKeepingEnv)
+}
+
+func loadGlobalFrom(filename string, load func(string) error) (*GlobalConfiguration, error) {
+	if err := load(filename); err != nil {
 		return nil, err
 	}
 

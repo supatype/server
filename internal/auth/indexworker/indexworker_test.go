@@ -32,7 +32,7 @@ type IndexWorkerTestSuite struct {
 
 func (ts *IndexWorkerTestSuite) SetupSuite() {
 	// Load test configuration
-	config, err := conf.LoadGlobal("../../../hack/test.env")
+	config, err := conf.LoadGlobalKeepingEnv("../../../hack/test.env")
 	require.NoError(ts.T(), err)
 	ts.config = config
 	ts.maxUsersThreshold = config.IndexWorker.MaxUsersThreshold
@@ -341,7 +341,7 @@ func (ts *IndexWorkerTestSuite) TestUserOptInAlwaysCreatesIndexes() {
 	analyzeQuery := fmt.Sprintf(`ANALYZE %q.users`, ts.namespace)
 	require.NoError(ts.T(), ts.db.RawQuery(analyzeQuery).Exec())
 
-	// User opt-in with threshold set below user count — should still create indexes
+	// User opt-in with threshold set below user count and should still create indexes
 	ts.config.IndexWorker.EnsureUserSearchIndexesExist = true
 	ts.config.IndexWorker.MaxUsersThreshold = 1
 

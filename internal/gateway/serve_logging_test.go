@@ -35,7 +35,7 @@ func TestServeConfiguresLoggingFromTheAuthConfig(t *testing.T) {
 }
 
 func serveLoggingChild(t *testing.T) {
-	if err := conf.LoadFile(authTestConfig); err != nil {
+	if err := conf.LoadFileKeepingEnv(authTestConfig); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SUPATYPE_LOG_FIELDS", "service:serve-test")
@@ -80,7 +80,7 @@ func loadTestEnvRestored(t *testing.T) {
 	for key := range values {
 		t.Setenv(key, os.Getenv(key))
 	}
-	if err := conf.LoadFile(authTestConfig); err != nil {
+	if err := conf.LoadFileKeepingEnv(authTestConfig); err != nil {
 		t.Fatal(err)
 	}
 }

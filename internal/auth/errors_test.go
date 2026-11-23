@@ -71,7 +71,7 @@ func TestHandleResponseErrorWithHTTPError(t *testing.T) {
 
 func TestRecoverer(t *testing.T) {
 	var logBuffer bytes.Buffer
-	config, err := conf.LoadGlobal(apiTestConfig)
+	config, err := conf.LoadGlobalKeepingEnv(apiTestConfig)
 	require.NoError(t, err)
 	require.NoError(t, observability.ConfigureLogging(&config.Logging))
 

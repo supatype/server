@@ -24,7 +24,7 @@ func (ts *SSOTestSuite) SetupTest() {
 }
 
 func TestSSO(t *testing.T) {
-	globalConfig, err := conf.LoadGlobal(modelsTestConfig)
+	globalConfig, err := conf.LoadGlobalKeepingEnv(modelsTestConfig)
 	require.NoError(t, err)
 
 	conn, err := test.SetupDBConnection(globalConfig)

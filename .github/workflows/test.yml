@@ -28,7 +28,7 @@ jobs:
           POSTGRES_PASSWORD: root
           POSTGRES_DB: postgres
         ports:
-          - 5432:5432
+          - 55440:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -111,7 +111,7 @@ jobs:
           set -x
           make vulncheck
       - name: Init Database
-        run: psql -f hack/init_postgres.sql postgresql://postgres:root@localhost:5432/postgres
+        run: psql -f hack/init_postgres.sql postgresql://postgres:root@localhost:55440/postgres
       - name: Run migrations
         run: make migrate_dev
       # A second Valkey that refuses anyone but the supatype user with its
@@ -135,7 +135,7 @@ jobs:
           # database is created by hack/init_postgres.sql and is separate from
           # the migrated one on purpose: these tests drop and recreate
           # auth.users, which fails where the auth migrations own it.
-          SUPATYPE_TEST_DSN: postgresql://postgres:root@localhost:5432/supatype_studio_test
+          SUPATYPE_TEST_DSN: postgresql://postgres:root@localhost:55440/supatype_studio_test
           # Same reason: without an address the keyspace client's own tests skip
           # and the package cannot reach its floor.
           SUPATYPE_TEST_KEYSPACE_ADDR: 127.0.0.1:6379

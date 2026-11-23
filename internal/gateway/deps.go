@@ -221,9 +221,11 @@ func (d *Deps) MaskedFields(ctx context.Context) (map[string][]studiobootstrap.F
 }
 
 // storedAdminConfig reads the admin config the last push recorded in the database, which is the
-// only copy a push linked from another machine can leave.
+// only copy a push linked from another machine can leave. With no database configured there is no
+// stored copy to read, so the file alone decides: asking would fail with data.ErrNoDatabase, which
+// reads as an unreachable database and turns "nothing pushed" into a 500.
 func (d *Deps) storedAdminConfig() studioauth.StoredAdminConfig {
-	if d.Resources == nil {
+	if !d.Resources.HasDatabase() {
 		return nil
 	}
 	return studioauth.StoredAdminConfigFrom(func(ctx context.Context) (*studiobootstrap.Snapshot, error) {

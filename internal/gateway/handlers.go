@@ -149,7 +149,7 @@ func buildStudioConfig(d *Deps) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		_, _ = w.Write(studioauth.AdminConfigWithSiteURL(body, d.SiteURL))
 	})
 	return studioauth.RequireAdmin(d.Studio, inner)
 }

@@ -80,3 +80,30 @@ func AdminRolesFromConfigFile(path, override string) []string {
 	}
 	return cfg.AdminRoles
 }
+
+// AdminConfigWithSiteURL adds the server's own SITE_URL to an admin config body as `siteUrl`.
+//
+// The site URL is a fact about the running server, not about the pushed schema, so it is read at
+// request time rather than written by a push. It travels only on the admin-only studio config
+// route and never on the public auth settings. A body that is not a JSON object, and an empty
+// site URL, leave the body untouched.
+func AdminConfigWithSiteURL(body []byte, siteURL string) []byte {
+	siteURL = strings.TrimSpace(siteURL)
+	if siteURL == "" {
+		return body
+	}
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(body, &config); err != nil || config == nil {
+		return body
+	}
+	encoded, err := json.Marshal(siteURL)
+	if err != nil {
+		return body
+	}
+	config["siteUrl"] = encoded
+	merged, err := json.Marshal(config)
+	if err != nil {
+		return body
+	}
+	return merged
+}

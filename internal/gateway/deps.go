@@ -92,6 +92,8 @@ type Deps struct {
 	// APIExternalURL is the auth service's API_EXTERNAL_URL, the public address the deployment
 	// answers on when SUPATYPE_URL is not set. Set by WithAPIExternalURL.
 	APIExternalURL string
+	// SiteURL is the auth service SITE_URL. Set by WithSiteURL.
+	SiteURL string
 }
 
 // DepsOption sets something NewDeps cannot derive from its arguments.
@@ -107,6 +109,12 @@ func WithCORSPolicy(policy *corsorigins.Policy) DepsOption {
 // loads with the auth configuration rather than with the gateway's.
 func WithAPIExternalURL(externalURL string) DepsOption {
 	return func(d *Deps) { d.APIExternalURL = externalURL }
+}
+
+// WithSiteURL gives the gateway the auth service's SITE_URL, which the bootstrap loads with the
+// auth configuration rather than with the gateway's. Studio shows it on its General settings.
+func WithSiteURL(siteURL string) DepsOption {
+	return func(d *Deps) { d.SiteURL = siteURL }
 }
 
 // NewDeps resolves everything the mounts share.

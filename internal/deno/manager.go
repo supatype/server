@@ -74,8 +74,8 @@ type Manager struct {
 
 // New creates a Manager. serveEntry is the script path passed to `deno run`
 // (router generated under .supatype/functions-router.ts during `supatype dev`).
-// port is the port Deno will listen on. env is appended after inheriting OS env minus PORT=
-// plus the explicit PORT=value for Deno children.
+// port is the port Deno will listen on. env is appended after the allowlisted part of the OS
+// env (allowlist.go), and PORT=port after both.
 // When watch is true, `deno run --watch` reloads the worker when source files change.
 func New(denoPath, serveEntry string, port int, env []string, watch bool) *Manager {
 	return &Manager{
@@ -322,13 +322,15 @@ func validateCommandPath(pathValue, label string) error {
 	return nil
 }
 
+// envForDenoProcess is the child's environment: the allowlisted part of this server's (see
+// allowlist.go), then the extras, then PORT, so the child never inherits the server's own port.
 func envForDenoProcess(port int, extra []string) []string {
 	var out []string
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "PORT=") {
-			continue
+		name, _, _ := strings.Cut(e, "=")
+		if envNameAllowed(name) {
+			out = append(out, e)
 		}
-		out = append(out, e)
 	}
 	out = append(out, extra...)
 	out = append(out, fmt.Sprintf("PORT=%d", port))

@@ -156,7 +156,7 @@ func buildStudioProxy(d *Deps) http.Handler {
 // buildStudioConfig serves the engine's generated admin config to Studio.
 func buildStudioConfig(d *Deps) http.Handler {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		body, err := studioauth.ReadAdminConfigFile(d.Config.AdminConfigPath)
+		body, err := studioauth.ResolveAdminConfig(req.Context(), d.storedAdminConfig(), d.Config.AdminConfigPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				studioauth.WriteErrorBody(w, http.StatusNotFound, "schema not pushed yet")

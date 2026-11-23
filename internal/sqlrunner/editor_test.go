@@ -2,6 +2,8 @@ package sqlrunner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"os"
 	"strings"
@@ -167,7 +169,7 @@ func editorStack(t *testing.T) editorEnv {
 //
 // A cluster that already has an editor role belongs to someone else, so the
 // test leaves it alone unless adoptEditorEnv says it is a scratch one. Then it
-// uses the database the DSN names and the role that owns it.
+// makes a database of its own, owned by the role that owns the DSN's.
 func provisionEditor(t *testing.T, root *pgxpool.Pool) (database, owner string) {
 	t.Helper()
 	ctx := context.Background()
@@ -193,7 +195,14 @@ func provisionEditor(t *testing.T, root *pgxpool.Pool) (database, owner string) 
 }
 
 // adoptEditor uses the editor role a cluster already has, as the postgres image
-// provisions it, and cleans up after the test.
+// provisions it, in a database of its own.
+//
+// The image keeps its handover function in the database the DSN names, and the
+// tests that assume no function exists would otherwise find it, or drop it on
+// their way out. A throwaway database owned by the same role has none of the
+// image's objects, and nothing the tests make or drop in it touches the shared
+// one. The roles are cluster wide, so the tests must not drop any they did not
+// make.
 func adoptEditor(t *testing.T, root *pgxpool.Pool) (database, owner string) {
 	t.Helper()
 	if os.Getenv(adoptEditorEnv) != "1" {
@@ -201,19 +210,28 @@ func adoptEditor(t *testing.T, root *pgxpool.Pool) (database, owner string) {
 	}
 	ctx := context.Background()
 	if err := root.QueryRow(ctx,
-		`SELECT current_database(), pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()`).Scan(&database, &owner); err != nil {
+		`SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()`).Scan(&owner); err != nil {
 		t.Fatalf("read the database owner: %v", err)
 	}
 	if _, err := root.Exec(ctx, `ALTER ROLE `+editorRole+` WITH LOGIN PASSWORD 'editor'`); err != nil {
 		t.Fatalf("set the editor password: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = root.Exec(ctx, `DROP SCHEMA IF EXISTS supatype_editor CASCADE`)
-		for _, name := range []string{"editor_made", "editor_refused", "handover_planted", "handover_other_made", "handover_second"} {
-			_, _ = root.Exec(ctx, `DROP TABLE IF EXISTS public.`+name)
-		}
-	})
+	database = scratchDatabaseName(t)
+	if _, err := root.Exec(ctx, `CREATE DATABASE `+database+` OWNER `+owner); err != nil {
+		t.Fatalf("create %s: %v", database, err)
+	}
+	t.Cleanup(func() { _, _ = root.Exec(ctx, `DROP DATABASE IF EXISTS `+database+` WITH (FORCE)`) })
 	return database, owner
+}
+
+// scratchDatabaseName is a database name no other test run shares.
+func scratchDatabaseName(t *testing.T) string {
+	t.Helper()
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatalf("name a scratch database: %v", err)
+	}
+	return editorTestDatabase + "_" + hex.EncodeToString(suffix)
 }
 
 // teardownEditor runs after every pool on the test database has been closed,

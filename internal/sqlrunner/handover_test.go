@@ -403,6 +403,9 @@ const imageHandoverSQL = `DO $setup$
 DECLARE
   owner_role text;
 BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'supatype_sql_editor_reassigner') THEN
+    RETURN;
+  END IF;
   CREATE ROLE supatype_sql_editor_reassigner NOLOGIN NOSUPERUSER NOINHERIT;
   GRANT supatype_sql_editor TO supatype_sql_editor_reassigner WITH INHERIT TRUE, SET FALSE;
   SELECT pg_get_userbyid(datdba) INTO owner_role FROM pg_database WHERE datname = current_database();
@@ -423,12 +426,22 @@ ALTER FUNCTION public.supatype_sql_editor_reassign_owned() OWNER TO supatype_sql
 GRANT EXECUTE ON FUNCTION public.supatype_sql_editor_reassign_owned() TO supatype_sql_editor;
 `
 
+// installImageHandover makes the image's function in the test's own database. The
+// reassigner role is cluster wide and the image already has it, so it is made
+// only where it is missing and dropped only if this call made it.
 func installImageHandover(t *testing.T, stack editorEnv) {
 	t.Helper()
 	ctx := context.Background()
+	var hadRole bool
+	if err := stack.admin.QueryRow(ctx,
+		`SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supatype_sql_editor_reassigner')`).Scan(&hadRole); err != nil {
+		t.Fatalf("look up the reassigner role: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = stack.admin.Exec(ctx, `DROP FUNCTION IF EXISTS public.supatype_sql_editor_reassign_owned()`)
-		_, _ = stack.admin.Exec(ctx, `DROP ROLE IF EXISTS supatype_sql_editor_reassigner`)
+		if !hadRole {
+			_, _ = stack.admin.Exec(ctx, `DROP ROLE IF EXISTS supatype_sql_editor_reassigner`)
+		}
 	})
 	if _, err := stack.admin.Exec(ctx, imageHandoverSQL); err != nil {
 		t.Fatalf("install the image's handover function: %v", err)

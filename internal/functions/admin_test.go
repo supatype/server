@@ -725,3 +725,70 @@ func TestSettingAVariableThatCannotBeWritten(t *testing.T) {
 		t.Errorf("an env file that cannot be written: status = %d (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// ─── Env: the secret name rule (decision D-65) ───────────────────────────────
+
+const secretNameRule = "use letters, digits and underscore, and do not start with a digit."
+
+// A secret name is letters, digits and underscore, not starting with a digit, on every route and
+// in the same words the CLI and the cloud control plane use.
+func TestSetEnvRefusesANameThatBreaksTheRule(t *testing.T) {
+	handler, dir := api(t, nil)
+
+	for _, key := range []string{"MY-KEY", "1KEY", "a.b", "MY KEY", "naïve"} {
+		body, err := json.Marshal(map[string]string{"key": key, "value": "x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{"/env", "/hello/env"} {
+			rec := call(t, handler, http.MethodPost, path, string(body))
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("%q at %s: status = %d, want 400", key, path, rec.Code)
+			}
+			var answer struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+				t.Fatalf("not an error body: %s", rec.Body.String())
+			}
+			want := `"` + key + `" is not a valid secret name: ` + secretNameRule
+			if answer.Error != want {
+				t.Errorf("%q at %s: error = %q, want %q", key, path, answer.Error, want)
+			}
+		}
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("a refused name wrote files: %v", entries)
+	}
+}
+
+func TestSetEnvAcceptsANameThatFollowsTheRule(t *testing.T) {
+	handler, _ := api(t, nil)
+
+	for _, key := range []string{"API_KEY", "_private", "a", "Stripe2"} {
+		body := fmt.Sprintf(`{"key":%q,"value":"x"}`, key)
+		if rec := call(t, handler, http.MethodPost, "/env", body); rec.Code != http.StatusOK {
+			t.Errorf("%q: status = %d, want 200: %s", key, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// Removing is never held to the rule, so a key that already has a bad name (written by hand or by
+// an older server) can still be cleaned up.
+func TestDeletingAKeyWithABadNameStillWorks(t *testing.T) {
+	handler, dir := api(t, nil)
+	if err := os.WriteFile(filepath.Join(dir, ".env.local"), []byte("OLD-NAME=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := call(t, handler, http.MethodDelete, "/env/OLD-NAME", ""); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".env.local"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "OLD-NAME") {
+		t.Errorf("file still has the key: %q", raw)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -120,7 +121,7 @@ func pgErr(code string) error { return &pgconn.PgError{Code: code, Message: code
 // rowCacheRow builds the 16 columns of pg_stat_keyspace_rowcache in order.
 //
 // Column 11 is `registrations_loaded`, and it is a **boolean** in the view. This helper passed
-// `registrations` again — an int64 — so the fake agreed with a handler that had the same column
+// `registrations` again (an int64), so the fake agreed with a handler that had the same column
 // typed as int64, and the whole file passed against a query that answered 502 on every real
 // database where the row cache was running. Kept as a named argument rather than derived from
 // `registrations`, because "how many are registered" and "have they been read in yet" are
@@ -176,7 +177,7 @@ func rowCacheBody(t *testing.T, q StatsQuerier) rowCacheStatus {
 func TestRowCacheOffIsNotAHealthyCache(t *testing.T) {
 	// pg_stat_keyspace_invalidation is empty with rowcache_decode off. A handler
 	// that unpacked rows into a struct and returned it would report a disabled
-	// feature as a perfectly healthy one with no traffic — which is worse than
+	// feature as a perfectly healthy one with no traffic, which is worse than
 	// reporting nothing, because it answers the question wrongly rather than not
 	// answering it.
 	got := rowCacheBody(t, &fakeQuerier{byQuery: map[string][][]any{"rowcache": nil}})
@@ -189,7 +190,7 @@ func TestRowCacheOffIsNotAHealthyCache(t *testing.T) {
 }
 
 func TestRowCacheDecodeOffWinsOverTheCoherentColumn(t *testing.T) {
-	// The view answers even with decoding off, and reports coherent = true —
+	// The view answers even with decoding off, and reports coherent = true,
 	// correctly, because with no decoder the operator owns coherence and nothing
 	// fails closed. Reported as-is that reads "healthy", so the state has to be
 	// decided by decode_enabled rather than by the column.
@@ -258,7 +259,7 @@ func TestRowCacheBehindOrSlotLostIsIncoherent(t *testing.T) {
 func TestHitPctSurvivesAsNullRatherThanZero(t *testing.T) {
 	// "No traffic yet" and "0% hit rate" are different states. A fresh cache
 	// reading 0% looks broken and is not, and the extension goes out of its way
-	// to return NULL here — collapsing it in the JSON would throw that away.
+	// to return NULL here; collapsing it in the JSON would throw that away.
 	got := rowCacheBody(t, &fakeQuerier{byQuery: map[string][][]any{
 		"rowcache":  {rowCacheRow(true, true, false, 2, nil)},
 		"databases": {},
@@ -370,6 +371,24 @@ func TestKeyspaceStatsWithoutTheExtensionSaysSo(t *testing.T) {
 		http.MethodGet, "/cache/keyspace", "", "")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// e2e 2026-11-21 FF-19: on Cloud the view was not there for the role the server reads it as, and
+// the panel showed `ERROR: relation "supacache.pg_stat_keyspace" does not exist (HTTP 502)`. The
+// row cache route already reads these codes as absence; this one passed them through as an outage.
+func TestKeyspaceStatsWithTheViewsAbsentOrUnreadableSaysSo(t *testing.T) {
+	for _, code := range []string{"42P01", "42501", "3F000"} {
+		t.Run(code, func(t *testing.T) {
+			rec := call(t, statsHandler(t, &fakeQuerier{errs: map[string]error{"keyspace": pgErr(code)}}),
+				http.MethodGet, "/cache/keyspace", "", "")
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), code) {
+				t.Fatalf("the raw database error reached the body: %s", rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -544,7 +563,7 @@ func TestAnErrorThatIsNotPostgresIsNotMistakenForAMissingExtension(t *testing.T)
 // It shipped because the failure is invisible until the feature works. The view is EMPTY while
 // `rowcache_decode` is off: no row, no scan, no error, and the handler correctly reports `off`.
 // Turning the row cache on is what produces a row to scan, so the panel reported the one database
-// where the cache was genuinely running as one where it was not — and Studio renders any
+// where the cache was genuinely running as one where it was not, and Studio renders any
 // non-404/503 failure with the same words it uses for "off", which points the reader at their
 // schema rather than at the endpoint.
 //

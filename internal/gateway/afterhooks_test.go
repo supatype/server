@@ -33,6 +33,15 @@ func TestTheAfterHookListenerRunsOnlyForASingleProjectWithADatabase(t *testing.T
 	}
 }
 
+// Cloud gives the listener its own replication login, so the listener must start from that DSN
+// even where no SQL DSN is set.
+func TestTheAfterHookListenerRunsOnItsOwnChangeLogDSN(t *testing.T) {
+	manifest := func() *proxy.RouteManifest { return nil }
+	if newAfterHookListener(&config.Config{ChangeLogDatabaseURL: "postgres://repl/y"}, manifest, false, false) == nil {
+		t.Fatal("a change-log DSN alone is a database the listener can read")
+	}
+}
+
 func TestTheRequestPathKeepsAfterHooksWithoutAListener(t *testing.T) {
 	d := &Deps{Config: &config.Config{}}
 	if newAfterRows(d).ChangeLogActive() {

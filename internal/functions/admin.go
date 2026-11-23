@@ -296,6 +296,20 @@ func parseSince(s string) time.Time {
 // code, and a future route with a wildcard would silently remove it.
 var validFunctionName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// validSecretName is what a function secret may be called, one rule on every layer (decision D-65):
+// letters, digits and underscore, not starting with a digit. Only setting is held to it, so a key
+// that already has another name can still be removed.
+var validSecretName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// secretNameProblem says why name is not a secret name, in the words the CLI and the cloud control
+// plane use, or is empty when it is one.
+func secretNameProblem(name string) string {
+	if validSecretName.MatchString(name) {
+		return ""
+	}
+	return `"` + name + `" is not a valid secret name: use letters, digits and underscore, and do not start with a digit.`
+}
+
 // envFile resolves which env file a request is about.
 //
 // The three operations (list, set and remove) are the same whether the file is
@@ -459,6 +473,10 @@ func setEnv(file envFile) http.HandlerFunc {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
 			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key and value required"})
+			return
+		}
+		if problem := secretNameProblem(body.Key); problem != "" {
+			utilities.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": problem})
 			return
 		}
 

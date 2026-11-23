@@ -31,6 +31,13 @@ type ProviderSettings struct {
 	Zoom           bool `json:"zoom"`
 }
 
+// CaptchaSettings is what a sign-in form needs to render the provider's widget.
+// It never carries the provider secret.
+type CaptchaSettings struct {
+	Provider string `json:"provider"`
+	SiteKey  string `json:"site_key"`
+}
+
 type Settings struct {
 	ExternalProviders ProviderSettings `json:"external"`
 	DisableSignup     bool             `json:"disable_signup"`
@@ -42,10 +49,21 @@ type Settings struct {
 	// SettingsVersion is the stamp the platform wrote with the settings this server runs.
 	// Left out where none is set, so a server nothing stamps keeps the body it always had.
 	SettingsVersion int64 `json:"settings_version,omitempty"`
+	// Captcha is present only when captcha is enabled, so a client can tell
+	// "no widget" from "widget without a key".
+	Captcha *CaptchaSettings `json:"captcha,omitempty"`
 }
 
 func (a *API) Settings(w http.ResponseWriter, r *http.Request) error {
 	config := a.config
+
+	var captcha *CaptchaSettings
+	if config.Security.Captcha.Enabled {
+		captcha = &CaptchaSettings{
+			Provider: config.Security.Captcha.Provider,
+			SiteKey:  config.Security.Captcha.SiteKey,
+		}
+	}
 
 	return sendJSON(w, http.StatusOK, &Settings{
 		ExternalProviders: ProviderSettings{
@@ -83,5 +101,6 @@ func (a *API) Settings(w http.ResponseWriter, r *http.Request) error {
 		SAMLEnabled:       config.SAML.Enabled,
 		PasskeysEnabled:   config.Passkey.Enabled,
 		SettingsVersion:   config.AuthSettingsVersion,
+		Captcha:           captcha,
 	})
 }

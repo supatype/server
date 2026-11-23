@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 594 names
+# total: 595 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -1018,6 +1018,8 @@ SUPATYPE_SECURITY_CAPTCHA_ENABLED
 SUPATYPE_SECURITY_CAPTCHA_PROVIDER
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_CAPTCHA_SECRET
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_CAPTCHA_SITE_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_CAPTCHA_TIMEOUT
     struct internal/conf.GlobalConfiguration

@@ -785,6 +785,9 @@ type CaptchaConfiguration struct {
 	Enabled  bool   `json:"enabled" default:"false"`
 	Provider string `json:"provider" default:"hcaptcha"`
 	Secret   string `json:"provider_secret"`
+	// SiteKey is the public half of the provider key pair. It is not a secret: the
+	// widget in the browser needs it, and the settings endpoint publishes it.
+	SiteKey string `json:"site_key" split_words:"true"`
 	// Timeout bounds the call to the captcha provider. It was read straight from
 	// the environment inside a package init, which meant a bad value crashed the
 	// process before configuration was loaded and could report anything useful.

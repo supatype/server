@@ -247,15 +247,23 @@ func graphQLUnavailable(w http.ResponseWriter, byProject bool) {
 	})
 }
 
-// storageUnavailable answers /storage/v1 on a native `supatype dev` stack whose
-// storage service could not start. Falling back to the built-in object store
-// there served every object with no read rules applied, so the gateway refuses
-// instead and points at the dev log that says why storage is down.
-func storageUnavailable(w http.ResponseWriter, _ *http.Request) {
-	utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
-		"code":    "storage_unavailable",
-		"message": "The storage service is not running. Its log says why: the storage pane of supatype dev, or supatype self-host compose logs --service storage.",
-	})
+// storageUnavailable answers /storage/v1 on a stack whose storage service is not
+// running. Falling back to the built-in object store there served every object
+// with no read rules applied, so the gateway refuses instead and points at where
+// that kind of stack shows why storage is down: the dev log or the compose log
+// for a stack the developer runs, the dashboard for a managed (Cloud) project,
+// which has neither.
+func storageUnavailable(mode string) http.HandlerFunc {
+	message := "The storage service is not running. Its log says why: the storage pane of supatype dev, or supatype self-host compose logs --service storage."
+	if strings.TrimSpace(mode) == "managed" {
+		message = "The storage service is not running for this project. Check its status in the dashboard."
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"code":    "storage_unavailable",
+			"message": message,
+		})
+	}
 }
 
 // rewriteToGraphQLRPC points a copy of the request at the RPC endpoint.
@@ -281,11 +289,12 @@ func buildStorage(d *Deps) http.Handler {
 	if !serviceswitch.Start(d.Config, proxy.ServiceStorage) {
 		logrus.Info("mux: storage switched off at start; /storage/v1 answers 503 storage_unavailable until the route manifest switches it on")
 	}
+	unavailable := storageUnavailable(d.Config.Mode)
 	serve := storageServer(d)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := d.ManifestFor(req)
 		if !serviceswitch.On(m, d.Config, proxy.ServiceStorage) {
-			storageUnavailable(w, req)
+			unavailable(w, req)
 			return
 		}
 		serve(w, req, m)
@@ -302,7 +311,7 @@ func storageServer(d *Deps) func(http.ResponseWriter, *http.Request, *proxy.Rout
 		return func(w http.ResponseWriter, req *http.Request, _ *proxy.RouteManifest) { local.ServeHTTP(w, req) }
 	}
 	logrus.Info("mux: Storage proxy mounted at /storage/v1")
-	unreachable := whenUnreachable(storageUnavailable)
+	unreachable := whenUnreachable(storageUnavailable(d.Config.Mode))
 	return func(w http.ResponseWriter, req *http.Request, m *proxy.RouteManifest) {
 		storageURL := StorageUpstream(m, d.Config)
 		if storageURL == "" {

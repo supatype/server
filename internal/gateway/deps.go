@@ -92,6 +92,8 @@ type Deps struct {
 	// APIExternalURL is the auth service's API_EXTERNAL_URL, the public address the deployment
 	// answers on when SUPATYPE_URL is not set. Set by WithAPIExternalURL.
 	APIExternalURL string
+	// SiteURL is the auth service SITE_URL. Set by WithSiteURL.
+	SiteURL string
 }
 
 // DepsOption sets something NewDeps cannot derive from its arguments.
@@ -113,6 +115,12 @@ func WithAPIExternalURL(externalURL string) DepsOption {
 // app listener has none: it is handed the live manifest, whatever the request says.
 func WithManifestFor(manifestFor func(*http.Request) *proxy.RouteManifest) DepsOption {
 	return func(d *Deps) { d.ManifestFor = manifestFor }
+}
+
+// WithSiteURL gives the gateway the auth service's SITE_URL, which the bootstrap loads with the
+// auth configuration rather than with the gateway's. Studio shows it on its General settings.
+func WithSiteURL(siteURL string) DepsOption {
+	return func(d *Deps) { d.SiteURL = siteURL }
 }
 
 // NewDeps resolves everything the mounts share.

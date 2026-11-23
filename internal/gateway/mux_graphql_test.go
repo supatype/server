@@ -168,3 +168,26 @@ func TestBuildOuterMux_GraphQLSwitchedOffByProjectSaysSo(t *testing.T) {
 		t.Errorf("message = %q, want it to say the project switched GraphQL off", body.Message)
 	}
 }
+
+// A self-hosted stack whose project switched GraphQL off: the CLI renders SUPATYPE_GRAPHQL_DISABLED
+// with the reason "project", and the answer is the one a Cloud project gives, not the native one.
+func TestBuildOuterMux_GraphQLDisabledByProjectEnvSaysSo(t *testing.T) {
+	cfg := &config.Config{Mode: "dev", GraphQLDisabled: true, GraphQLDisabledReason: "project"}
+	manifest := &proxy.RouteManifest{Schema: "public"}
+	mf := func(*http.Request) *proxy.RouteManifest { return manifest }
+	hp := func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") }
+	handler := buildOuterMux(cfg, mf, hp, http.NotFoundHandler(), nil, "test", nil, nil)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/graphql/v1", nil))
+	if rr.Code != http.StatusNotImplemented {
+		t.Fatalf("status %d, want 501", rr.Code)
+	}
+	var body struct{ Code, Message string }
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if !strings.Contains(body.Message, "switched off for this project") || strings.Contains(body.Message, "native") {
+		t.Errorf("message = %q, want it to say the project switched GraphQL off", body.Message)
+	}
+}

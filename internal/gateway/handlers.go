@@ -236,7 +236,7 @@ func buildGraphQL(d *Deps) http.Handler {
 		start := serviceswitch.Start(d.Config, proxy.ServiceGraphQL)
 		if !m.ServiceOn(proxy.ServiceGraphQL, start) {
 			// Started on and off now: the project switched it off.
-			graphQLUnavailable(w, start)
+			graphQLUnavailable(w, serviceswitch.GraphQLOffByProject(d.Config, start))
 			return
 		}
 		u, err := url.Parse(GraphQLUpstream(m, d.Config))

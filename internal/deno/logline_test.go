@@ -1,6 +1,8 @@
 package deno
 
 import (
+	"bytes"
+	"sync"
 	"testing"
 	"time"
 )
@@ -86,5 +88,53 @@ func TestABrokenTimestampDoesNotLoseTheLine(t *testing.T) {
 	}
 	if line.Timestamp.Before(before) {
 		t.Fatalf("timestamp = %v, want roughly now", line.Timestamp)
+	}
+}
+
+// syncBuffer is a buffer the two drain goroutines may write to together.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// With a sink set, every worker line also goes to it, prefixed with the function that wrote it,
+// so a server run in a terminal shows the function's console.log. A line naming no function
+// (Deno's own output) takes the prefix "deno".
+func TestLogSinkEchoesLinesWithTheFunctionName(t *testing.T) {
+	m := manager(t, "")
+	var sink syncBuffer
+	m.LogTo(&sink)
+
+	m.appendLog("info", routerLine("hello", "hello 1"))
+	m.appendLog("error", "error: Uncaught TypeError: x is not a function")
+
+	want := "[hello] hello 1\n[deno] error: Uncaught TypeError: x is not a function\n"
+	if got := sink.String(); got != want {
+		t.Fatalf("sink = %q, want %q", got, want)
+	}
+	if got := m.RecentLogs(time.Time{}, 10); len(got) != 2 {
+		t.Errorf("ring buffer = %v, want both lines kept as well", got)
+	}
+}
+
+// Without a sink nothing is written anywhere but the ring buffer: the default must not change
+// what a deployed server prints.
+func TestNoLogSinkByDefault(t *testing.T) {
+	m := manager(t, "")
+	m.appendLog("info", routerLine("hello", "hello 1"))
+	if m.sink != nil {
+		t.Fatal("a new Manager must have no sink")
 	}
 }

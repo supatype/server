@@ -29,6 +29,8 @@ type SiteSettings struct {
 	// Cache is the Cache-Control the static handler sends, defaults filled in (static.CacheOpts.Effective).
 	Cache       static.CacheOpts
 	SPAFallback bool
+	// SPAFallbackFromConfig is whether the project's config set SPAFallback, not its default.
+	SPAFallbackFromConfig bool
 }
 
 // siteStatusResponse answers GET /admin/v1/site/status. It is read-only: Studio shows it, and the
@@ -43,9 +45,11 @@ type siteStatusResponse struct {
 	StaticDir   string `json:"static_dir,omitempty"`
 	Upstream    string `json:"upstream,omitempty"`
 	SPAFallback bool   `json:"spa_fallback"`
-	Serving     bool   `json:"serving"`
-	FileCount   int    `json:"file_count"`
-	TotalBytes  int64  `json:"total_bytes"`
+	// SPAFallbackFromConfig is whether the project's config set SPAFallback, so Studio can say so.
+	SPAFallbackFromConfig bool  `json:"spa_fallback_from_config"`
+	Serving               bool  `json:"serving"`
+	FileCount             int   `json:"file_count"`
+	TotalBytes            int64 `json:"total_bytes"`
 	// CacheControl is the Cache-Control the static app is served with, defaults included. Only for static.
 	CacheControl *cacheControlResponse `json:"cache_control,omitempty"`
 	// Truncated is true when the directory held more than maxSiteWalk entries and the count stopped.
@@ -74,6 +78,7 @@ func describeSite(s SiteSettings) siteStatusResponse {
 	case "static":
 		out.StaticDir = s.StaticDir
 		out.SPAFallback = s.SPAFallback
+		out.SPAFallbackFromConfig = s.SPAFallbackFromConfig
 		out.CacheControl = &cacheControlResponse{HTML: s.Cache.HTML, HashedAssets: s.Cache.HashedAssets, Prefixes: s.Cache.Prefixes}
 		if out.CacheControl.Prefixes == nil {
 			out.CacheControl.Prefixes = map[string]string{}

@@ -31,3 +31,15 @@ func TestSiteSettingsWithNoManifestUseTheConfig(t *testing.T) {
 		t.Errorf("settings = %+v", got)
 	}
 }
+
+// The admin site status says whether the config set the SPA fallback, from the same config.
+func TestSiteSettingsCarryWhetherTheConfigSetTheSPAFallback(t *testing.T) {
+	d := &Deps{Config: &config.Config{AppMode: "static", AppSPAFallback: true, AppSPAFallbackFromConfig: true}}
+	if got := d.SiteSettings(httptest.NewRequest(http.MethodGet, "/", nil)); !got.SPAFallbackFromConfig {
+		t.Errorf("settings = %+v", got)
+	}
+	d = &Deps{Config: &config.Config{AppMode: "static", AppSPAFallback: true}}
+	if got := d.SiteSettings(httptest.NewRequest(http.MethodGet, "/", nil)); got.SPAFallbackFromConfig {
+		t.Errorf("settings = %+v", got)
+	}
+}

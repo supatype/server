@@ -81,6 +81,10 @@ type Config struct {
 	// AppSPAFallback enables serving index.html for unmatched paths (AppMode=static).
 	AppSPAFallback bool `envconfig:"SUPATYPE_APP_SPA_FALLBACK" default:"true"`
 
+	// AppSPAFallbackFromConfig is true when the project's config set the fallback (build.spa) rather
+	// than leaving it to its default. The CLI says so; Studio labels the value by it.
+	AppSPAFallbackFromConfig bool `envconfig:"SUPATYPE_APP_SPA_FALLBACK_FROM_CONFIG" default:"false"`
+
 	// AppUpstream is the URL to reverse proxy to (AppMode=proxy).
 	AppUpstream string `envconfig:"SUPATYPE_APP_UPSTREAM"`
 

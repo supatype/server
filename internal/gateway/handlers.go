@@ -106,11 +106,12 @@ func (d *Deps) SiteSettings(req *http.Request) admin.SiteSettings {
 		m = d.ManifestFor(req)
 	}
 	return admin.SiteSettings{
-		Mode:        AppMode(m, d.Config),
-		StaticDir:   AppStaticDir(m, d.Config),
-		Upstream:    AppUpstream(m, d.Config),
-		SPAFallback: d.Config.AppSPAFallback,
-		Cache:       staticCacheOpts(d.Config, m).Effective(),
+		Mode:                  AppMode(m, d.Config),
+		StaticDir:             AppStaticDir(m, d.Config),
+		Upstream:              AppUpstream(m, d.Config),
+		SPAFallback:           d.Config.AppSPAFallback,
+		SPAFallbackFromConfig: d.Config.AppSPAFallbackFromConfig,
+		Cache:                 staticCacheOpts(d.Config, m).Effective(),
 	}
 }
 

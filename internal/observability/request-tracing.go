@@ -162,6 +162,11 @@ func RequestTracing() func(http.Handler) http.Handler {
 
 			next.ServeHTTP(&writer, r)
 
+			// The route pattern is known only once the router has run, so the metric labels are added here.
+			if labeler, ok := otelhttp.LabelerFromContext(r.Context()); ok {
+				labeler.Add(addMetricAttributes(r)...)
+			}
+
 			if originalUserAgent != "" {
 				r.Header.Set("X-Supatype-Original-User-Agent", originalUserAgent)
 				r.Header.Set("User-Agent", "stripped")
@@ -171,7 +176,6 @@ func RequestTracing() func(http.Handler) http.Handler {
 		otelHandler := otelhttp.NewHandler(
 			http.HandlerFunc(fn),
 			"api",
-			otelhttp.WithMetricAttributesFn(addMetricAttributes),
 		)
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

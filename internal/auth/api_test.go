@@ -68,18 +68,29 @@ const httptestRemoteAddr = "192.0.2.1:1234"
 
 var testClientSeq atomic.Uint32
 
-// withDistinctClients gives each request that names no client a peer address of its own. A request
-// without the rate limit header counts against the connection's address, and every httptest request
-// has the same one, so a suite's requests would otherwise share one allowance and a suite that
-// signs in more than the limit would be refused part way. A test about limiting names its client
-// in the header, or sets RemoteAddr itself.
+// withDistinctClients gives each request that names no client a rate limit key of its own. A
+// request without the rate limit header counts against the connection's address, and every httptest
+// request has the same one, so a suite's requests would otherwise share one allowance and a suite
+// that signs in more than the limit would be refused part way. A test about limiting names its
+// client in the header, or sets RemoteAddr itself.
+//
+// The key goes in the rate limit header and RemoteAddr is left alone, because the address a handler
+// records must stay the one the test sees: an MFA challenge stores the caller's address and verify
+// refuses a different one, so a test that builds a challenge from the request, or sends the
+// challenge and the verify as two requests, needs both to come from the same client. Only with no
+// header configured does the key go in RemoteAddr.
 func withDistinctClients(api *API) *API {
 	next := api.handler
-	header := api.config.RateLimitHeader
 	api.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := api.config.RateLimitHeader
 		if r.RemoteAddr == httptestRemoteAddr && (header == "" || r.Header.Get(header) == "") {
 			n := testClientSeq.Add(1)
-			r.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234", n>>16&0xff, n>>8&0xff, n&0xff)
+			addr := fmt.Sprintf("10.%d.%d.%d", n>>16&0xff, n>>8&0xff, n&0xff)
+			if header != "" {
+				r.Header.Set(header, addr)
+			} else {
+				r.RemoteAddr = addr + ":1234"
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

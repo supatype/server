@@ -267,7 +267,7 @@ func (ts *ExternalTestSuite) TestSignupExternalGitHubErrorWhenVerifiedFalse() {
 
 	u := performAuthorization(ts, "github", code, "")
 
-	assertAuthorizationFailure(ts, u, "Unverified email with github. A confirmation email has been sent to your github email", "access_denied", "")
+	assertAuthorizationFailure(ts, u, unverifiedProviderEmailMessage("github", true), "access_denied", "")
 }
 
 func (ts *ExternalTestSuite) TestSignupExternalGitHubErrorWhenUserBanned() {

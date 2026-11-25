@@ -79,7 +79,7 @@ func withDistinctClients(api *API) *API {
 	api.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.RemoteAddr == httptestRemoteAddr && (header == "" || r.Header.Get(header) == "") {
 			n := testClientSeq.Add(1)
-			r.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234", byte(n>>16), byte(n>>8), byte(n))
+			r.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:1234", n>>16&0xff, n>>8&0xff, n&0xff)
 		}
 		next.ServeHTTP(w, r)
 	})

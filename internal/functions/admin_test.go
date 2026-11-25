@@ -784,7 +784,7 @@ func TestDeletingAKeyWithABadNameStillWorks(t *testing.T) {
 	if rec := call(t, handler, http.MethodDelete, "/env/OLD-NAME", ""); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, ".env.local"))
+	raw, err := os.ReadFile(filepath.Join(dir, ".env.local")) // #nosec G304 -- a file in the test's own temp dir
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -60,7 +60,7 @@ func TestValidateAppListener(t *testing.T) {
 func siteStub() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
-		_, _ = w.Write([]byte("site:" + r.URL.Path))
+		_, _ = w.Write([]byte("site:" + r.URL.Path)) // #nosec G705 -- a test stub echoes the path so the test can see which handler answered
 	})
 }
 

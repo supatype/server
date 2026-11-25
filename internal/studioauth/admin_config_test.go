@@ -52,3 +52,21 @@ func TestResolveAdminConfigWithNothingStoredAnywhere(t *testing.T) {
 		t.Fatalf("err = %v, want the database error", err)
 	}
 }
+
+func TestStoredAdminConfigFromReturnsTheSnapshotsConfigOrItsError(t *testing.T) {
+	ctx := context.Background()
+	body, err := StoredAdminConfigFrom(func(context.Context) (*studiobootstrap.Snapshot, error) {
+		return &studiobootstrap.Snapshot{AdminConfig: []byte(`{"from":"db"}`)}, nil
+	})(ctx)
+	if err != nil || string(body) != `{"from":"db"}` {
+		t.Fatalf("got %q, %v", body, err)
+	}
+
+	boom := errors.New("down")
+	body, err = StoredAdminConfigFrom(func(context.Context) (*studiobootstrap.Snapshot, error) {
+		return nil, boom
+	})(ctx)
+	if !errors.Is(err, boom) || body != nil {
+		t.Fatalf("got %q, %v; want the loader's error and no body", body, err)
+	}
+}

@@ -84,7 +84,7 @@ func describeSite(s SiteSettings) siteStatusResponse {
 			out.CacheControl.Prefixes = map[string]string{}
 		}
 		if dir := strings.TrimSpace(s.StaticDir); dir != "" {
-			out.FileCount, out.TotalBytes, out.Truncated = measureDir(dir)
+			out.FileCount, out.TotalBytes, out.Truncated = measureDir(dir, maxSiteWalk)
 			out.Serving = out.FileCount > 0
 		}
 	case "proxy":
@@ -103,14 +103,14 @@ func usableUpstream(raw string) bool {
 
 // measureDir counts regular files under dir and their bytes. An unreadable or missing directory
 // counts as empty, which is what a request for it would find.
-func measureDir(dir string) (files int, bytes int64, truncated bool) {
+func measureDir(dir string, limit int) (files int, bytes int64, truncated bool) {
 	seen := 0
 	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		seen++
-		if seen > maxSiteWalk {
+		if seen > limit {
 			truncated = true
 			return fs.SkipAll
 		}

@@ -29,6 +29,13 @@ const (
 	maxManifest    = 64 << 20
 )
 
+// removeAll and rename are the two filesystem calls whose failure cannot be provoked on every OS from a
+// test (a folder that cannot be deleted, a rename that cannot happen), so a test replaces them.
+var (
+	removeAll = os.RemoveAll
+	rename    = os.Rename
+)
+
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // file is one manifest entry: where it goes in the site, and the content that goes there.
@@ -223,10 +230,10 @@ func (s *Syncer) link(id string, files []file) error {
 		return err
 	}
 	final := s.versionDir(id)
-	if err := os.RemoveAll(final); err != nil {
+	if err := removeAll(final); err != nil {
 		return fmt.Errorf("site: %w", err)
 	}
-	if err := os.Rename(filepath.Join(s.cfg.Dir, "versions", tmpName), final); err != nil {
+	if err := rename(filepath.Join(s.cfg.Dir, "versions", tmpName), final); err != nil {
 		return fmt.Errorf("site: %w", err)
 	}
 	return nil
@@ -300,7 +307,7 @@ func (s *Syncer) retire(id string) {
 }
 
 func removeVersion(dir string) {
-	if err := os.RemoveAll(dir); err != nil {
+	if err := removeAll(dir); err != nil {
 		logrus.WithError(err).WithField("dir", dir).Warn("site: could not remove an old version")
 	}
 }

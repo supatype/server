@@ -130,3 +130,25 @@ func TestSiteStatusIsReadOnly(t *testing.T) {
 		t.Errorf("POST status = %d, want 405", rec.Code)
 	}
 }
+
+// A directory bigger than the walk limit stops being counted and says so, rather than walking a
+// mis-pointed drive root to the end.
+func TestMeasureDirStopsAtTheWalkLimitAndSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"} {
+		writeSiteFile(t, dir, name, "12345")
+	}
+
+	files, bytes, truncated := measureDir(dir, 100)
+	if truncated || files != 5 || bytes != 25 {
+		t.Fatalf("under the limit: files=%d bytes=%d truncated=%v, want 5 25 false", files, bytes, truncated)
+	}
+
+	files, bytes, truncated = measureDir(dir, 3)
+	if !truncated {
+		t.Fatal("a walk past the limit was not reported as truncated")
+	}
+	if files >= 5 || int64(files)*5 != bytes {
+		t.Fatalf("truncated walk counted files=%d bytes=%d, want fewer than 5 files and 5 bytes each", files, bytes)
+	}
+}

@@ -96,14 +96,9 @@ func AdminConfigWithSiteURL(body []byte, siteURL string) []byte {
 	if err := json.Unmarshal(body, &config); err != nil || config == nil {
 		return body
 	}
-	encoded, err := json.Marshal(siteURL)
-	if err != nil {
-		return body
-	}
-	config["siteUrl"] = encoded
-	merged, err := json.Marshal(config)
-	if err != nil {
-		return body
-	}
+	// Neither marshal can fail: a string always encodes, and every value in config is JSON that was
+	// just decoded, so the map re-encodes.
+	config["siteUrl"], _ = json.Marshal(siteURL)
+	merged, _ := json.Marshal(config)
 	return merged
 }

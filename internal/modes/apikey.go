@@ -8,11 +8,13 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 )
 
-// Data-plane prefixes that require a project API key. `/auth/v1` is deliberately
+// Data-plane prefixes that require a project API key. Every route the gateway
+// marks DataPlane must be here (TestEveryGatewayRouteIsGatedOrExempt). `/auth/v1` is deliberately
 // absent: the auth service enforces its own credentials there, and the control plane
 // proxies admin calls through it.
 var apiKeyProtectedPrefixes = []string{
 	"/rest/v1",
+	"/graphql/v1",
 	"/storage/v1",
 	"/realtime/v1",
 	"/functions/v1",

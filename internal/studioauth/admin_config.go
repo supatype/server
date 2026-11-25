@@ -44,4 +44,3 @@ func StoredAdminConfigFrom(load func(ctx context.Context) (*studiobootstrap.Snap
 		return snap.AdminConfig, nil
 	}
 }
-

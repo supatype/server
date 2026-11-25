@@ -13,7 +13,7 @@ import (
 
 // SecretHeaderName carries the forwarding secret, SUPATYPE_SECURITY_FORWARDING_SECRET, which only
 // this stack's own gateway and workers hold.
-const SecretHeaderName = "St-Forwarding-Secret"
+const SecretHeaderName = "St-Forwarding-Secret" // #nosec G101 -- a header name, not a credential
 
 // UnconfiguredWarning is logged once at startup when no forwarding secret is set.
 const UnconfiguredWarning = "SUPATYPE_SECURITY_FORWARDING_SECRET is not set: St-Forwarded-For, the " +

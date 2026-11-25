@@ -92,7 +92,9 @@ func manager(t *testing.T, behaviour string) *Manager {
 	if err := os.WriteFile(entry, []byte("// router"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"EXTRA=1"}
+	// A coverage-instrumented child prints "GOCOVERDIR not set" to stderr on exit, which
+	// is a stray line in the stream the tests assert on. Give it somewhere to write.
+	env := []string{"EXTRA=1", "GOCOVERDIR=" + t.TempDir()}
 	if behaviour != "" {
 		env = append(env, "DENO_TEST_CHILD="+behaviour)
 	}

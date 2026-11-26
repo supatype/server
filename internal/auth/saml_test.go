@@ -18,9 +18,9 @@ import (
 
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/samlsp"
 	"github.com/stretchr/testify/require"
-	"github.com/supatype/saml"
-	"github.com/supatype/saml/samlsp"
 	"github.com/supatype/server/internal/conf"
 )
 

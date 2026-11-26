@@ -3,7 +3,7 @@ package models
 import (
 	"errors"
 
-	"github.com/supatype/saml"
+	"github.com/crewjam/saml"
 )
 
 // sentinel error for all not found errors.

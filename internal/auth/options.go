@@ -61,10 +61,7 @@ func NewLimiterOptions(gc *conf.GlobalConfiguration) *LimiterOptions {
 	o.Email = ratelimit.New(gc.RateLimitEmailSent)
 	o.Phone = ratelimit.New(gc.RateLimitSmsSent)
 
-	o.AnonymousSignIns = tollbooth.NewLimiter(gc.RateLimitAnonymousUsers/(60*60),
-		&limiter.ExpirableOptions{
-			DefaultExpirationTTL: time.Hour,
-		}).SetBurst(int(gc.RateLimitAnonymousUsers)).SetMethods([]string{"POST"})
+	o.AnonymousSignIns = newClientLimiter(gc.RateLimitAnonymousUsers, time.Hour, time.Hour).SetMethods([]string{"POST"})
 
 	o.Token = newPerClientLimiter(gc.RateLimitTokenRefresh)
 

@@ -20,15 +20,15 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/crewjam/saml"
+	"github.com/crewjam/saml/samlsp"
+	"github.com/crewjam/saml/xmlenc"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/gofrs/uuid"
 	jwt "github.com/golang-jwt/jwt/v5"
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/supatype/saml"
-	"github.com/supatype/saml/samlsp"
-	"github.com/supatype/saml/xmlenc"
 	"github.com/supatype/server/internal/auth/mailer/mockclient"
 	"github.com/supatype/server/internal/auth/models"
 	authprovider "github.com/supatype/server/internal/auth/provider"
@@ -94,6 +94,15 @@ type samlTestAssertion struct {
 	Subject    string
 	Conditions string
 	Statements string
+	// OmitAuthnStatement leaves out the AuthnStatement every assertion
+	// otherwise carries.
+	OmitAuthnStatement bool
+}
+
+// authnStatement says how the user signed in at the IdP. The library requires
+// one, with an AuthnContext, in every assertion it accepts.
+func authnStatement() string {
+	return fmt.Sprintf(`<saml:AuthnStatement AuthnInstant="%s"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement>`, samlTime(-time.Minute))
 }
 
 // response signs the assertion and wraps it in an unsigned Response addressed
@@ -133,10 +142,14 @@ func (idp *samlTestIdP) encryptedAssertion(t *testing.T, a samlTestAssertion, ce
 func (idp *samlTestIdP) signedAssertion(t *testing.T, a samlTestAssertion) *etree.Element {
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
+	authn := authnStatement()
+	if a.OmitAuthnStatement {
+		authn = ""
+	}
 	doc := etree.NewDocument()
 	require.NoError(t, doc.ReadFromString(fmt.Sprintf(
-		`<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s" Version="2.0" IssueInstant="%s"><saml:Issuer>%s</saml:Issuer>%s%s%s</saml:Assertion>`,
-		a.ID, now, idp.entityID, a.Subject, a.Conditions, a.Statements)))
+		`<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s" Version="2.0" IssueInstant="%s"><saml:Issuer>%s</saml:Issuer>%s%s%s%s</saml:Assertion>`,
+		a.ID, now, idp.entityID, a.Subject, a.Conditions, authn, a.Statements)))
 	return idp.signEnveloped(t, doc.Root())
 }
 
@@ -368,13 +381,22 @@ func (ts *SAMLACSTestSuite) TestCorrectAssertionSignsIn() {
 	ts.signInVictim()
 }
 
+// The library requires every assertion to say how the user signed in.
+func (ts *SAMLACSTestSuite) TestAssertionWithoutAuthnStatementIsRefused() {
+	a := ts.victimAssertion("no-authn")
+	a.OmitAuthnStatement = true
+	ts.refusedByLibrary(a, "assertion has no AuthnStatement")
+}
+
 // GO-2026-6909: a NameID in another namespace is not the subject's NameID.
 func (ts *SAMLACSTestSuite) TestForeignNamespaceNameIDIsRefused() {
 	ts.signInVictim()
 
 	a := ts.victimAssertion("attack-nameid")
 	a.Subject = ts.subject(`<x:NameID xmlns:x="urn:example:foreign" Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">victim-id</x:NameID>`)
-	ts.refused(ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, a)), refusedNoUser)
+	// The library now refuses an assertion with no NameID of its own, before
+	// the server looks for a user in it. The refusal is what matters.
+	ts.refusedByLibrary(a, "assertion Subject has no BaseID, NameID or EncryptedID")
 }
 
 // The same flaw through the subject-id attribute, which the server prefers to
@@ -430,7 +452,9 @@ func (ts *SAMLACSTestSuite) TestAssertionWithoutNameIDOrEmailIsRefused() {
 	a := ts.victimAssertion("no-nameid-no-email")
 	a.Subject = ts.subject("")
 	a.Statements = `<saml:AttributeStatement><saml:Attribute Name="urn:oasis:names:tc:SAML:attribute:subject-id"><saml:AttributeValue>victim-id</saml:AttributeValue></saml:Attribute></saml:AttributeStatement>`
-	ts.refused(ts.postACS(ts.IdP.response(ts.T(), ts.ACSURL, a)), "SAML Assertion does not contain an email address")
+	// The library now refuses an assertion with no NameID before the server
+	// looks for an email in it. The refusal is what matters.
+	ts.refusedByLibrary(a, "assertion Subject has no BaseID, NameID or EncryptedID")
 }
 
 // An assertion ID recorded for an assertion that has since expired can be

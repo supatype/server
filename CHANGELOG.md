@@ -1,5 +1,69 @@
 # Changelog
 
+## [2.6.0](https://github.com/supatype/server/compare/v2.5.0...v2.6.0) (2026-11-26)
+
+
+### Features
+
+* **admin:** include the static app's Cache-Control in the site status ([f8cc170](https://github.com/supatype/server/commit/f8cc170ca2fd5c805dcdca6e54037a6e0343c26d))
+* **admin:** report what the app mount serves at /admin/v1/site/status ([fbdb8aa](https://github.com/supatype/server/commit/fbdb8aa7c95fe7537184d02fcbd2cca1845556fc))
+* **admin:** say in the site status whether the config set the SPA fallback ([176c052](https://github.com/supatype/server/commit/176c052077aa81f80665caa9ab1b0d8751985b24))
+* **afterhooks:** let the change-log listener read on its own DSN ([dcbc0f0](https://github.com/supatype/server/commit/dcbc0f05f15ccbec50341a5bb9b437b1e1235cc6))
+* **auth:** publish the captcha provider and site key on the settings endpoint ([03ce9fb](https://github.com/supatype/server/commit/03ce9fb537e4cf189b5743c855e6f467733d8d86))
+* **conf:** default JWT.Aud to authenticated when SUPATYPE_JWT_AUD is unset ([cc1c925](https://github.com/supatype/server/commit/cc1c925889c54f77035bde481208aa95017175dd))
+* **deno:** opt-in echo of function worker output to the server's own stdout ([5cbfb2e](https://github.com/supatype/server/commit/5cbfb2e8cb1477195c383f25bdc4783f9a72966b))
+* **gateway:** verify tenant signatures with per-tenant keys ([15a1f00](https://github.com/supatype/server/commit/15a1f00ac7ee5df5294915492ea75bcc4fff334b))
+* **keyspace:** scoped key layout for per-tenant keyspace logins ([7f99234](https://github.com/supatype/server/commit/7f99234ba58b259e628d0e2b253ff695b29c034c))
+* **mailer:** SES with a project's own key and region ([6468897](https://github.com/supatype/server/commit/646889753ca3e39a890b8b969f07c3e75c0948c4))
+* **managed:** an internal entrance for a project's own functions and hooks ([febcfba](https://github.com/supatype/server/commit/febcfba19072675f08070ba8c44856b0ed026a2c))
+* **managed:** carry the live site pointer in the tenant config and route manifest ([d0dd9a6](https://github.com/supatype/server/commit/d0dd9a60ed05d1f8c373640a77aba56b41b0624f))
+* **managed:** serve a project's static site on its own app listener ([5fa54b4](https://github.com/supatype/server/commit/5fa54b401955c8d4ed834e1022b996108e94ea4b))
+* **managed:** switch storage and GraphQL per tenant, and say why GraphQL is off ([dd16796](https://github.com/supatype/server/commit/dd167962ba0389efe0a804cd457810257e061db5))
+* **manifest:** carry a site's public values in the route manifest and tenant config ([62b1e98](https://github.com/supatype/server/commit/62b1e98f5f0b77ca2425b01558de1106f3936e54))
+* **publicenv:** serve the site's public values beside the address and anon key ([5f220ee](https://github.com/supatype/server/commit/5f220eee798f07857b0973b67e8d5a8ee8f79ff9))
+* **site:** budget from the site pointer, keep only the live version ([94587eb](https://github.com/supatype/server/commit/94587ebe2b88e029fbd7782a607063d3dfdf8bfc))
+* **site:** sync a project's live site to local disk and serve it ([cfa17f7](https://github.com/supatype/server/commit/cfa17f73e4c58786fa689f53d39f5b28d9520859))
+* **static:** serve about.html at /about ([324305b](https://github.com/supatype/server/commit/324305b928b54d75fcca4c5910096c1335a18661))
+* **studio:** report SITE_URL on the admin-only studio config route ([519e547](https://github.com/supatype/server/commit/519e5475d5cc7ca5c070aa1ae662bcd5214d31f3))
+
+
+### Bug Fixes
+
+* **admin:** answer 503 when the keyspace statistics views are absent ([e545863](https://github.com/supatype/server/commit/e545863b591f29a432ea3d1cd3dccb4bd3a401c2))
+* **audit:** record the request's address when a call site passes none ([f087b27](https://github.com/supatype/server/commit/f087b270ba47c7f7af26d225ef3f9f3845d515c9))
+* **auth:** apply the per-environment email cap when confirmations are off ([de6de68](https://github.com/supatype/server/commit/de6de689d16f8a568df77b9a04034c2656c6b6b2))
+* **auth:** believe a forwarded client address only with the forwarding secret ([665b6b8](https://github.com/supatype/server/commit/665b6b886596083a7c15dad17b4c4ce19c0115a5))
+* **auth:** make SAML assertion and OAuth client registration limits hold their configured number ([f40fdab](https://github.com/supatype/server/commit/f40fdabe0f509f46e493bd3b967c1e49e28dc379))
+* **auth:** make token refresh, SSO, MFA and Web3 limits refuse a burst over the limit ([482c894](https://github.com/supatype/server/commit/482c8942c64e8bee808a6728f50961076d26f5d1))
+* **auth:** make verify and OTP limits refuse a burst over the limit, per client address ([13e59e1](https://github.com/supatype/server/commit/13e59e11929c9acf8f6124d2910f98de2d218e09))
+* **auth:** say plainly what to do when a provider reports the account email as not verified ([f2f4cb0](https://github.com/supatype/server/commit/f2f4cb03079f3f0953093d4a88e3c4949fa876f9))
+* **captcha:** answer 400 captcha_failed when the request has no captcha token ([24a7879](https://github.com/supatype/server/commit/24a787978629fa771dd6679502f8ab929940d416))
+* **cmd:** read --config-dir into the environment before startup config validation ([78f721d](https://github.com/supatype/server/commit/78f721d16445835d6ffbea5dbc704d46ceb83444))
+* **conf:** the server's -c file overrides the environment again; only tests keep it ([0683daf](https://github.com/supatype/server/commit/0683daff753a8def1ac2f8ff4b8f11c051422bf4))
+* **deno:** start the functions worker from an environment allowlist ([17bed53](https://github.com/supatype/server/commit/17bed5332231818803b35e8b8fdcf70dc1b9e7de))
+* **deno:** stop remapping SUPATYPE_EDGE_ variables into the functions worker ([84ff4f4](https://github.com/supatype/server/commit/84ff4f48d21d971b91558ba8be0a05924bcc6011))
+* **deps:** raise OpenTelemetry to v1.47.0 for GO-2026-6974 and GO-2026-6975 ([9598717](https://github.com/supatype/server/commit/95987171c414f88bf26e2db12757aea46513abc6))
+* **functions:** follow invocation routing in the admin list and refuse reserved and dot-segment paths ([e1086b6](https://github.com/supatype/server/commit/e1086b621711a242c0b3576566098fc96d64717a))
+* **functions:** refuse a secret name that breaks the one naming rule when setting an env var ([b636b76](https://github.com/supatype/server/commit/b636b76772e33c8aa975364a0d3b84718800eca9))
+* **functions:** tail logs from the worker the function runs on ([cda1510](https://github.com/supatype/server/commit/cda1510d9fc3a6cf5dee875fec642d7005f9302e))
+* **gateway:** a studio config with no database configured is the file's answer ([a3d37d2](https://github.com/supatype/server/commit/a3d37d2a3f4dfdb18f95c8695aeff65ff713972b))
+* **gateway:** answer 404 for a function name the tenant has not registered ([1bef477](https://github.com/supatype/server/commit/1bef47705842edaf4a22fe5dc57c91bb045e3b01))
+* **gateway:** jitter the route subscription retry wait ([0c60a99](https://github.com/supatype/server/commit/0c60a9963e6689b11f46c098e1d8b4c6b0034058))
+* **gateway:** re-read a project gateway's routes when the control plane changes them ([f08a6cb](https://github.com/supatype/server/commit/f08a6cb31d5cfa794ce76b591f8e5cde558ce3a0))
+* **gateway:** reapply routes only when the keyspace manifest changed ([398fcff](https://github.com/supatype/server/commit/398fcff0d5213b9cdcc772dc6f58e2f62213d2e6))
+* **gateway:** say GraphQL is switched off for the project when the CLI renders services.graphql: false ([9baaafe](https://github.com/supatype/server/commit/9baaafe3a136dd34bad1e6d466e84011ba656040))
+* **gateway:** the storage-off message on a managed project points at the dashboard ([5051c20](https://github.com/supatype/server/commit/5051c205ae8d026d003d16771406d875e0aeeb84))
+* **modes:** require a project API key on /graphql/v1 ([8d41853](https://github.com/supatype/server/commit/8d41853c8c05d2ece47a20432aec973eaf472a70))
+* **observability:** add request metric labels through the otelhttp Labeler, WithMetricAttributesFn is deprecated in v0.70.0 ([23a4a86](https://github.com/supatype/server/commit/23a4a86971adb6a468e6ecbd00cab4784e1c496b))
+* **realtime:** accept ?token= on /realtime/v1 ([ce8de5e](https://github.com/supatype/server/commit/ce8de5e40ccde069653f5c06e7fecdeb8a5c0ba2))
+* **reloader,auth:** reload on a Kubernetes Secret update and report the settings version ([c30e44c](https://github.com/supatype/server/commit/c30e44cdacd8259e148e1999b1dd44886a07554d))
+* **sqlrunner:** hand the editor's objects over through supatype_editor.hand_over() ([ba55457](https://github.com/supatype/server/commit/ba55457b311dd86011e92c10ef1db298b24e7c0e))
+* **sqlrunner:** hand the editor's objects to the owner through the image's reassign function ([a77e675](https://github.com/supatype/server/commit/a77e675793cbe35493b21b6007614f95ab696173))
+* **sqlrunner:** refuse a superuser target in the inline handover and correct the owner comment ([95b8845](https://github.com/supatype/server/commit/95b88455e974b15a648b1076f6db8a39b05fbde7))
+* **static:** a miss under a service prefix is a JSON 404, never the app shell ([3af2d72](https://github.com/supatype/server/commit/3af2d72e9b69ae772c3b88bb381c8220439bb2c8))
+* **studio-config:** serve the admin config a push stored in the database ([75a8b21](https://github.com/supatype/server/commit/75a8b210ffc96d10bfa00175d56b86df94c30dd3))
+* **test:** a variable already in the environment beats hack/test.env, and the test database moves to 55440 ([0a9e63b](https://github.com/supatype/server/commit/0a9e63b0bebf205ffa5ddd26ab20f7717adbe88d))
+
 ## [2.5.0](https://github.com/supatype/server/compare/v2.4.0...v2.5.0) (2026-11-11)
 
 

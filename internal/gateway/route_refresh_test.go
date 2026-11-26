@@ -185,3 +185,79 @@ func TestSubscribeRetryUsesTheInjectedRandomSource(t *testing.T) {
 	f.start(t, timing)
 	testutil.Eventually(t, "the failed subscription to be retried with a drawn wait", func() bool { return draws.Load() >= 2 })
 }
+
+// scriptedSource is a routeChangeSource whose every Subscribe call is a step the test wrote, so the
+// retry loop is driven to a branch rather than waited on until a goroutine happens to be there.
+type scriptedSource struct {
+	steps []func(ctx context.Context, onSubscribed func()) error
+	calls int
+}
+
+func (s *scriptedSource) Subscribe(ctx context.Context, _ string, onSubscribed, _ func()) error {
+	step := s.steps[s.calls]
+	s.calls++
+	return step(ctx, onSubscribed)
+}
+
+// runSubscribe runs subscribeUntilDone to its return on this goroutine. The loop can only return
+// once ctx is done, so a test that never cancels fails by the deadline instead of hanging.
+func runSubscribe(t *testing.T, ctx context.Context, src routeChangeSource, timing refreshTiming) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		subscribeUntilDone(ctx, src, "ch", timing, func() {})
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("subscribeUntilDone did not return")
+	}
+}
+
+func TestTheDefaultJitterSourceStaysInsideTheUnitInterval(t *testing.T) {
+	for range 1000 {
+		if r := (refreshTiming{}).random(); r < 0 || r >= 1 {
+			t.Fatalf("random() = %v, want a value in [0,1)", r)
+		}
+	}
+}
+
+// The wait before subscribing again was reached by cancelling a live goroutine from outside, which
+// lands in the wait only if the goroutine got there first. Here the cancel happens inside the draw
+// of the jitter, so the wait always starts with the context already done.
+func TestACancelDuringTheRetryWaitEndsTheLoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src := &scriptedSource{steps: []func(context.Context, func()) error{
+		func(context.Context, func()) error { return errors.New("pub/sub unavailable") },
+	}}
+	timing := refreshTiming{Every: time.Hour, RetryFirst: time.Hour, RetryMax: time.Hour,
+		Rand: func() float64 { cancel(); return 0 }}
+	runSubscribe(t, ctx, src, timing)
+	if src.calls != 1 {
+		t.Fatalf("subscribed %d times, want once: the loop must stop in the wait, not subscribe again", src.calls)
+	}
+}
+
+// A subscription that was confirmed and then lost is retried after a wait, and
+// a cancel that arrives while Subscribe is returning ends the
+// loop before any wait at all.
+func TestAConfirmedSubscriptionThatIsLostIsSubscribedAgain(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var waits []float64
+	src := &scriptedSource{steps: []func(context.Context, func()) error{
+		func(_ context.Context, onSubscribed func()) error {
+			onSubscribed()
+			return errors.New("connection reset")
+		},
+		func(ctx context.Context, _ func()) error { cancel(); return ctx.Err() },
+	}}
+	timing := refreshTiming{Every: time.Hour, RetryFirst: time.Millisecond, RetryMax: time.Millisecond,
+		Rand: func() float64 { waits = append(waits, 0); return 0 }}
+	runSubscribe(t, ctx, src, timing)
+	if src.calls != 2 || len(waits) != 1 {
+		t.Fatalf("subscribed %d times and drew %d waits, want 2 and 1", src.calls, len(waits))
+	}
+}

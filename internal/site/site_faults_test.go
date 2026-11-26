@@ -316,9 +316,10 @@ func TestRetireWaitsOnceAndNeverRemovesTheServedVersion(t *testing.T) {
 	if err := os.MkdirAll(old, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// retire runs under s.mu, as prune calls it from Reconcile.
+	s.mu.Lock()
 	s.retire("old")
 	s.retire("old") // already waiting: it must not schedule a second removal
-	s.mu.Lock()
 	pending := len(s.retiring)
 	s.mu.Unlock()
 	if pending != 1 {
@@ -327,7 +328,9 @@ func TestRetireWaitsOnceAndNeverRemovesTheServedVersion(t *testing.T) {
 	waitFor(t, func() bool { _, err := os.Stat(old); return os.IsNotExist(err) })
 
 	// A version that became the served one while it waited stays.
+	s.mu.Lock()
 	s.retire("d1")
+	s.mu.Unlock()
 	waitFor(t, func() bool { s.mu.Lock(); defer s.mu.Unlock(); return len(s.retiring) == 0 })
 	if got := servedBody(s); got != "one" {
 		t.Fatalf("the served version was removed by its retirement: %q", got)

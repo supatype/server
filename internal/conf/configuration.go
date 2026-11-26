@@ -454,6 +454,11 @@ type GlobalConfiguration struct {
 
 	Experimental ExperimentalConfiguration `json:"experimental"`
 	Reloading    ReloadingConfiguration    `json:"reloading"`
+
+	// AuthSettingsVersion is the version of the settings the platform rendered into this
+	// configuration (SUPATYPE_AUTH_SETTINGS_VERSION). Zero where nothing stamps one. The
+	// settings endpoint reports it so a caller can tell a reload picked the new file up.
+	AuthSettingsVersion int64 `json:"auth_settings_version" split_words:"true"`
 }
 
 type CORSConfiguration struct {
@@ -616,9 +621,14 @@ type MailerConfiguration struct {
 	// the environment inside the mailer factory, under unprefixed names that
 	// belonged to nobody, so they were invisible to anything describing this
 	// service's configuration.
-	ResendAPIKey                string `json:"-" envconfig:"SUPATYPE_RESEND_API_KEY"`
-	ResendFrom                  string `json:"-" envconfig:"SUPATYPE_RESEND_FROM"`
-	SESFrom                     string `json:"-" envconfig:"SUPATYPE_SES_FROM"`
+	ResendAPIKey string `json:"-" envconfig:"SUPATYPE_RESEND_API_KEY"`
+	ResendFrom   string `json:"-" envconfig:"SUPATYPE_RESEND_FROM"`
+	SESFrom      string `json:"-" envconfig:"SUPATYPE_SES_FROM"`
+	// A project's own SES key and region, for a host with no ambient AWS credentials (Cloud).
+	// Empty, the standard AWS provider chain applies.
+	SESAccessKeyID              string `json:"-" envconfig:"SUPATYPE_SES_ACCESS_KEY_ID"`
+	SESSecretAccessKey          string `json:"-" envconfig:"SUPATYPE_SES_SECRET_ACCESS_KEY"`
+	SESRegion                   string `json:"-" envconfig:"SUPATYPE_SES_REGION"`
 	AllowUnverifiedEmailSignIns bool   `json:"allow_unverified_email_sign_ins" split_words:"true" default:"false"`
 
 	Subjects      EmailContentConfiguration  `json:"subjects"`
@@ -775,6 +785,9 @@ type CaptchaConfiguration struct {
 	Enabled  bool   `json:"enabled" default:"false"`
 	Provider string `json:"provider" default:"hcaptcha"`
 	Secret   string `json:"provider_secret"`
+	// SiteKey is the public half of the provider key pair. It is not a secret: the
+	// widget in the browser needs it, and the settings endpoint publishes it.
+	SiteKey string `json:"site_key" split_words:"true"`
 	// Timeout bounds the call to the captcha provider. It was read straight from
 	// the environment inside a package init, which meant a bad value crashed the
 	// process before configuration was loaded and could report anything useful.
@@ -859,6 +872,12 @@ type SecurityConfiguration struct {
 	ManualLinkingEnabled                  bool                 `json:"manual_linking_enabled" split_words:"true" default:"false"`
 	StForwardedForEnabled                 bool                 `json:"st_forwarded_for_enabled" split_words:"true" default:"false"`
 
+	// ForwardingSecret is SUPATYPE_SECURITY_FORWARDING_SECRET, held only by this stack's own gateway and
+	// workers. A request that presents it in St-Forwarding-Secret may name the end user's address; any
+	// other request is counted against the connection it came from. Empty keeps the older behaviour of
+	// believing a forwarded address from any sender. Never serialised, so no config dump carries it.
+	ForwardingSecret string `json:"-" split_words:"true"`
+
 	DBEncryption DatabaseEncryptionConfiguration `json:"database_encryption" split_words:"true"`
 }
 
@@ -882,10 +901,24 @@ func (c *SecurityConfiguration) Validate() error {
 	return nil
 }
 
+// loadEnvironment is the production loader behind LoadGlobal and the server's -c
+// flag: a named file replaces variables the environment already sets.
 func loadEnvironment(filename string) error {
+	return loadEnvFile(filename, godotenv.Overload)
+}
+
+// loadEnvironmentKeepingEnv is the test loader: a named file only fills variables
+// the environment leaves unset, so a shell value beats hack/test.env.
+func loadEnvironmentKeepingEnv(filename string) error {
+	return loadEnvFile(filename, godotenv.Load)
+}
+
+// loadEnvFile reads filename with load, or the optional .env in the working
+// directory (never replacing the environment) when filename is empty.
+func loadEnvFile(filename string, load func(...string) error) error {
 	var err error
 	if filename != "" {
-		err = godotenv.Overload(filename)
+		err = load(filename)
 	} else {
 		err = godotenv.Load()
 		// handle if .env file does not exist, this is OK
@@ -1021,17 +1054,13 @@ func (e *ExtensibilityPointConfiguration) PopulateExtensibilityPoint() error {
 // godotenv.Load: preserves env, ".env" path is optional
 // godotenv.Overload: overrides env, "filename" path must exist
 func LoadFile(filename string) error {
-	var err error
-	if filename != "" {
-		err = godotenv.Overload(filename)
-	} else {
-		err = godotenv.Load()
-		// handle if .env file does not exist, this is OK
-		if os.IsNotExist(err) {
-			return nil
-		}
-	}
-	return err
+	return loadEnvironment(filename)
+}
+
+// LoadFileKeepingEnv is LoadFile for tests: a variable the environment already
+// sets beats the file, so a test run can aim DATABASE_URL at a private database.
+func LoadFileKeepingEnv(filename string) error {
+	return loadEnvironmentKeepingEnv(filename)
 }
 
 // LoadDirectory does nothing when configDir is empty, otherwise it will attempt
@@ -1098,7 +1127,17 @@ func LoadGlobalFromEnv() (*GlobalConfiguration, error) {
 }
 
 func LoadGlobal(filename string) (*GlobalConfiguration, error) {
-	if err := loadEnvironment(filename); err != nil {
+	return loadGlobalFrom(filename, loadEnvironment)
+}
+
+// LoadGlobalKeepingEnv is LoadGlobal for tests: the file never replaces a
+// variable the environment already sets. Production uses LoadGlobal.
+func LoadGlobalKeepingEnv(filename string) (*GlobalConfiguration, error) {
+	return loadGlobalFrom(filename, loadEnvironmentKeepingEnv)
+}
+
+func loadGlobalFrom(filename string, load func(string) error) (*GlobalConfiguration, error) {
+	if err := load(filename); err != nil {
 		return nil, err
 	}
 
@@ -1224,6 +1263,11 @@ func (config *GlobalConfiguration) ApplyDefaults() error {
 	}
 	if config.JWT.DefaultGroupName == "" {
 		config.JWT.DefaultGroupName = "authenticated"
+	}
+	// Users are stored with, and looked up by, this audience. Unset, it was empty
+	// and every host had to remember to set it to match the users it already held.
+	if config.JWT.Aud == "" {
+		config.JWT.Aud = "authenticated"
 	}
 
 	if config.JWT.Exp == 0 {
@@ -1513,4 +1557,45 @@ type IndexWorkerConfiguration struct {
 	// count is at or below this threshold.
 	// A value of 0 means disabled. Has no effect when EnsureUserSearchIndexesExist is true.
 	MaxUsersThreshold int64 `json:"max_users_threshold" split_words:"true" default:"0"`
+}
+
+// DirectoryError is a failure to read the configuration directory, as opposed
+// to the base file. LoadEnvFiles wraps it so a caller that tolerates a missing
+// directory can tell the two apart.
+type DirectoryError struct{ Err error }
+
+func (e *DirectoryError) Error() string { return e.Err.Error() }
+func (e *DirectoryError) Unwrap() error { return e.Err }
+
+// LoadEnvFiles pulls the base file and then the configuration directory into
+// the environment, the directory overriding the file. This is the one place
+// that order lives. A directory failure is returned as a *DirectoryError after
+// the file has loaded, so the caller decides whether it is fatal.
+func LoadEnvFiles(file, dir string) error {
+	if err := LoadFile(file); err != nil {
+		return err
+	}
+	if err := LoadDirectory(dir); err != nil {
+		return &DirectoryError{Err: err}
+	}
+	return nil
+}
+
+// LoadGlobalWithDir is LoadEnvFiles followed by decoding the environment, with
+// any error returned.
+func LoadGlobalWithDir(file, dir string) (*GlobalConfiguration, error) {
+	if err := LoadEnvFiles(file, dir); err != nil {
+		return nil, err
+	}
+	return LoadGlobalFromEnv()
+}
+
+// LoadGlobalFromDirectory re-reads only the configuration directory and then
+// decodes the environment: what a reload does, the base file having been read
+// once at start.
+func LoadGlobalFromDirectory(dir string) (*GlobalConfiguration, error) {
+	if err := LoadDirectory(dir); err != nil {
+		return nil, err
+	}
+	return LoadGlobalFromEnv()
 }

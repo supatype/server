@@ -437,16 +437,14 @@ func (a *API) createAccountFromExternalIdentity(tx *storage.Connection, r *http.
 				if emailConfirmationSent {
 					err := apierrors.NewUnprocessableEntityError(
 						apierrors.ErrorCodeProviderEmailNeedsVerification,
-						"Unverified email with %v. A confirmation email has been sent to your %v email",
-						providerType, providerType,
+						"%s", unverifiedProviderEmailMessage(providerType, true),
 					)
 					return 0, nil, storage.NewCommitWithError(err)
 				}
 
 				err := apierrors.NewUnprocessableEntityError(
 					apierrors.ErrorCodeProviderEmailNeedsVerification,
-					"Unverified email with %v. Verify the email with %v in order to sign in",
-					providerType, providerType)
+					"%s", unverifiedProviderEmailMessage(providerType, false))
 				return 0, nil, storage.NewCommitWithError(err)
 			}
 		}

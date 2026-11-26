@@ -36,17 +36,21 @@ func getIPAddressWithXFF(r *http.Request) string {
 		}
 	}
 
-	ipPort := r.RemoteAddr
-	ip, _, err := net.SplitHostPort(ipPort)
-	if err != nil {
-		return ipPort
-	}
+	return RemoteHost(r)
+}
 
-	return ip
+// RemoteHost is the connection's remote address without its port. Every new connection has a new
+// source port, so a limit keyed on host:port would give each connection a fresh allowance.
+func RemoteHost(r *http.Request) string {
+	return stff.RemoteHost(r.RemoteAddr)
 }
 
 // GetIPAddress returns the real IP address of the HTTP request.
 func GetIPAddress(r *http.Request) string {
+	if addr, ok := stff.DecidedAddress(r); ok {
+		return addr
+	}
+
 	if stffAddr, ok := stff.GetIPAddress(r); ok {
 		return stffAddr
 	}

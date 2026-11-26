@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -62,67 +63,44 @@ func (f *FunctionHooks) UnmarshalJSON(b []byte) error {
 
 var emailRateLimitCounter = observability.ObtainMetricCounter("supatype_auth_email_rate_limit_counter", "Number of times an email rate limit has been triggered")
 
-func (a *API) performRateLimitingWithHeader(lmt *limiter.Limiter, req *http.Request) error {
-	limitHeader := a.config.RateLimitHeader
-
-	// If no rate limit header was set, ignore rate limiting
-	if limitHeader == "" {
-		return nil
+// rateLimitKey is the client address a per-client limit counts against: the St-Forwarded-For
+// address when that is on, else the first value of SUPATYPE_RATE_LIMIT_HEADER (the gateway's
+// X-Real-IP), else the address of the connection itself. A request without the header used to skip
+// the limit entirely, so one that did not come through the gateway, or a server with no header
+// configured, was never limited; it now counts against the peer it came from.
+func (a *API) rateLimitKey(req *http.Request) string {
+	// With a forwarding secret configured the resolver has already decided, and no header on the
+	// request is believed unless it came with the secret.
+	if addr, ok := stff.DecidedAddress(req); ok {
+		return addr
 	}
 
-	valuesStr := req.Header.Get(limitHeader)
-
-	// If a rate limit header was set, but has no value, ignore rate limiting but warn with an error
-	if valuesStr == "" {
-		log := observability.GetLogEntry(req).Entry
-		log.WithField("header", limitHeader).Warn("request does not have a value for the rate limiting header, rate limiting is not applied")
-
-		return nil
+	if stffAddr, ok := stff.GetIPAddress(req); ok {
+		return stffAddr
 	}
 
-	// According to RFC 7230 section 3.2.2, multiple headers with the same name are equivalent
-	// to a single header with that name where each value is separated by a comma and whitespace.
-	//
-	// Note that there is some ambiguity in RFC 7230 where section 3.2.4 states that
-	// header field values (which can contain commas) are processed independently of the header
-	// field name, and thus it is not always clear if a comma is a list delimiter or simply par
-	// of a single value.
-	//
-	// Given that this function is primarily for use with headers like X-Forwarded-For which
-	// vendors generally combine into comma-separated lists, we opt for the simpler approach
-	// here and split the header value by commas before taking the first value.
-	values := strings.SplitN(valuesStr, ",", 2)
+	if limitHeader := a.config.RateLimitHeader; limitHeader != "" {
+		// According to RFC 7230 section 3.2.2, multiple headers with the same name are equivalent
+		// to a single header with that name where each value is separated by a comma and whitespace,
+		// so the first comma-separated value is the one a single-address header carries.
+		first, _, _ := strings.Cut(req.Header.Get(limitHeader), ",")
+		if key := strings.TrimSpace(first); key != "" {
+			return key
+		}
 
-	// We will always get at least one value back, so this operation is safe
-	key := strings.TrimSpace(values[0])
-
-	// If the rate limit header has at least one value, but the first value is all whitespace, return a warning.
-	// This will happen if the header is something like "X-Foo-Bar: ,baz".
-	if key == "" {
-		log := observability.GetLogEntry(req).Entry
-		log.WithField("header", limitHeader).Warn("first rate limit header value is empty, rate limiting is not applied")
-
-		return nil
+		observability.GetLogEntry(req).Entry.WithField("header", limitHeader).
+			Warn("request has no value for the rate limiting header, limiting by the connection's address")
 	}
 
-	// Otherwise, apply rate limiting based on the first rate limit header value
-	if err := tollbooth.LimitByKeys(lmt, []string{key}); err != nil {
+	return utilities.RemoteHost(req)
+}
+
+func (a *API) performRateLimiting(lmt *limiter.Limiter, req *http.Request) error {
+	if err := tollbooth.LimitByKeys(lmt, []string{a.rateLimitKey(req)}); err != nil {
 		return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverRequestRateLimit, "Request rate limit reached")
 	}
 
 	return nil
-}
-
-func (a *API) performRateLimiting(lmt *limiter.Limiter, req *http.Request) error {
-	if stffAddr, ok := stff.GetIPAddress(req); ok {
-		if err := tollbooth.LimitByKeys(lmt, []string{stffAddr}); err != nil {
-			return apierrors.NewTooManyRequestsError(apierrors.ErrorCodeOverRequestRateLimit, "Request rate limit reached")
-		}
-
-		return nil
-	}
-
-	return a.performRateLimitingWithHeader(lmt, req)
 }
 
 func (a *API) limitHandler(lmt *limiter.Limiter) middlewareHandler {
@@ -224,6 +202,9 @@ func (a *API) verifyCaptcha(w http.ResponseWriter, req *http.Request) (context.C
 
 	verificationResult, err := security.VerifyRequest(body, utilities.GetIPAddress(req), strings.TrimSpace(config.Security.Captcha.Secret), config.Security.Captcha.Provider)
 	if err != nil {
+		if errors.Is(err, security.ErrMissingToken) {
+			return nil, apierrors.NewBadRequestError(apierrors.ErrorCodeCaptchaFailed, "captcha protection: request disallowed (no captcha_token found)")
+		}
 		return nil, apierrors.NewInternalServerError("captcha verification process failed").WithInternalError(err)
 	}
 

@@ -81,6 +81,10 @@ type Config struct {
 	// AppSPAFallback enables serving index.html for unmatched paths (AppMode=static).
 	AppSPAFallback bool `envconfig:"SUPATYPE_APP_SPA_FALLBACK" default:"true"`
 
+	// AppSPAFallbackFromConfig is true when the project's config set the fallback (build.spa) rather
+	// than leaving it to its default. The CLI says so; Studio labels the value by it.
+	AppSPAFallbackFromConfig bool `envconfig:"SUPATYPE_APP_SPA_FALLBACK_FROM_CONFIG" default:"false"`
+
 	// AppUpstream is the URL to reverse proxy to (AppMode=proxy).
 	AppUpstream string `envconfig:"SUPATYPE_APP_UPSTREAM"`
 
@@ -108,8 +112,19 @@ type Config struct {
 	// ApiConfigPath is the path to the .supatype/api-config.json file managed by the admin API.
 	ApiConfigPath string `envconfig:"SUPATYPE_API_CONFIG_PATH" default:".supatype/api-config.json"`
 
-	// TenantHMACSecret is the shared HMAC secret for verifying X-Supatype-Tenant-Sig (Mode=managed).
+	// TenantHMACSecret is the platform-wide HMAC secret the tenant signature used to be made with
+	// directly (Mode=managed). It is the transition fallback: accepted for as long as it is set, and
+	// removing it turns it off. See the README, "Tenant signing keys".
 	TenantHMACSecret string `envconfig:"SUPATYPE_TENANT_HMAC_SECRET"`
+
+	// TenantSigningKey is this gateway's own tenant key, derived as modes.TenantKey(master, tenant).
+	// A tenant gateway (ManagedProjectRef set) holds this and nothing else, and accepts only requests
+	// signed for its own ref.
+	TenantSigningKey string `envconfig:"SUPATYPE_TENANT_SIGNING_KEY"`
+
+	// TenantMasterSecret is the master the platform server (ManagedProjectRef empty) derives each
+	// tenant's key from, per request. Never set on a tenant gateway.
+	TenantMasterSecret string `envconfig:"SUPATYPE_TENANT_MASTER_SECRET"`
 
 	// KeyspaceAddr is the RESP address of the keyspace holding the tenant config
 	// cache (Mode=managed) and the REST response cache. It is pg_keyspace inside
@@ -168,12 +183,42 @@ type Config struct {
 	KeyspacePasswordFile        string `envconfig:"SUPATYPE_KEYSPACE_PASSWORD_FILE"`
 	ProjectKeyspacePasswordFile string `envconfig:"SUPATYPE_PROJECT_KEYSPACE_PASSWORD_FILE"`
 
+	// KeyspaceKeyLayout is how this process names keys in the platform keyspace:
+	// empty or "legacy" (`tenant:{ref}:...`, self-host and dev), "scoped" (a login
+	// the keyspace scopes to one tenant, which sends keys relative to it), or
+	// "prefixed" (an exempt login reading `{ref}:...` beside scoped gateways).
+	// Parsed by keyspace.ParseKeyLayout when the keyspace is opened.
+	KeyspaceKeyLayout string `envconfig:"SUPATYPE_KEYSPACE_KEY_LAYOUT"`
+
 	// ManagedProjectRef is the cloud project ref (slug) for a single-tenant managed pod.
 	// When set with Mode=managed and a keyspace address, the route manifest is merged
 	// from keyspace keys tenant:{ref}:config and tenant:{ref}:manifest.
 	// When empty (with managed + a keyspace), manifests are resolved per request from
 	// X-Supatype-Tenant (after HMAC verification) with a short TTL cache.
 	ManagedProjectRef string `envconfig:"SUPATYPE_MANAGED_PROJECT_REF"`
+
+	// InternalAddr is the listen address of the internal entrance (Mode=managed, ManagedProjectRef
+	// set), such as ":9990": the way a project's own functions and hooks call its API from inside
+	// the cluster, without a Kong signature. Empty, there is no internal entrance. The network policy
+	// must keep it reachable from the project's own namespace only.
+	InternalAddr string `envconfig:"SUPATYPE_INTERNAL_ADDR"`
+
+	// AppAddr is the listen address of the app listener (Mode=managed, ManagedProjectRef set), such as
+	// ":9998": it serves the project's static site and the public env, and nothing of the API. Empty,
+	// there is no app listener. Kong routes the project's own host to it.
+	AppAddr string `envconfig:"SUPATYPE_APP_ADDR"`
+
+	// SiteDir is where the app listener keeps the site it serves (an emptyDir): blobs and versions.
+	SiteDir string `envconfig:"SUPATYPE_SITE_DIR"`
+
+	// SiteSourceURL is the control plane's base URL, where the site is downloaded from. Set in the
+	// environment, never taken from the keyspace.
+	SiteSourceURL string `envconfig:"SUPATYPE_SITE_SOURCE_URL"`
+
+	// SiteMaxBytes is the fallback byte budget for the site, used only when the site pointer in the
+	// tenant config carries no max_bytes. Optional: the pointer's value is the plan's cap and follows a
+	// plan change without a restart.
+	SiteMaxBytes int64 `envconfig:"SUPATYPE_SITE_MAX_BYTES"`
 
 	// DenoPath is the path to the deno binary.
 	DenoPath string `envconfig:"SUPATYPE_DENO_PATH" default:"deno"`
@@ -187,6 +232,12 @@ type Config struct {
 
 	// DenoPort is the port deno will listen on (proxied by supatype-server).
 	DenoPort string `envconfig:"SUPATYPE_DENO_PORT" default:"8001"`
+
+	// FunctionsLogToStdout also writes each edge function worker line to this server's own output,
+	// prefixed with the function name. Off by default: the lines are always kept for Studio, and a
+	// hosted server's logs are not the place to repeat a customer's function output. Native
+	// `supatype dev` turns it on so a function's console.log shows in the dev terminal.
+	FunctionsLogToStdout bool `envconfig:"SUPATYPE_FUNCTIONS_LOG_TO_STDOUT"`
 
 	// FunctionsWorkerURL is the base URL of an external functions worker (Deno runtime).
 	// When set, supatype-server proxies /functions/v1 here and does not start an in-process Deno subprocess.
@@ -209,6 +260,12 @@ type Config struct {
 	// `supatype dev`). Off by default, so every Config built without it serves
 	// GraphQL as before.
 	GraphQLDisabled bool `envconfig:"SUPATYPE_GRAPHQL_DISABLED"`
+
+	// GraphQLDisabledReason says why SUPATYPE_GRAPHQL_DISABLED is set. "project" means the
+	// project switched GraphQL off (`services.graphql: false`), which `supatype self-host`
+	// renders so a self-hosted stack gives the answer a Cloud project does. Unset, GraphQL is
+	// off because the stack has no pg_graphql (native `supatype dev`).
+	GraphQLDisabledReason string `envconfig:"SUPATYPE_GRAPHQL_DISABLED_REASON"`
 
 	// StorageDisabled answers every /storage/v1 request with 503
 	// storage_unavailable, whatever STORAGE_PROVIDER or the storage URLs say.
@@ -320,6 +377,13 @@ type Config struct {
 	// means the editor shares SQLDSN, which is how deployments from before the
 	// variable existed keep working.
 	SQLEditorDatabaseURL string `envconfig:"SUPATYPE_SQL_EDITOR_DATABASE_URL"`
+
+	// ChangeLogDatabaseURL is the DSN the after-hook change-log listener reads its replication
+	// slot on. Creating and reading a logical slot needs the REPLICATION attribute, which the
+	// role behind SQLDSN may rightly lack (Cloud's project role is NOREPLICATION), so a
+	// deployment can give the listener a login of its own. Empty means the listener shares
+	// SQLDSN, as self-host does.
+	ChangeLogDatabaseURL string `envconfig:"SUPATYPE_CHANGELOG_DATABASE_URL"`
 
 	// DatabaseURL is the generic DSN fallback. The auth service reads the same
 	// variable through its own configuration, which is one of the connection
@@ -540,8 +604,19 @@ func (c *Config) SQLDSN() string {
 // SQLEditorDSN is the connection string for the Studio SQL editor: the editor
 // variable when it is set, and SQLDSN otherwise.
 func (c *Config) SQLEditorDSN() string {
-	if dsn := strings.TrimSpace(c.SQLEditorDatabaseURL); dsn != "" {
-		return dsn
+	return dsnOr(c.SQLEditorDatabaseURL, c.SQLDSN())
+}
+
+// ChangeLogDSN is the connection string for the after-hook change-log listener: its own
+// variable when it is set, and SQLDSN otherwise.
+func (c *Config) ChangeLogDSN() string {
+	return dsnOr(c.ChangeLogDatabaseURL, c.SQLDSN())
+}
+
+// dsnOr is dsn trimmed, or fallback when dsn is blank.
+func dsnOr(dsn, fallback string) string {
+	if trimmed := strings.TrimSpace(dsn); trimmed != "" {
+		return trimmed
 	}
-	return c.SQLDSN()
+	return fallback
 }

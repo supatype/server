@@ -23,8 +23,8 @@ import (
 // REST GET filed there would put the busiest write in the service through the
 // WAL to keep a copy of something that expires in seconds.
 //
-// The families cannot be enumerated from the keyspace itself — it holds
-// whatever was last written — so they are enumerated here, from the functions
+// The families cannot be enumerated from the keyspace itself, which holds
+// whatever was last written, so they are enumerated here, from the functions
 // that build them. A new family fails this test until someone has said which
 // tier it belongs to.
 func TestEveryKeyFamilyIsFiledUnderItsDurabilityHead(t *testing.T) {
@@ -41,10 +41,10 @@ func TestEveryKeyFamilyIsFiledUnderItsDurabilityHead(t *testing.T) {
 		// to this table would need.
 		tier string
 	}{
-		{"tenant config", keyspace.TenantConfigKey("proj-1"), "tenant:", "durable: written by the control plane, and a pod that loses it serves the file defaults to every tenant"},
-		{"route manifest", keyspace.RouteManifestKey("proj-1"), "tenant:", "durable: same writer, same consequence"},
-		{"db credential meta", metaKey("proj-1"), "tenant:", "durable: losing it strands a rotation half-done"},
-		{"db credential secret", secretKey("proj-1", 2), "tenant:", "durable: it is the only copy of a managed password"},
+		{"tenant config", keyspace.LayoutLegacy.Tenant("proj-1", keyspace.KeyConfig), "tenant:", "durable: written by the control plane, and a pod that loses it serves the file defaults to every tenant"},
+		{"route manifest", keyspace.LayoutLegacy.Tenant("proj-1", keyspace.KeyManifest), "tenant:", "durable: same writer, same consequence"},
+		{"db credential meta", metaKey(keyspace.LayoutLegacy, "proj-1"), "tenant:", "durable: losing it strands a rotation half-done"},
+		{"db credential secret", secretKey(keyspace.LayoutLegacy, "proj-1", 2), "tenant:", "durable: it is the only copy of a managed password"},
 		{"REST response cache", restcache.RestKeyPrefix("proj-1"), "cache:", "ephemeral: it is a cache, and it is the write this service does most"},
 		{"MAU day set", mau.DayKey("org-1", when), "mau:", "its own head: the tier is a cost decision, not a correctness one"},
 	} {

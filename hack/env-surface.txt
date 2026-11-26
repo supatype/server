@@ -17,7 +17,7 @@
 # in it. Renaming SUPATYPE_* to SUPATYPE_* should rewrite this file wholesale and
 # change nothing else about what the service reads.
 #
-# total: 577 names
+# total: 598 names
 
 DATABASE_URL
     struct internal/conf.GlobalConfiguration
@@ -74,9 +74,13 @@ SUPATYPE_API_PORT
     struct internal/conf.GlobalConfiguration
 SUPATYPE_API_REQUEST_ID_HEADER
     struct internal/conf.GlobalConfiguration
+SUPATYPE_APP_ADDR
+    struct internal/config.Config
 SUPATYPE_APP_MODE
     struct internal/config.Config
 SUPATYPE_APP_SPA_FALLBACK
+    struct internal/config.Config
+SUPATYPE_APP_SPA_FALLBACK_FROM_CONFIG
     struct internal/config.Config
 SUPATYPE_APP_STATIC_DIR
     struct internal/config.Config
@@ -84,7 +88,11 @@ SUPATYPE_APP_UPSTREAM
     struct internal/config.Config
 SUPATYPE_AUDIT_LOG_DISABLE_POSTGRES
     struct internal/conf.GlobalConfiguration
+SUPATYPE_AUTH_SETTINGS_VERSION
+    struct internal/conf.GlobalConfiguration
 SUPATYPE_BLOCK_BOT_UA
+    struct internal/config.Config
+SUPATYPE_CHANGELOG_DATABASE_URL
     struct internal/config.Config
 SUPATYPE_CLOUD_ACTIVITY_ENABLED
     struct internal/config.Config
@@ -580,9 +588,13 @@ SUPATYPE_EXTERNAL_ZOOM_SKIP_NONCE_CHECK
     struct internal/conf.GlobalConfiguration
 SUPATYPE_EXTERNAL_ZOOM_URL
     struct internal/conf.GlobalConfiguration
+SUPATYPE_FUNCTIONS_LOG_TO_STDOUT
+    struct internal/config.Config
 SUPATYPE_FUNCTIONS_WORKER_URL
     struct internal/config.Config
 SUPATYPE_GRAPHQL_DISABLED
+    struct internal/config.Config
+SUPATYPE_GRAPHQL_DISABLED_REASON
     struct internal/config.Config
 SUPATYPE_GRAPHQL_URL
     struct internal/config.Config
@@ -648,6 +660,8 @@ SUPATYPE_INDEX_WORKER_ENSURE_USER_SEARCH_INDEXES_EXIST
     struct internal/conf.GlobalConfiguration
 SUPATYPE_INDEX_WORKER_MAX_USERS_THRESHOLD
     struct internal/conf.GlobalConfiguration
+SUPATYPE_INTERNAL_ADDR
+    struct internal/config.Config
 SUPATYPE_INTERNAL_HMAC_SECRET
     struct internal/config.Config
 SUPATYPE_INTERNAL_HTTP_TIMEOUT
@@ -674,6 +688,8 @@ SUPATYPE_JWT_SECRET
 SUPATYPE_JWT_VALID_METHODS
     struct internal/conf.GlobalConfiguration
 SUPATYPE_KEYSPACE_ADDR
+    struct internal/config.Config
+SUPATYPE_KEYSPACE_KEY_LAYOUT
     struct internal/config.Config
 SUPATYPE_KEYSPACE_PASSWORD
     struct internal/config.Config
@@ -765,7 +781,13 @@ SUPATYPE_MAILER_SUPATYPE_RESEND_API_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_SUPATYPE_RESEND_FROM
     struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_SES_ACCESS_KEY_ID
+    struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_SUPATYPE_SES_FROM
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_SES_REGION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_MAILER_SUPATYPE_SES_SECRET_ACCESS_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_MAILER_TEMPLATES_CONFIRMATION
     struct internal/conf.GlobalConfiguration
@@ -1003,6 +1025,8 @@ SUPATYPE_SECURITY_CAPTCHA_PROVIDER
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_CAPTCHA_SECRET
     struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_CAPTCHA_SITE_KEY
+    struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_CAPTCHA_TIMEOUT
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_DB_ENCRYPTION_DECRYPTION_KEYS
@@ -1012,6 +1036,8 @@ SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPT
 SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPTION_KEY
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_DB_ENCRYPTION_ENCRYPTION_KEY_ID
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SECURITY_FORWARDING_SECRET
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SECURITY_MANUAL_LINKING_ENABLED
     struct internal/conf.GlobalConfiguration
@@ -1043,8 +1069,20 @@ SUPATYPE_SESSIONS_TAGS
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SESSIONS_TIMEBOX
     struct internal/conf.GlobalConfiguration
+SUPATYPE_SES_ACCESS_KEY_ID
+    struct internal/conf.GlobalConfiguration
 SUPATYPE_SES_FROM
     struct internal/conf.GlobalConfiguration
+SUPATYPE_SES_REGION
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SES_SECRET_ACCESS_KEY
+    struct internal/conf.GlobalConfiguration
+SUPATYPE_SITE_DIR
+    struct internal/config.Config
+SUPATYPE_SITE_MAX_BYTES
+    struct internal/config.Config
+SUPATYPE_SITE_SOURCE_URL
+    struct internal/config.Config
 SUPATYPE_SITE_URL
     struct internal/conf.GlobalConfiguration
 SUPATYPE_SMS_AUTOCONFIRM
@@ -1138,6 +1176,10 @@ SUPATYPE_STORAGE_DISABLED
 SUPATYPE_STORAGE_URL
     struct internal/config.Config
 SUPATYPE_TENANT_HMAC_SECRET
+    struct internal/config.Config
+SUPATYPE_TENANT_MASTER_SECRET
+    struct internal/config.Config
+SUPATYPE_TENANT_SIGNING_KEY
     struct internal/config.Config
 SUPATYPE_TLS_ACME_CACHE_DIR
     struct internal/config.Config

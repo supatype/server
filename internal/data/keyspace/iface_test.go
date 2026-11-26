@@ -74,3 +74,20 @@ func TestRealClientReportsAvailable(t *testing.T) {
 		t.Error("a real client must report itself available")
 	}
 }
+
+// With no keyspace there is nothing to listen to: Subscribe says why rather than blocking, and the
+// layout is the legacy one, so a key built without a keyspace is the one a legacy login would build.
+func TestUnavailableClientSubscribeAndLayout(t *testing.T) {
+	c := Unavailable()
+	called := false
+	err := c.Subscribe(context.Background(), "ch", func() { called = true }, func() { called = true })
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("Subscribe: %v, want ErrUnavailable", err)
+	}
+	if called {
+		t.Error("a callback ran for a subscription that was never made")
+	}
+	if c.Layout() != LayoutLegacy {
+		t.Errorf("Layout = %v, want LayoutLegacy", c.Layout())
+	}
+}

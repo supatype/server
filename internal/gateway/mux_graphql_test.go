@@ -144,3 +144,77 @@ func TestBuildOuterMux_GraphQLDisabledAnswersWhy(t *testing.T) {
 		t.Error("the request reached PostgREST although GraphQL is switched off")
 	}
 }
+
+// A project that switched GraphQL off (`services.graphql: false`, carried by a hosted project's
+// manifest) is told so, not told to use the Docker provider, which means nothing on Cloud.
+// The caller holds a project key, as every managed data-plane request must.
+func TestBuildOuterMux_GraphQLSwitchedOffByProjectSaysSo(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", JWTSecret: testJWTSecret}
+	manifest := &proxy.RouteManifest{Schema: "public"}
+	manifest.SetService(proxy.ServiceGraphQL, false)
+	mf := func(*http.Request) *proxy.RouteManifest { return manifest }
+	hp := func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") }
+	handler := buildOuterMux(cfg, mf, hp, http.NotFoundHandler(), nil, "test", nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/graphql/v1", nil)
+	req.Header.Set("apikey", signedAPIKey(t, "anon"))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotImplemented {
+		t.Fatalf("status %d, want 501", rr.Code)
+	}
+	var body struct{ Code, Message string }
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if !strings.Contains(body.Message, "switched off for this project") || strings.Contains(body.Message, "Docker") {
+		t.Errorf("message = %q, want it to say the project switched GraphQL off", body.Message)
+	}
+}
+
+// GraphQL is data plane: in managed mode a request with no project key is refused
+// with 401 no_api_key before it can learn whether GraphQL is on for the project.
+func TestBuildOuterMux_GraphQLRequiresAProjectKeyInManagedMode(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", JWTSecret: testJWTSecret}
+	manifest := &proxy.RouteManifest{Schema: "public"}
+	manifest.SetService(proxy.ServiceGraphQL, false)
+	mf := func(*http.Request) *proxy.RouteManifest { return manifest }
+	hp := func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") }
+	handler := buildOuterMux(cfg, mf, hp, http.NotFoundHandler(), nil, "test", nil, nil)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/graphql/v1", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401", rr.Code)
+	}
+	var body struct{ Code string }
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v: %s", err, rr.Body.String())
+	}
+	if body.Code != "no_api_key" {
+		t.Errorf("code %q, want no_api_key", body.Code)
+	}
+}
+
+// A self-hosted stack whose project switched GraphQL off: the CLI renders SUPATYPE_GRAPHQL_DISABLED
+// with the reason "project", and the answer is the one a Cloud project gives, not the native one.
+func TestBuildOuterMux_GraphQLDisabledByProjectEnvSaysSo(t *testing.T) {
+	cfg := &config.Config{Mode: "dev", GraphQLDisabled: true, GraphQLDisabledReason: "project"}
+	manifest := &proxy.RouteManifest{Schema: "public"}
+	mf := func(*http.Request) *proxy.RouteManifest { return manifest }
+	hp := func() outerhealth.ProbeConfig { return outerhealth.ProbeConfigFrom(cfg, manifest, "") }
+	handler := buildOuterMux(cfg, mf, hp, http.NotFoundHandler(), nil, "test", nil, nil)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/graphql/v1", nil))
+	if rr.Code != http.StatusNotImplemented {
+		t.Fatalf("status %d, want 501", rr.Code)
+	}
+	var body struct{ Code, Message string }
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if !strings.Contains(body.Message, "switched off for this project") || strings.Contains(body.Message, "native") {
+		t.Errorf("message = %q, want it to say the project switched GraphQL off", body.Message)
+	}
+}

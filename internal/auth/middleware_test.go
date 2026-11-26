@@ -645,12 +645,17 @@ func (ts *MiddlewareTestSuite) TestPerformRateLimitingWithHeader() {
 		expError     error
 	}{
 		{
+			// Both come from httptest's one peer address, which a request without the header
+			// counts against.
 			name: "no value",
 			headerValues: []string{
 				"",
 				"",
 			},
-			expError: nil,
+			expError: apierrors.NewTooManyRequestsError(
+				apierrors.ErrorCodeOverRequestRateLimit,
+				"Request rate limit reached",
+			),
 		},
 		{
 			name: "single end user value",

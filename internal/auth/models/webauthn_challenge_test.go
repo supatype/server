@@ -21,7 +21,7 @@ type WebAuthnChallengeTestSuite struct {
 }
 
 func TestWebAuthnChallenge(t *testing.T) {
-	globalConfig, err := conf.LoadGlobal(modelsTestConfig)
+	globalConfig, err := conf.LoadGlobalKeepingEnv(modelsTestConfig)
 	require.NoError(t, err)
 	conn, err := test.SetupDBConnection(globalConfig)
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func (ts *WebAuthnChallengeTestSuite) TestDelete() {
 }
 
 func (ts *WebAuthnChallengeTestSuite) TestNullableUserID() {
-	// Discoverable flow — no user ID
+	// Discoverable flow: no user ID
 	challenge := NewWebAuthnChallenge(nil, WebAuthnChallengeTypeSignup, &WebAuthnSessionData{
 		SessionData: &webauthn.SessionData{Challenge: "discoverable"},
 	}, time.Now().Add(5*time.Minute))

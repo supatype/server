@@ -41,6 +41,9 @@ const (
 // that looks like a navigation (see wantsSPAFallback): that is served
 // dir/index.html, the SPA client-side routing fallback.
 //
+// Before either, an extensionless GET or HEAD tries <path>.html (pretty URLs), so a
+// multi-page build's /about is its about.html.
+//
 // A directory, the root included, is served its own index.html. One without
 // an index.html is the same 404, never a listing and never the SPA fallback.
 //
@@ -111,6 +114,13 @@ func directoryIndex(dir, urlPath string) (isDir, hasIndex bool) {
 
 // serveMiss answers a path with no file behind it.
 func serveMiss(w http.ResponseWriter, r *http.Request, dir string, spa bool, cache CacheOpts) {
+	if reservedAppPrefix(r.URL.Path) {
+		serveReservedMiss(w)
+		return
+	}
+	if servePrettyURL(w, r, dir, cache) {
+		return
+	}
 	if !spa || !wantsSPAFallback(r) {
 		serveNotFound(w, r, dir)
 		return
@@ -415,4 +425,64 @@ func isHashedAssetPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// reservedAppPrefixes are the first segments the platform's services own. A miss under one is that
+// service's miss, so it is never answered with the app shell or the site's 404 page.
+var reservedAppPrefixes = []string{"rest", "auth", "storage", "realtime", "functions", "graphql"}
+
+// reservedAppPrefix reports whether urlPath is under a service prefix, matched on whole segments:
+// /rest/v1/x is, /restaurant is not.
+func reservedAppPrefix(urlPath string) bool {
+	first, _, found := strings.Cut(strings.TrimPrefix(urlPath, "/"), "/")
+	if !found {
+		return false
+	}
+	for _, p := range reservedAppPrefixes {
+		if first == p {
+			return true
+		}
+	}
+	return false
+}
+
+// serveReservedMiss answers a miss under a service prefix with a JSON 404 that no cache keeps.
+func serveReservedMiss(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"error":"not_found"}`))
+}
+
+// servePrettyURL answers an extensionless GET or HEAD for which no file exists with <path>.html,
+// the page a multi-page build writes for /about. It reports whether it answered. The page is an
+// HTML document, so it takes the HTML cache policy, and a precompressed sidecar is honoured.
+func servePrettyURL(w http.ResponseWriter, r *http.Request, dir string, cache CacheOpts) bool {
+	urlPath := r.URL.Path
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if urlPath == "/" || strings.HasSuffix(urlPath, "/") || path.Ext(path.Base(urlPath)) != "" {
+		return false
+	}
+	page := urlPath + ".html"
+	disk, enc, ok := pickVariant(dir, page, r)
+	if !ok {
+		return false
+	}
+	setCacheHeaders(w, page, cache)
+	serveVariant(w, r, dir, disk, enc, page)
+	return true
+}
+
+// Effective is o with the built-in defaults filled in for what it leaves empty, so a caller can
+// report the Cache-Control a request really gets, not only what was configured.
+func (o CacheOpts) Effective() CacheOpts {
+	if strings.TrimSpace(o.HTML) == "" {
+		o.HTML = defaultHTMLCache
+	}
+	if strings.TrimSpace(o.HashedAssets) == "" {
+		o.HashedAssets = defaultHashedCache
+	}
+	return o
 }

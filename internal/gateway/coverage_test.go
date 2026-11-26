@@ -322,6 +322,35 @@ func TestTheStudioConfigEndpoint(t *testing.T) {
 	}
 }
 
+// Studio's General settings show the auth service's SITE_URL, which the bootstrap hands the
+// gateway with WithSiteURL. The endpoint must carry it alongside the pushed config.
+func TestTheStudioConfigEndpointCarriesTheSiteURL(t *testing.T) {
+	t.Chdir(t.TempDir()) // the admin config path must be relative to the working directory
+	// Built before the push, as TestTheStudioConfigEndpoint is: the deps read admin roles from the
+	// file when they are made, and the pushed roles would refuse the signed-in test admin.
+	deps := depsFor(t, &config.Config{Mode: "dev", AdminConfigPath: "admin-config.json", JWTSecret: testJWTSecret}, nil)
+	WithSiteURL("https://shop.example.com")(deps)
+	if err := os.WriteFile("admin-config.json", []byte(`{"adminRoles":["owner"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	buildStudioConfig(deps).ServeHTTP(rec, studioAdminRequest(t, "/studio/config"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		SiteURL    string   `json:"siteUrl"`
+		AdminRoles []string `json:"adminRoles"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("not JSON: %q", rec.Body.String())
+	}
+	if body.SiteURL != "https://shop.example.com" || len(body.AdminRoles) != 1 {
+		t.Errorf("body = %s, want the pushed config with siteUrl", rec.Body.String())
+	}
+}
+
 // studioAdminRequest is a GET from a signed-in Studio admin. With no database the
 // gateway falls back to the token's claims, so an admin role claim admits it.
 func studioAdminRequest(t *testing.T, path string) *http.Request {
@@ -1200,4 +1229,18 @@ func TestDeclaredCacheSurvivesAMissingManifest(t *testing.T) {
 // functionsSwitched is a manifest that switches functions on or off.
 func functionsSwitched(on bool) *proxy.RouteManifest {
 	return &proxy.RouteManifest{Services: proxy.SwitchesOf(map[string]bool{proxy.ServiceFunctions: on})}
+}
+
+// Under a scoped login the API config is written by its relative name; the keyspace files it
+// under the gateway's own tenant.
+func TestAScopedPodWritesItsAPIConfigByItsRelativeName(t *testing.T) {
+	cfg := &config.Config{Mode: "managed", ManagedProjectRef: "abcdef", ApiConfigPath: "/tmp/unused.json"}
+	platform := keyspacetest.New()
+	platform.KeyLayout = keyspace.LayoutScoped
+	if err := apiConfigStore(cfg, platform).Set(context.Background(), apiconfig.DefaultApiConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if got := platform.Keys(); len(got) != 1 || got[0] != keyspace.KeyAPIConfig {
+		t.Errorf("keys = %v, want [%s]", got, keyspace.KeyAPIConfig)
+	}
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/reloader"
 	"github.com/supatype/server/internal/security"
+	"github.com/supatype/server/internal/site"
 	"github.com/supatype/server/internal/utilities"
 )
 
@@ -63,11 +64,19 @@ var getwd = os.Getwd
 // returned handler however it likes (stock binary: cmd/serve_cmd.go; cloud:
 // the metering gateway on :9999).
 func New(ctx context.Context) (http.Handler, func(), error) {
-	if err := conf.LoadFile(ConfigFile); err != nil {
-		return nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
-	}
+	handler, _, drain, err := NewWithApp(ctx)
+	return handler, drain, err
+}
 
-	if err := conf.LoadDirectory(WatchDir); err != nil {
+// NewWithApp is New plus the app listener's handler: the project's static site and public env, to be
+// served on SUPATYPE_APP_ADDR. The handler is nil when no app address is set. Its syncer runs until ctx
+// ends, and drain waits for it.
+func NewWithApp(ctx context.Context) (http.Handler, http.Handler, func(), error) {
+	if err := conf.LoadEnvFiles(ConfigFile, WatchDir); err != nil {
+		var dirErr *conf.DirectoryError
+		if !errors.As(err, &dirErr) {
+			return nil, nil, nil, fmt.Errorf("unable to load authCfg: %w", err)
+		}
 		logrus.WithError(err).Error("unable to load authCfg from watch dir")
 	}
 
@@ -77,7 +86,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// prefix has no JWT secret at all, and the error it would otherwise get names
 	// some unrelated key that happened to be checked first.
 	if err := config.Preflight(config.OSEnv{}); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for _, warning := range config.RemovedWarnings(config.OSEnv{}) {
 		logrus.Warn(warning)
@@ -85,7 +94,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 
 	authCfg, err := loadAuthConfig(observability.ConfigureLogging)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Include serve ctx which carries cancelation signals so DialContext does
@@ -100,7 +109,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		return storage.DialContext(ctx, authCfg)
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("error opening database: %w", err)
+		return nil, nil, nil, fmt.Errorf("error opening database: %w", err)
 	}
 
 	// Add the serve context to the db, this is so during the shutdown sequence
@@ -120,10 +129,10 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	var tenantGateway *platform.Gateway
 
 	// fail releases what has been acquired so far and returns the bootstrap error.
-	fail := func(err error) (http.Handler, func(), error) {
+	fail := func(err error) (http.Handler, http.Handler, func(), error) {
 		_ = resources.Close()
 		_ = db.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	mrCache := templatemailer.NewCache()
@@ -160,8 +169,13 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	provider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	smsprovider.SetHTTPTimeout(authCfg.InternalHTTPTimeout)
 	security.SetHTTPTimeout(authCfg.Security.Captcha.Timeout)
-	if strings.TrimSpace(srvCfg.Mode) == "managed" && strings.TrimSpace(srvCfg.TenantHMACSecret) == "" {
-		return fail(errors.New("serve: SUPATYPE_TENANT_HMAC_SECRET must be set in managed mode"))
+	if strings.TrimSpace(srvCfg.Mode) == "managed" {
+		if err := validateTenantSigning(srvCfg); err != nil {
+			return fail(fmt.Errorf("serve: %w", err))
+		}
+	}
+	if err := ValidateAppListener(srvCfg); err != nil {
+		return fail(fmt.Errorf("serve: %w", err))
 	}
 	if strings.TrimSpace(srvCfg.Mode) != "dev" && strings.TrimSpace(srvCfg.ServiceRoleKey) == "" {
 		return fail(errors.New("serve: SUPATYPE_SERVICE_ROLE_KEY must be set when SUPATYPE_MODE is not dev"))
@@ -190,6 +204,25 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	perTenantManifest := managed && ksPlatform.Available() && ref == ""
 
 	live := newLiveManifests(manifest)
+	var appHandler http.Handler
+	var siteStatus func() site.Status
+	if strings.TrimSpace(srvCfg.AppAddr) != "" {
+		syncer, err := newSiteSyncer(srvCfg, live)
+		if err != nil {
+			return fail(fmt.Errorf("serve: site: %w", err))
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			syncer.Run(ctx)
+		}()
+		siteStatus = syncer.Status
+		appHandler = NewAppHandler(srvCfg, syncer.Handler(), WithAPIExternalURL(authCfg.API.ExternalURL),
+			WithManifestFor(func(*http.Request) *proxy.RouteManifest {
+				// Never the request: a visitor to the public host chooses its headers.
+				return live.For(nil)
+			}))
+	}
 	if perTenantManifest {
 		live.tenant = keyspace.NewTenantManifestCache(ksPlatform, 0, live.Base)
 		logrus.Info("serve: per-tenant route manifests from the keyspace (SUPATYPE_MANAGED_PROJECT_REF unset)")
@@ -200,6 +233,9 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		}
 		live.Reapply(manifest)
 		logrus.WithField("project_ref", ref).Info("serve: route manifest merged from the keyspace")
+		// A project gateway has no manifest file to watch, so what the control plane writes after this
+		// point (a function deploy, a tier change) reaches it only through the keyspace.
+		go live.refreshOnChange(ctx, ksPlatform, ksPlatform.Layout().Tenant(ref, keyspace.ChannelConfigChanged), defaultRefreshTiming)
 	}
 
 	if watchErr := proxy.Watch(srvCfg.ManifestPath, manifestStamp, live.ReloadFrom); watchErr != nil {
@@ -240,6 +276,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 		if afterHooks != nil {
 			pc.AfterHooks = afterHooks.Status
 		}
+		pc.Site = siteStatus
 		return pc
 	}
 
@@ -253,7 +290,7 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	// same one.
 	corsPolicy := DefaultCORSPolicy(srvCfg, corsorigins.DBStore{DB: db}, authCfg.SiteURL)
 	outerMux := buildOuterMux(srvCfg, live.For, healthProbes, ah, dm, utilities.Version, resources, sendEmailHook,
-		WithCORSPolicy(corsPolicy), WithAfterHookListener(afterHooks), WithAPIExternalURL(authCfg.API.ExternalURL))
+		WithCORSPolicy(corsPolicy), WithAfterHookListener(afterHooks), WithAPIExternalURL(authCfg.API.ExternalURL), WithSiteURL(authCfg.SiteURL))
 
 	// ── background workers (stop on ctx cancel; drained by the returned func) ──
 	wrkLog := logrus.WithField("component", "apiworker")
@@ -330,8 +367,8 @@ func New(ctx context.Context) (http.Handler, func(), error) {
 	}
 
 	tenantGateway = platform.New(srvCfg, ksPlatform)
-	handler := tenantGateway.Wrap(outerMux)
-	return handler, drain, nil
+	handler := forwardingFront(authCfg)(tenantGateway.Wrap(outerMux))
+	return handler, appHandler, drain, nil
 }
 
 // loadAuthConfig decodes the auth configuration from the environment and sets up logging

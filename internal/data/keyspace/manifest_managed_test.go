@@ -1,6 +1,7 @@
 package keyspace
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/supatype/server/internal/proxy"
@@ -157,6 +158,8 @@ func TestEveryRoutingFieldIsCarried(t *testing.T) {
 		RealtimeEnabled:         &enabled,
 		RealtimeURL:             "http://realtime",
 		FunctionsEnabled:        &enabled,
+		StorageEnabled:          &enabled,
+		GraphQLEnabled:          &enabled,
 		FunctionsWorkerURL:      "http://worker",
 		FunctionWorkerURLs:      map[string]string{"fn": "http://fn", "blank": ""},
 		StaticCacheHTML:         "no-store",
@@ -184,6 +187,9 @@ func TestEveryRoutingFieldIsCarried(t *testing.T) {
 		if got == "" {
 			t.Errorf("%s was dropped", name)
 		}
+	}
+	if !m.ServiceOn(proxy.ServiceStorage, false) || !m.ServiceOn(proxy.ServiceGraphQL, false) {
+		t.Errorf("a service switch was dropped: %+v", m)
 	}
 	if !m.ServiceOn(proxy.ServiceRealtime, false) || !m.ServiceOn(proxy.ServiceFunctions, false) {
 		t.Errorf("a boolean was dropped: %+v", m)
@@ -226,4 +232,48 @@ func TestMergingIntoExistingMaps(t *testing.T) {
 func TestMergingNothing(t *testing.T) {
 	(*TenantConfig)(nil).mergeRoutingInto(&proxy.RouteManifest{})
 	(&TenantConfig{Schema: "app"}).mergeRoutingInto(nil)
+}
+
+// The live site pointer rides the tenant config, so a keyspace rebuilt after a loss still serves the
+// site, and a config that carries none leaves the manifest without one.
+func TestTenantConfigCarriesTheSitePointer(t *testing.T) {
+	site := &proxy.SiteRef{DeploymentID: "d1", Version: "v1", SPA: true, FilesSHA256: "abc", Token: "tok"}
+
+	withSite := &proxy.RouteManifest{Schema: "public"}
+	(&TenantConfig{Site: site}).mergeRoutingInto(withSite)
+	if withSite.Site == nil || *withSite.Site != *site {
+		t.Fatalf("site did not reach the manifest: %+v", withSite.Site)
+	}
+
+	without := &proxy.RouteManifest{Schema: "public"}
+	(&TenantConfig{Schema: "app"}).mergeRoutingInto(without)
+	if without.Site != nil {
+		t.Fatalf("a config with no site produced one: %+v", without.Site)
+	}
+}
+
+func TestTenantConfigSiteRoundTripsAsJSON(t *testing.T) {
+	raw := `{"site":{"deployment_id":"d1","version":"v1","spa":true,"files_sha256":"abc","token":"tok"}}`
+	var tc TenantConfig
+	if err := json.Unmarshal([]byte(raw), &tc); err != nil {
+		t.Fatal(err)
+	}
+	if tc.Site == nil || tc.Site.DeploymentID != "d1" || !tc.Site.SPA || tc.Site.Token != "tok" || tc.Site.FilesSHA256 != "abc" {
+		t.Fatalf("decoded %+v", tc.Site)
+	}
+}
+
+// Cloud has no manifest file, so a project's public values arrive through tenant config or its
+// deployed site reads none of them.
+func TestTenantConfigCarriesPublicEnv(t *testing.T) {
+	tc := &TenantConfig{PublicEnv: map[string]string{"STRIPE_PK": "pk_live_1"}}
+	m := &proxy.RouteManifest{Schema: "public"}
+	tc.mergeRoutingInto(m)
+	if m.PublicEnv["STRIPE_PK"] != "pk_live_1" {
+		t.Fatalf("public env did not reach the manifest: %v", m.PublicEnv)
+	}
+	tc.PublicEnv["STRIPE_PK"] = "changed"
+	if m.PublicEnv["STRIPE_PK"] != "pk_live_1" {
+		t.Fatal("the manifest shares the tenant config's map")
+	}
 }

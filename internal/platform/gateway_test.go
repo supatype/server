@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/supatype/server/internal/config"
+	"github.com/supatype/server/internal/data/keyspace"
 	"github.com/supatype/server/internal/platform/controlplane"
 	"github.com/supatype/server/internal/platform/mau"
 )
@@ -21,6 +22,8 @@ type recordingStore struct {
 	mu      sync.Mutex
 	members []string
 }
+
+func (*recordingStore) Layout() keyspace.KeyLayout { return keyspace.LayoutLegacy }
 
 func (s *recordingStore) AddToExpiringSet(_ context.Context, _, member string, _ time.Time) error {
 	s.mu.Lock()
@@ -458,6 +461,8 @@ func TestAFailingStoreIsSurvivable(t *testing.T) {
 }
 
 type failingStore struct{}
+
+func (failingStore) Layout() keyspace.KeyLayout { return keyspace.LayoutLegacy }
 
 func (failingStore) AddToExpiringSet(context.Context, string, string, time.Time) error {
 	return fmt.Errorf("keyspace unavailable")

@@ -76,7 +76,11 @@ func FromConfig(globalConfig *conf.GlobalConfiguration, tc *Cache) *Mailer {
 			logrus.Warn("templatemailer: ses provider selected but SUPATYPE_SES_FROM is unset; falling back to noop")
 			mc = noopclient.New()
 		} else {
-			sesClient, err := sesclient.New(context.Background(), from)
+			sesClient, err := sesclient.New(context.Background(), from, sesclient.Credentials{
+				AccessKeyID:     globalConfig.Mailer.SESAccessKeyID,
+				SecretAccessKey: globalConfig.Mailer.SESSecretAccessKey,
+				Region:          globalConfig.Mailer.SESRegion,
+			})
 			if err != nil {
 				logrus.WithError(err).Warn("templatemailer: failed to init SES client; falling back to noop")
 				mc = noopclient.New()

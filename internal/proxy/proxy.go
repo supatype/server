@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/supatype/server/internal/stff"
 )
 
 // ProxyOpts configures the behaviour of a reverse proxy handler.
@@ -95,6 +97,23 @@ func augmentForwardedHeaders(req *http.Request, clientFacingHost string) {
 	// RFC 7239: append one forwarded-element for this hop (separate field-value;
 	// parsers combine multiple Forwarded header lines).
 	addRFC7239ForwardedHop(req, clientIP, clientFacingHost)
+
+	carryClientAddress(req, clientIP)
+}
+
+// carryClientAddress names the end user to the upstream in St-Forwarded-For, overwriting whatever
+// arrived, and drops the forwarding secret, which no service or function behind this hop may see.
+// The address is the one the resolver settled; a request it never saw is named by its peer.
+func carryClientAddress(req *http.Request, peer string) {
+	req.Header.Del(stff.SecretHeaderName)
+	addr, ok := stff.ClientAddress(req.Context())
+	if !ok {
+		addr = peer
+	}
+	req.Header.Del(stff.HeaderName)
+	if addr != "" {
+		req.Header.Set(stff.HeaderName, addr)
+	}
 }
 
 func clientIPFromRemoteAddr(remoteAddr string) string {

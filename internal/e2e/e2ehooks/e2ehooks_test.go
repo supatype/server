@@ -16,7 +16,7 @@ import (
 
 func TestInstance(t *testing.T) {
 	{
-		globalCfg, err := conf.LoadGlobal("../../../hack/test.env")
+		globalCfg, err := conf.LoadGlobalKeepingEnv("../../../hack/test.env")
 		require.NoError(t, err)
 
 		globalCfg.DB.Driver = ""
@@ -28,7 +28,7 @@ func TestInstance(t *testing.T) {
 	}
 
 	{
-		globalCfg, err := conf.LoadGlobal("../../../hack/test.env")
+		globalCfg, err := conf.LoadGlobalKeepingEnv("../../../hack/test.env")
 		require.NoError(t, err)
 
 		inst, err := New(globalCfg)

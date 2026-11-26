@@ -6,6 +6,7 @@ package gateway
 // picks the worker from the calling tenant's manifest.
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"github.com/supatype/server/internal/modelhooks"
 	"github.com/supatype/server/internal/proxy"
 	"github.com/supatype/server/internal/serviceswitch"
+	"github.com/supatype/server/internal/utilities"
 )
 
 func functionsInvocationProxy(
@@ -30,15 +32,28 @@ func functionsInvocationProxy(
 			http.Error(w, "functions disabled", http.StatusNotFound)
 			return
 		}
+		// A dot segment is refused outright. The worker resolves "." and ".." in the URL it receives, so
+		// "x/../_logs" is a call to x as far as the check below can tell and `_logs` by the time the
+		// worker has parsed it. 400 rather than 404: the path is malformed, not merely absent, and the
+		// distinction keeps a probe from reading a refusal as "no such function".
+		if hasDotSegment(req.URL) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		// Hooks are procedural: the API server calls them around a write. They live under a `hooks/`
 		// route on the same worker, and that route is not a public endpoint, so a caller holding the anon
-		// key must not be able to invoke one directly with a payload of their own choosing.
-		if seg := firstURLSegment(req.URL.Path); seg == "hooks" {
+		// key must not be able to invoke one directly with a payload of their own choosing. The same goes
+		// for the routes the worker answers itself (`_logs`, `_functions`): see reservedFunctionRoute.
+		if reservedFunctionRoute(req.URL.Path) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		fnName := firstURLSegment(req.URL.Path)
 		u, err := resolveFunctionsUpstreamURL(cfg, m, fnName, inProcessDeno)
+		if errors.Is(err, errUnknownFunction) {
+			utilities.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "function not found"})
+			return
+		}
 		if err != nil {
 			logrus.WithError(err).Error("mux: functions upstream resolve failed")
 			http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -85,6 +100,22 @@ func resolveRealtimeUpstreamURL(
 	return nil, fmt.Errorf("no realtime upstream configured")
 }
 
+// reservedFunctionRoute reports whether path names a route of the worker that is not a function:
+// `hooks/`, or any first segment starting with an underscore. No function can have such a name (the
+// worker skips them), the worker answers its own `_logs` and `_functions` there, and the server
+// reaches those directly, never through this public path.
+//
+// The segment is read as the worker reads it, which drops one leading `/functions/v1` first. A
+// caller sending `/functions/v1/functions/v1/_logs` is otherwise judged by the segment `functions`
+// and reaches `_logs` all the same.
+func reservedFunctionRoute(path string) bool {
+	if rest, ok := strings.CutPrefix(path, "/functions/v1"); ok {
+		path = strings.TrimPrefix(rest, "/")
+	}
+	seg := firstURLSegment(path)
+	return seg == "hooks" || strings.HasPrefix(seg, "_")
+}
+
 func firstURLSegment(path string) string {
 	path = strings.Trim(path, "/")
 	if path == "" {
@@ -127,6 +158,9 @@ func hookUpstreamURL(
 	return strings.TrimRight(base.String(), "/") + "/" + modelhooks.HooksRoutePrefix + function, nil
 }
 
+// errUnknownFunction means the tenant routes per function and the requested name is not one of them.
+var errUnknownFunction = errors.New("function not registered for this tenant")
+
 func resolveFunctionsUpstreamURL(
 	cfg *config.Config,
 	m *proxy.RouteManifest,
@@ -149,6 +183,11 @@ func resolveFunctionsUpstreamURL(
 	if inProcessDeno {
 		return functionsUpstreamURL(cfg)
 	}
+	// A tenant with one pod per function and no shared worker has nowhere to send a name it did not
+	// register. That is the caller asking for something that does not exist, not a gateway fault.
+	if m != nil && fnName != "" && len(m.FunctionWorkerURLs) > 0 {
+		return nil, errUnknownFunction
+	}
 	return nil, fmt.Errorf("no functions worker configured")
 }
 
@@ -168,4 +207,26 @@ func functionsUpstreamURL(cfg *config.Config) (*url.URL, error) {
 		Scheme: "http",
 		Host:   denoAddr(cfg),
 	}, nil
+}
+
+// hasDotSegment reports whether u carries a "." or ".." path segment in any spelling a downstream
+// URL parser would resolve. The decoded path catches "%2e%2e" and "x%2f..%2f_logs" (Go decodes both
+// into Path), the raw path catches the encoded forms as sent, and each segment is unescaped once
+// more so "%252e%252e" is refused too, though only a parser that decodes twice would act on it.
+func hasDotSegment(u *url.URL) bool {
+	for _, p := range []string{u.Path, u.RawPath} {
+		for _, seg := range strings.Split(p, "/") {
+			if isDotSegment(seg) {
+				return true
+			}
+			if dec, err := url.PathUnescape(seg); err == nil && isDotSegment(dec) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isDotSegment(seg string) bool {
+	return seg == "." || seg == ".."
 }

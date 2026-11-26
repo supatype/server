@@ -70,12 +70,17 @@ type Manager struct {
 	// Log ring buffer, capped at logRingSize entries.
 	logMu  sync.RWMutex
 	logBuf []LogLine
+
+	// sink, when set, also receives every worker line (see LogTo). sinkMu keeps the two
+	// drain goroutines from interleaving their writes.
+	sinkMu sync.Mutex
+	sink   io.Writer
 }
 
 // New creates a Manager. serveEntry is the script path passed to `deno run`
 // (router generated under .supatype/functions-router.ts during `supatype dev`).
-// port is the port Deno will listen on. env is appended after inheriting OS env minus PORT=
-// plus the explicit PORT=value for Deno children.
+// port is the port Deno will listen on. env is appended after the allowlisted part of the OS
+// env (allowlist.go), and PORT=port after both.
 // When watch is true, `deno run --watch` reloads the worker when source files change.
 func New(denoPath, serveEntry string, port int, env []string, watch bool) *Manager {
 	return &Manager{
@@ -183,6 +188,30 @@ func parseLine(level, raw string) LogLine {
 	return line
 }
 
+// LogTo makes the manager also write each worker line to w, as "[function] message", in
+// addition to keeping it in the ring buffer. A line that names no function is prefixed "deno".
+// Call it before Start.
+func (m *Manager) LogTo(w io.Writer) {
+	m.sinkMu.Lock()
+	defer m.sinkMu.Unlock()
+	m.sink = w
+}
+
+// echo writes a line to the sink, if there is one. A failed write is dropped: the line is
+// already in the ring buffer, and logging must not stop the worker being supervised.
+func (m *Manager) echo(line LogLine) {
+	m.sinkMu.Lock()
+	defer m.sinkMu.Unlock()
+	if m.sink == nil {
+		return
+	}
+	prefix := line.Function
+	if prefix == "" {
+		prefix = "deno"
+	}
+	_, _ = fmt.Fprintf(m.sink, "[%s] %s\n", prefix, line.Message)
+}
+
 func (m *Manager) appendLog(level, message string) {
 	line := parseLine(level, message)
 
@@ -194,6 +223,8 @@ func (m *Manager) appendLog(level, message string) {
 		m.logBuf = m.logBuf[1:]
 	}
 	m.logBuf = append(m.logBuf, line)
+
+	m.echo(line)
 }
 
 func (m *Manager) runLoop(ctx context.Context) {
@@ -322,13 +353,15 @@ func validateCommandPath(pathValue, label string) error {
 	return nil
 }
 
+// envForDenoProcess is the child's environment: the allowlisted part of this server's (see
+// allowlist.go), then the extras, then PORT, so the child never inherits the server's own port.
 func envForDenoProcess(port int, extra []string) []string {
 	var out []string
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "PORT=") {
-			continue
+		name, _, _ := strings.Cut(e, "=")
+		if envNameAllowed(name) {
+			out = append(out, e)
 		}
-		out = append(out, e)
 	}
 	out = append(out, extra...)
 	out = append(out, fmt.Sprintf("PORT=%d", port))

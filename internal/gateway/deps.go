@@ -92,6 +92,8 @@ type Deps struct {
 	// APIExternalURL is the auth service's API_EXTERNAL_URL, the public address the deployment
 	// answers on when SUPATYPE_URL is not set. Set by WithAPIExternalURL.
 	APIExternalURL string
+	// SiteURL is the auth service SITE_URL. Set by WithSiteURL.
+	SiteURL string
 }
 
 // DepsOption sets something NewDeps cannot derive from its arguments.
@@ -107,6 +109,18 @@ func WithCORSPolicy(policy *corsorigins.Policy) DepsOption {
 // loads with the auth configuration rather than with the gateway's.
 func WithAPIExternalURL(externalURL string) DepsOption {
 	return func(d *Deps) { d.APIExternalURL = externalURL }
+}
+
+// WithManifestFor gives a router with no per-request manifest of its own the one to answer from. The
+// app listener has none: it is handed the live manifest, whatever the request says.
+func WithManifestFor(manifestFor func(*http.Request) *proxy.RouteManifest) DepsOption {
+	return func(d *Deps) { d.ManifestFor = manifestFor }
+}
+
+// WithSiteURL gives the gateway the auth service's SITE_URL, which the bootstrap loads with the
+// auth configuration rather than with the gateway's. Studio shows it on its General settings.
+func WithSiteURL(siteURL string) DepsOption {
+	return func(d *Deps) { d.SiteURL = siteURL }
 }
 
 // NewDeps resolves everything the mounts share.
@@ -206,6 +220,19 @@ func (d *Deps) MaskedFields(ctx context.Context) (map[string][]studiobootstrap.F
 	return studiobootstrap.MaskedFields(ctx, d.Resources)
 }
 
+// storedAdminConfig reads the admin config the last push recorded in the database, which is the
+// only copy a push linked from another machine can leave. With no database configured there is no
+// stored copy to read, so the file alone decides: asking would fail with data.ErrNoDatabase, which
+// reads as an unreachable database and turns "nothing pushed" into a 500.
+func (d *Deps) storedAdminConfig() studioauth.StoredAdminConfig {
+	if !d.Resources.HasDatabase() {
+		return nil
+	}
+	return studioauth.StoredAdminConfigFrom(func(ctx context.Context) (*studiobootstrap.Snapshot, error) {
+		return studiobootstrap.LoadSnapshot(ctx, d.Resources)
+	})
+}
+
 // AdminPool hands out the admin pool as the narrow interface the SQL runner
 // asks for. Resolved per request, not at mount time: a deployment with no
 // database answers 503 rather than failing to start.
@@ -250,7 +277,7 @@ func (d *Deps) EditorPool() (sqlrunner.Pool, error) {
 func apiConfigStore(cfg *config.Config, platform keyspace.Client) apiconfig.Store {
 	ref := strings.TrimSpace(cfg.ManagedProjectRef)
 	if ref != "" && strings.TrimSpace(cfg.Mode) == "managed" && platform != nil && platform.Available() {
-		return apiconfig.NewKeyspaceStore(platform, ref)
+		return apiconfig.NewKeyspaceStore(platform, platform.Layout().Tenant(ref, keyspace.KeyAPIConfig))
 	}
 	return apiconfig.NewFileStore(cfg.ApiConfigPath)
 }

@@ -102,8 +102,14 @@ func (AuditLogEntry) TableName() string {
 	return tableName
 }
 
+// NewAuditLogEntry records action by actor. An empty ipAddress, which most call sites pass, is the
+// request's own address as utilities.GetIPAddress resolves it (the trusted forwarding header when
+// that is configured), so no row is written without one.
 func NewAuditLogEntry(config conf.AuditLogConfiguration, r *http.Request, tx *storage.Connection, actor *User, action AuditAction, ipAddress string, traits map[string]interface{}) error {
 	id := uuid.Must(uuid.NewV4())
+	if ipAddress == "" {
+		ipAddress = utilities.GetIPAddress(r)
+	}
 
 	username := actor.GetEmail()
 

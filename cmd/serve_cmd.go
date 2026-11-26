@@ -35,7 +35,7 @@ func serve(ctx context.Context) {
 	// owns the listener/TLS/graceful-shutdown loop below.
 	gateway.ConfigFile = configFile
 	gateway.WatchDir = watchDir
-	handler, drain, err := gateway.New(ctx)
+	handler, appHandler, drain, err := gateway.NewWithApp(ctx)
 	if err != nil {
 		logrus.WithError(err).Fatal("unable to start server")
 	}
@@ -50,6 +50,9 @@ func serve(ctx context.Context) {
 	srvCfg, err := config.Load()
 	if err != nil {
 		logrus.WithError(err).Fatal("serve: failed to load server authCfg")
+	}
+	if err := gateway.ValidateInternalEntrance(srvCfg); err != nil {
+		logrus.WithError(err).Fatal("serve: internal entrance settings")
 	}
 
 	addr := net.JoinHostPort(authCfg.API.Host, authCfg.API.Port)
@@ -103,6 +106,8 @@ func serve(ctx context.Context) {
 		},
 	}
 	log := logrus.WithField("component", "api")
+	internalSrv := startInternalEntrance(srvCfg, handler, baseCtx, &wg)
+	appSrv := startAppEntrance(srvCfg, appHandler, baseCtx, &wg)
 
 	wg.Add(1)
 	go func() { // #nosec G118 -- Cleanup goroutine intentionally outlives the request; context.Background() is required for shutdown after parent context is cancelled.
@@ -120,6 +125,16 @@ func serve(ctx context.Context) {
 
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.WithError(err).Error("shutdown failed")
+		}
+		if internalSrv != nil {
+			if err := internalSrv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
+				log.WithError(err).Error("internal entrance shutdown failed")
+			}
+		}
+		if appSrv != nil {
+			if err := appSrv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
+				log.WithError(err).Error("app listener shutdown failed")
+			}
 		}
 		if acmeHTTPSrv != nil {
 			acmeShutdown, acmeCancel := context.WithTimeout(context.Background(), 30*time.Second)

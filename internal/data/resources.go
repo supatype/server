@@ -107,11 +107,15 @@ func Open(ctx context.Context, cfg *config.Config) (*Resources, error) {
 	if err != nil {
 		return nil, err
 	}
+	platform, err := platformKeyspaceAuth(cfg, platformAuth)
+	if err != nil {
+		return nil, err
+	}
 	r := &Resources{cache: keyspace.Unavailable(), platform: keyspace.Unavailable()}
 
 	platformAddr := cfg.KeyspaceAddress()
 	if platformAddr != "" {
-		client, err := openKeyspace(platformAddr, keyspaceAuth(platformAuth))
+		client, err := openKeyspace(platformAddr, platform)
 		if err != nil && strings.TrimSpace(cfg.Mode) == "managed" {
 			if client != nil {
 				client.Close()
@@ -296,4 +300,24 @@ func (r *Resources) Close() error {
 	r.cache = keyspace.Unavailable()
 	r.platform = keyspace.Unavailable()
 	return errors.Join(errs...)
+}
+
+// errScopedWithoutLogin refuses the scoped key layout with no password. Scoped keys are relative to
+// a tenant the keyspace takes from the login; with no login they would land in the keyspace's open
+// namespace, where every tenant's relative `config` is the same key.
+var errScopedWithoutLogin = errors.New("data: SUPATYPE_KEYSPACE_KEY_LAYOUT=scoped needs SUPATYPE_KEYSPACE_PASSWORD; " +
+	"a scoped layout names keys relative to the tenant its login is scoped to")
+
+// platformKeyspaceAuth is the platform keyspace's login and the key layout that login implies.
+func platformKeyspaceAuth(cfg *config.Config, creds config.KeyspaceCredentials) (keyspace.Auth, error) {
+	layout, err := keyspace.ParseKeyLayout(cfg.KeyspaceKeyLayout)
+	if err != nil {
+		return keyspace.Auth{}, err
+	}
+	if layout == keyspace.LayoutScoped && creds.Password == "" {
+		return keyspace.Auth{}, errScopedWithoutLogin
+	}
+	auth := keyspaceAuth(creds)
+	auth.Keys = layout
+	return auth, nil
 }

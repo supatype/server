@@ -205,7 +205,7 @@ func (ts *ExternalTestSuite) TestSignupExternalKakaoErrorWhenVerifiedFalse() {
 
 	u := performAuthorization(ts, "kakao", code, "")
 
-	assertAuthorizationFailure(ts, u, "Unverified email with kakao. A confirmation email has been sent to your kakao email", "access_denied", "")
+	assertAuthorizationFailure(ts, u, unverifiedProviderEmailMessage("kakao", true), "access_denied", "")
 }
 
 func (ts *ExternalTestSuite) TestSignupExternalKakaoErrorWhenUserBanned() {

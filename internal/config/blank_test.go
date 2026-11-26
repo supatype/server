@@ -83,3 +83,24 @@ func TestLoadReadsStorageDisabled(t *testing.T) {
 		}
 	}
 }
+
+// Echoing function output to the server's own stdout is opt-in: a hosted server must not start
+// repeating customers' function logs, and native dev turns it on by name.
+func TestFunctionsLogToStdoutIsOffUnlessSet(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FunctionsLogToStdout {
+		t.Fatal("SUPATYPE_FUNCTIONS_LOG_TO_STDOUT must default to off")
+	}
+
+	t.Setenv("SUPATYPE_FUNCTIONS_LOG_TO_STDOUT", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.FunctionsLogToStdout {
+		t.Fatal("SUPATYPE_FUNCTIONS_LOG_TO_STDOUT=true must turn it on")
+	}
+}

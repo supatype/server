@@ -106,7 +106,7 @@ func credentialFirstViewHandler(cfg *config.Config, vc keyspace.Client) http.Han
 			}
 			// Best effort. The metadata already says hidden, so a second first-view
 			// is refused whether or not the ciphertext goes.
-			_ = vc.Del(r.Context(), secretKey(ref, meta.Generation))
+			_ = vc.Del(r.Context(), secretKey(vc.Layout(), ref, meta.Generation))
 			utilities.WriteJSON(w, http.StatusOK, map[string]string{"password": pw})
 		case "standalone":
 			if !cfg.AllowSecretReadback {
@@ -174,7 +174,7 @@ func loadMeta(ctx context.Context, vc keyspace.Client, ref string) (dbCredMeta, 
 	if !vc.Available() {
 		return dbCredMeta{}, keyspace.ErrUnavailable
 	}
-	data, err := vc.GetBytes(ctx, metaKey(ref))
+	data, err := vc.GetBytes(ctx, metaKey(vc.Layout(), ref))
 	if err != nil {
 		return dbCredMeta{}, fmt.Errorf("read credentials metadata: %w", err)
 	}
@@ -201,7 +201,7 @@ func saveMeta(ctx context.Context, vc keyspace.Client, ref string, meta dbCredMe
 	if err != nil {
 		return err
 	}
-	return vc.SetBytes(ctx, metaKey(ref), payload, 0)
+	return vc.SetBytes(ctx, metaKey(vc.Layout(), ref), payload, 0)
 }
 
 func saveManagedSecret(ctx context.Context, vc keyspace.Client, kekBase64, ref string, generation int, password string) error {
@@ -213,11 +213,11 @@ func saveManagedSecret(ctx context.Context, vc keyspace.Client, kekBase64, ref s
 	if err != nil {
 		return err
 	}
-	return vc.SetBytes(ctx, secretKey(ref, generation), data, 0)
+	return vc.SetBytes(ctx, secretKey(vc.Layout(), ref, generation), data, 0)
 }
 
 func loadManagedSecret(ctx context.Context, vc keyspace.Client, kekBase64, ref string, generation int) (string, error) {
-	data, err := vc.GetBytes(ctx, secretKey(ref, generation))
+	data, err := vc.GetBytes(ctx, secretKey(vc.Layout(), ref, generation))
 	if err != nil {
 		return "", fmt.Errorf("read managed password for generation %d: %w", generation, err)
 	}
@@ -322,7 +322,11 @@ func tenantRef(r *http.Request) string {
 	return ref
 }
 
-func metaKey(ref string) string { return fmt.Sprintf("tenant:%s:dbcred:meta", ref) }
-func secretKey(ref string, generation int) string {
-	return fmt.Sprintf("tenant:%s:dbcred:secret:v%d", ref, generation)
+// metaKey and secretKey name a tenant's credential keys in the client's layout.
+func metaKey(layout keyspace.KeyLayout, ref string) string {
+	return layout.Tenant(ref, keyspace.KeyDBCredMeta)
+}
+
+func secretKey(layout keyspace.KeyLayout, ref string, generation int) string {
+	return layout.Tenant(ref, keyspace.KeyDBCredSecret(generation))
 }

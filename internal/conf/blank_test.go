@@ -46,3 +46,16 @@ func TestBlankTypedSettingFromDotEnvTakesItsDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 587, cfg.SMTP.Port)
 }
+
+func TestAuthSettingsVersionIsReadFromTheStamp(t *testing.T) {
+	setMinimalEnv(t)
+
+	cfg, err := LoadGlobalFromEnv()
+	require.NoError(t, err)
+	require.EqualValues(t, 0, cfg.AuthSettingsVersion, "nothing stamps a version by default")
+
+	t.Setenv("SUPATYPE_AUTH_SETTINGS_VERSION", "12")
+	cfg, err = LoadGlobalFromEnv()
+	require.NoError(t, err)
+	require.EqualValues(t, 12, cfg.AuthSettingsVersion)
+}

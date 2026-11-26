@@ -31,7 +31,7 @@ type OAuthClientTestSuite struct {
 }
 
 func TestOAuthClientHandler(t *testing.T) {
-	globalConfig, err := conf.LoadGlobal(oauthServerTestConfig)
+	globalConfig, err := conf.LoadGlobalKeepingEnv(oauthServerTestConfig)
 	require.NoError(t, err)
 
 	conn, err := test.SetupDBConnection(globalConfig)

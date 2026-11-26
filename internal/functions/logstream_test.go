@@ -137,7 +137,7 @@ func TestTailWithoutAWorkerSaysSoRatherThanStreamingNothing(t *testing.T) {
 
 func TestTailRefusesToStreamThroughAWriterThatCannotFlush(t *testing.T) {
 	w := &unflushableWriter{}
-	tailFunctionLogs(&logStream{workerURL: "http://example.invalid", client: &http.Client{}})(
+	tailFunctionLogs(staticWorker("http://example.invalid"))(
 		w, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
 
 	if w.status != http.StatusInternalServerError {
@@ -151,7 +151,7 @@ func TestTailRefusesToStreamThroughAWriterThatCannotFlush(t *testing.T) {
 func TestTailReportsAWorkerItCannotReach(t *testing.T) {
 	// A bad gateway, not a 500: the fault is the worker's reachability, not this server's.
 	rec := httptest.NewRecorder()
-	tailFunctionLogs(newLogStream("http://127.0.0.1:1"))(rec, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
+	tailFunctionLogs(staticWorker("http://127.0.0.1:1"))(rec, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
 
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadGateway)
@@ -176,7 +176,7 @@ func TestTailRelaysTheWorkerStreamWithHeadersThatDefeatBuffering(t *testing.T) {
 	defer worker.Close()
 
 	rec := httptest.NewRecorder()
-	tailFunctionLogs(newLogStream(worker.URL))(rec, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
+	tailFunctionLogs(staticWorker(worker.URL))(rec, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -320,7 +320,7 @@ func TestTailStreamsThroughAWrapperThatUnwraps(t *testing.T) {
 	defer worker.Close()
 
 	rec := httptest.NewRecorder()
-	tailFunctionLogs(newLogStream(worker.URL))(unwrappingWriter{rec}, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
+	tailFunctionLogs(staticWorker(worker.URL))(unwrappingWriter{rec}, httptest.NewRequest(http.MethodGet, "/logs/tail", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "one") {
 		t.Errorf("status %d body %q, want the stream relayed", rec.Code, rec.Body.String())
 	}

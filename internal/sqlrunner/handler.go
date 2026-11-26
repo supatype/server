@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sirupsen/logrus"
 	"github.com/supatype/server/internal/config"
 	"github.com/supatype/server/internal/modes"
@@ -174,17 +175,43 @@ func run(ctx context.Context, pool Pool, schema, query string) ([]Row, error) {
 // The editor logs in as supatype_sql_editor, a non-superuser member of the
 // database owner, so an object it creates would otherwise belong to a login
 // role no migration or Studio view expects to find as an owner. The owner is
-// resolved from the catalogue rather than assumed, because it is `postgres`
-// on self-host but need not be anywhere else.
+// resolved from the catalogue rather than assumed: the image's migration makes
+// it `supatype_owner` on self-host, and it can be another role elsewhere.
+// It must not be a superuser: objects handed to one would let a function the
+// editor wrote run with a superuser's rights.
+//
+// The editor's membership in the owner is SET FALSE, so submitted SQL cannot
+// SET ROLE into it, and from Postgres 16 that also stops the editor running
+// REASSIGN OWNED itself. So the handover goes through a SECURITY DEFINER
+// function, tried in this order, the same order Cloud's control plane uses:
+//  1. public.supatype_sql_editor_reassign_owned(), which the postgres image
+//     ships, only the editor may execute, and which takes no arguments;
+//  2. supatype_editor.hand_over(), which an older CLI's start-up creates;
+//  3. the inline REASSIGN, for a stack with neither, which works where the
+//     editor is allowed to SET ROLE. It refuses a superuser owner as the
+//     start-up step does; on Postgres 16 and later it would fail there anyway,
+//     and this says why.
 //
 // It only runs when this session is the editor. A deployment that has not
 // configured SUPATYPE_SQL_EDITOR_DATABASE_URL falls back to the SQL DSN, whose
 // cluster may have no editor role to reassign from at all.
 const reassignToOwner = `DO $reassign$
+DECLARE
+  target text;
 BEGIN
   IF session_user = 'supatype_sql_editor' THEN
-    EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I',
-      (SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()));
+    IF pg_catalog.to_regprocedure('public.supatype_sql_editor_reassign_owned()') IS NOT NULL THEN
+      PERFORM public.supatype_sql_editor_reassign_owned();
+    ELSIF pg_catalog.to_regprocedure('supatype_editor.hand_over()') IS NOT NULL THEN
+      PERFORM supatype_editor.hand_over();
+    ELSE
+      SELECT pg_catalog.pg_get_userbyid(datdba) INTO target FROM pg_catalog.pg_database
+        WHERE datname = pg_catalog.current_database();
+      IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = target AND rolsuper) THEN
+        RAISE EXCEPTION 'refusing to hand the SQL editor''s objects to %, a superuser', target;
+      END IF;
+      EXECUTE pg_catalog.format('REASSIGN OWNED BY supatype_sql_editor TO %I', target);
+    END IF;
   END IF;
 END
 $reassign$`
@@ -193,8 +220,7 @@ $reassign$`
 func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, error) {
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
-		logrus.WithError(err).Error("sqlrunner: query failed")
-		return nil, failure{status: http.StatusUnprocessableEntity, err: err}
+		return nil, refused(err)
 	}
 	defer rows.Close()
 
@@ -218,7 +244,29 @@ func collect(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]Row, 
 		}
 		result = append(result, row)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, rejected(err)
+	}
+	return result, nil
+}
+
+// rejected classifies an error that arrived through the result set. A statement
+// with no rows to return (SET ROLE, CREATE TABLE ...) reports what Postgres said
+// there rather than from Query, and that is still the caller's statement being
+// refused. Anything that is not Postgres answering (a dropped connection, the
+// timeout) stays ours.
+func rejected(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return refused(err)
+	}
+	return err
+}
+
+// refused logs a statement Postgres rejected and reports it as the caller's to fix.
+func refused(err error) failure {
+	logrus.WithError(err).Error("sqlrunner: query failed")
+	return failure{status: http.StatusUnprocessableEntity, err: err}
 }
 
 // ─── Schema resolution ────────────────────────────────────────────────────────

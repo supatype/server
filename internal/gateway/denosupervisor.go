@@ -11,6 +11,7 @@ package gateway
 
 import (
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -53,13 +54,17 @@ func denoSupervisor(cfg *config.Config, externalURL string) *deno.Manager {
 	// directory has Deno serve that instead.
 	entry := utilities.FirstNonEmpty(strings.TrimSpace(cfg.DenoServeScript), cfg.DenoFunctionsDir)
 
-	return deno.New(
+	manager := deno.New(
 		cfg.DenoPath,
 		entry,
 		denoPort(cfg.DenoPort),
 		deno.EdgeSubprocessEnv(cfg, strings.TrimSpace(externalURL)),
 		strings.TrimSpace(cfg.Mode) == "dev",
 	)
+	if cfg.FunctionsLogToStdout {
+		manager.LogTo(os.Stdout)
+	}
+	return manager
 }
 
 // denoPort is the configured port, or the default when it is unset or is not a

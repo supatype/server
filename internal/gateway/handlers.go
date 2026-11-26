@@ -75,6 +75,7 @@ func buildAdminAPI(d *Deps) http.Handler {
 		Stats:    d.CacheStats,
 		Monitor:  d.KeyspaceMonitor(),
 		Declared: d.DeclaredCache,
+		Site:     d.SiteSettings,
 	})
 }
 
@@ -95,6 +96,23 @@ func (d *Deps) DeclaredCache(req *http.Request) map[string]proxy.TableCache {
 		return nil
 	}
 	return m.Cache
+}
+
+// SiteSettings is what the app mount serves for this request: the manifest over the config, the
+// lookups buildApp mounts on, so the admin site status describes the mount that is actually there.
+func (d *Deps) SiteSettings(req *http.Request) admin.SiteSettings {
+	var m *proxy.RouteManifest
+	if d.ManifestFor != nil {
+		m = d.ManifestFor(req)
+	}
+	return admin.SiteSettings{
+		Mode:                  AppMode(m, d.Config),
+		StaticDir:             AppStaticDir(m, d.Config),
+		Upstream:              AppUpstream(m, d.Config),
+		SPAFallback:           d.Config.AppSPAFallback,
+		SPAFallbackFromConfig: d.Config.AppSPAFallbackFromConfig,
+		Cache:                 staticCacheOpts(d.Config, m).Effective(),
+	}
 }
 
 func buildMetadata(d *Deps) http.Handler   { return sqlrunner.MetadataHandler(d.Config, d.AdminPool) }
@@ -139,7 +157,7 @@ func buildStudioProxy(d *Deps) http.Handler {
 // buildStudioConfig serves the engine's generated admin config to Studio.
 func buildStudioConfig(d *Deps) http.Handler {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		body, err := studioauth.ReadAdminConfigFile(d.Config.AdminConfigPath)
+		body, err := studioauth.ResolveAdminConfig(req.Context(), d.storedAdminConfig(), d.Config.AdminConfigPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				studioauth.WriteErrorBody(w, http.StatusNotFound, "schema not pushed yet")
@@ -149,7 +167,7 @@ func buildStudioConfig(d *Deps) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		_, _ = w.Write(studioauth.AdminConfigWithSiteURL(body, d.SiteURL))
 	})
 	return studioauth.RequireAdmin(d.Studio, inner)
 }
@@ -212,11 +230,17 @@ func restProxyHandler(d *Deps) http.Handler {
 // grants apply. The gateway never substitutes its service role key here; doing
 // so ran every GraphQL query with row security bypassed, whoever sent it.
 func buildGraphQL(d *Deps) http.Handler {
-	if d.Config.GraphQLDisabled {
-		return http.HandlerFunc(graphQLUnavailable)
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		u, err := url.Parse(GraphQLUpstream(d.ManifestFor(req), d.Config))
+		// Asked per request: the route manifest's services.graphql, when it says, else
+		// SUPATYPE_GRAPHQL_DISABLED (serviceswitch).
+		m := d.ManifestFor(req)
+		start := serviceswitch.Start(d.Config, proxy.ServiceGraphQL)
+		if !m.ServiceOn(proxy.ServiceGraphQL, start) {
+			// Started on and off now: the project switched it off.
+			graphQLUnavailable(w, serviceswitch.GraphQLOffByProject(d.Config, start))
+			return
+		}
+		u, err := url.Parse(GraphQLUpstream(m, d.Config))
 		if err != nil {
 			badGateway(w, "bad gateway")
 			return
@@ -225,26 +249,39 @@ func buildGraphQL(d *Deps) http.Handler {
 	})
 }
 
-// graphQLUnavailable answers /graphql/v1 on a stack whose Postgres has no
-// pg_graphql. Forwarding there got an empty 502 or PostgREST's "could not
-// find the function graphql_public.graphql", which read like a fault in the
-// stack or the caller's query rather than a stack without GraphQL.
-func graphQLUnavailable(w http.ResponseWriter, _ *http.Request) {
+// graphQLUnavailable answers /graphql/v1 where GraphQL is off: switched off by the project
+// (`services.graphql: false`, which a hosted project's manifest carries), or a stack whose Postgres
+// has no pg_graphql (native `supatype dev`). Forwarding there got an empty 502 or PostgREST's "could
+// not find the function graphql_public.graphql", which read like a fault in the stack or the query.
+// The message says which, since telling a hosted project to use the Docker provider is no help.
+func graphQLUnavailable(w http.ResponseWriter, byProject bool) {
+	message := "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1."
+	if byProject {
+		message = "GraphQL is switched off for this project (services.graphql in supatype.config.ts)."
+	}
 	utilities.WriteJSON(w, http.StatusNotImplemented, map[string]string{
 		"code":    "graphql_unavailable",
-		"message": "GraphQL is not available with the native provider; use the Docker provider for /graphql/v1.",
+		"message": message,
 	})
 }
 
-// storageUnavailable answers /storage/v1 on a native `supatype dev` stack whose
-// storage service could not start. Falling back to the built-in object store
-// there served every object with no read rules applied, so the gateway refuses
-// instead and points at the dev log that says why storage is down.
-func storageUnavailable(w http.ResponseWriter, _ *http.Request) {
-	utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
-		"code":    "storage_unavailable",
-		"message": "The storage service is not running. Its log says why: the storage pane of supatype dev, or supatype self-host compose logs --service storage.",
-	})
+// storageUnavailable answers /storage/v1 on a stack whose storage service is not
+// running. Falling back to the built-in object store there served every object
+// with no read rules applied, so the gateway refuses instead and points at where
+// that kind of stack shows why storage is down: the dev log or the compose log
+// for a stack the developer runs, the dashboard for a managed (Cloud) project,
+// which has neither.
+func storageUnavailable(mode string) http.HandlerFunc {
+	message := "The storage service is not running. Its log says why: the storage pane of supatype dev, or supatype self-host compose logs --service storage."
+	if strings.TrimSpace(mode) == "managed" {
+		message = "The storage service is not running for this project. Check its status in the dashboard."
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		utilities.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"code":    "storage_unavailable",
+			"message": message,
+		})
+	}
 }
 
 // rewriteToGraphQLRPC points a copy of the request at the RPC endpoint.
@@ -270,11 +307,12 @@ func buildStorage(d *Deps) http.Handler {
 	if !serviceswitch.Start(d.Config, proxy.ServiceStorage) {
 		logrus.Info("mux: storage switched off at start; /storage/v1 answers 503 storage_unavailable until the route manifest switches it on")
 	}
+	unavailable := storageUnavailable(d.Config.Mode)
 	serve := storageServer(d)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		m := d.ManifestFor(req)
 		if !serviceswitch.On(m, d.Config, proxy.ServiceStorage) {
-			storageUnavailable(w, req)
+			unavailable(w, req)
 			return
 		}
 		serve(w, req, m)
@@ -291,7 +329,7 @@ func storageServer(d *Deps) func(http.ResponseWriter, *http.Request, *proxy.Rout
 		return func(w http.ResponseWriter, req *http.Request, _ *proxy.RouteManifest) { local.ServeHTTP(w, req) }
 	}
 	logrus.Info("mux: Storage proxy mounted at /storage/v1")
-	unreachable := whenUnreachable(storageUnavailable)
+	unreachable := whenUnreachable(storageUnavailable(d.Config.Mode))
 	return func(w http.ResponseWriter, req *http.Request, m *proxy.RouteManifest) {
 		storageURL := StorageUpstream(m, d.Config)
 		if storageURL == "" {
@@ -392,11 +430,21 @@ func buildApp(d *Deps) http.Handler {
 // buildPublicEnv serves the deployment's public address and anon key. Never the service role key:
 // publicenv.Values has no field that could carry it.
 func buildPublicEnv(d *Deps) http.Handler {
-	return publicenv.Handler(publicenv.Values{
+	return publicenv.HandlerWith(publicenv.Values{
 		Enabled: d.Config.PublicEnv.On(),
 		URL:     publicenv.PublicURL(d.Config.SupatypeURL, d.APIExternalURL),
 		AnonKey: d.Config.AnonKey,
-	})
+	}, d.publicValues)
+}
+
+// publicValues is the site's public values for this request, from its manifest. The manifest holds
+// no service role key, and the only thing here that was ever a person's input is a value they typed
+// to be read by every visitor.
+func (d *Deps) publicValues(r *http.Request) map[string]string {
+	if d.ManifestFor == nil {
+		return nil
+	}
+	return d.ManifestFor(r).PublicEnv
 }
 
 // newHookCallback builds the previous() endpoint, which reads the rows a write

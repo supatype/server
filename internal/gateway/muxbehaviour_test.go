@@ -93,6 +93,11 @@ func newRig(t *testing.T, mode string, opts ...rigOption) *rig {
 			})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
+			if req.URL.Path == workerListPath {
+				// The worker's own list, which the functions admin API asks for.
+				_, _ = w.Write([]byte(`{"data":[]}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"upstream":"` + name + `"}`))
 		}))
 		t.Cleanup(srv.Close)

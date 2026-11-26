@@ -36,7 +36,7 @@ func TestStorageThatRefusesTheConnectionAnswers503(t *testing.T) {
 	buildStorage(d).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/object/public/avatars/a.txt", nil))
 
 	off := httptest.NewRecorder()
-	storageUnavailable(off, httptest.NewRequest(http.MethodGet, "/", nil))
+	storageUnavailable("dev")(off, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d %q, want 503", rec.Code, rec.Body.String())
 	}

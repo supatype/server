@@ -182,3 +182,17 @@ func TestEveryLimitBelowOneStillAllowsOne(t *testing.T) {
 		require.Equal(t, 1, allowedBeforeLimit(lmt, "198.51.100.1", 5), name)
 	}
 }
+
+// An anonymous sign-in limit below one per hour still lets one through rather than refusing all.
+func TestAnonymousSignInLimitBelowOneStillAllowsOne(t *testing.T) {
+	cfg := limitConfig("X-Real-IP")
+	cfg.RateLimitAnonymousUsers = 0.5
+	require.Equal(t, 1, allowedBeforeLimit(NewLimiterOptions(cfg).AnonymousSignIns, "198.51.100.1", 5))
+}
+
+// The anonymous limit lets the configured number through from one client.
+func TestAnonymousSignInLimitAllowsTheConfiguredNumber(t *testing.T) {
+	cfg := limitConfig("X-Real-IP")
+	cfg.RateLimitAnonymousUsers = 4
+	require.Equal(t, 4, allowedBeforeLimit(NewLimiterOptions(cfg).AnonymousSignIns, "198.51.100.1", 10))
+}

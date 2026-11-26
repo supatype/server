@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.1](https://github.com/supatype/server/compare/v2.6.0...v2.6.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **auth:** floor the anonymous sign-in limiter at one request ([0c0b3ae](https://github.com/supatype/server/commit/0c0b3ae8c1f339f57dbe3e1f492869e258232d61))
+
 ## [2.6.0](https://github.com/supatype/server/compare/v2.5.0...v2.6.0) (2026-11-26)
 
 
